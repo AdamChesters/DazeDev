@@ -1,0 +1,72 @@
+[
+  {
+    "id": "whisper-small",
+    "name": "Whisper Small",
+    "family": "asr",
+    "license": "MIT",
+    "url": "https://huggingface.co/handy-computer/whisper-small-gguf/resolve/a2073177cb69bd74b9ca9460b852d17fbfd5d68c/whisper-small-Q8_0.gguf",
+    "sha256": "9b9c8811bbcc82a7766f0fb0925614bdacb0923b2cc630daeac17108b655b860",
+    "size": 269751136,
+    "file": "whisper-small-Q8_0.gguf"
+  },
+  {
+    "id": "whisper-medium",
+    "name": "Whisper Medium",
+    "family": "asr",
+    "license": "MIT",
+    "url": "https://huggingface.co/handy-computer/whisper-medium-gguf/resolve/835ad19fff976143d650e35113a6544980cbd983/whisper-medium-Q8_0.gguf",
+    "sha256": "09e6a65e7de377aa5b10bae24608bc6f8ca2ed04b3993ef10d4a02bcd9a82adf",
+    "size": 831538144,
+    "file": "whisper-medium-Q8_0.gguf"
+  },
+  {
+    "id": "whisper-turbo",
+    "name": "Whisper Turbo",
+    "family": "asr",
+    "license": "MIT",
+    "url": "https://huggingface.co/handy-computer/whisper-large-v3-turbo-gguf/resolve/ceea6c8a94a21ab85be244d311e874a39344dbf5/whisper-large-v3-turbo-Q8_0.gguf",
+    "sha256": "b2e30cc286bc9f3aba4db9099fc7403543497c05ce7100d0d83091ddfd25a183",
+    "size": 886381760,
+    "file": "whisper-large-v3-turbo-Q8_0.gguf"
+  },
+  {
+    "id": "whisper-large",
+    "name": "Whisper Large v3",
+    "family": "asr",
+    "license": "MIT",
+    "url": "https://huggingface.co/handy-computer/whisper-large-v3-gguf/resolve/b33a05f1459f33b0c876f014a57d51618b77d754/whisper-large-v3-Q8_0.gguf",
+    "sha256": "2fa1a5f179f8a511a53e2108db270aa4af3ce08cd976af4180e2854666bb4ba3",
+    "size": 1668741440,
+    "file": "whisper-large-v3-Q8_0.gguf"
+  },
+  {
+    "id": "parakeet",
+    "name": "Parakeet Unified \u00b7 English",
+    "family": "asr",
+    "license": "NVIDIA Open Model License; GGUF conversion CC-BY-4.0",
+    "url": "https://huggingface.co/handy-computer/parakeet-unified-en-0.6b-gguf/resolve/d5249700b2382bf5c5024c2421d101b8db54a629/parakeet-unified-en-0.6b-Q8_0.gguf",
+    "sha256": "4b50b6dd862bf6e346929aaf4f5eaacec003bfa3f56462d6c874b41ef2f38795",
+    "size": 731357568,
+    "file": "parakeet-unified-en-0.6b-Q8_0.gguf"
+  },
+  {
+    "id": "s1-mini",
+    "name": "S1-mini by Superwhisper",
+    "family": "cleanup",
+    "license": "Apache 2.0 + naming clause",
+    "url": "https://huggingface.co/superwhisper/s1-mini-GGUF/resolve/34add00a48a2e5d24e5a4ee5405a99620a3a240c/s1-mini-q4_k_m.gguf",
+    "sha256": "3b41ebe2502cbd03e811d5d16b022f5ab551eda58d62597d152f89535003c634",
+    "size": 484219808,
+    "file": "s1-mini-q4_k_m.gguf"
+  },
+  {
+    "id": "silero",
+    "name": "Silero voice detection",
+    "family": "vad",
+    "license": "MIT",
+    "file": "silero.onnx",
+    "url": "https://raw.githubusercontent.com/snakers4/silero-vad/60b7ffa243625ebdc1070275a29f18c87843786a/src/silero_vad/data/silero_vad.onnx",
+    "sha256": "1a153a22f4509e292a94e67d6f9b85e8deb25b4988682b7e174c65279d8788e3",
+    "size": 2327524
+  }
+]

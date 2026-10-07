@@ -1,0 +1,13 @@
+Parakeet Unified English 0.6B
+Licensed by NVIDIA Corporation under the NVIDIA Open Model License
+
+Base model: https://huggingface.co/nvidia/parakeet-unified-en-0.6b
+Upstream revision used by the conversion: d4ac992 (10 May 2026).
+GGUF conversion and Q8_0 quantization: Handy Computer contributors.
+https://huggingface.co/handy-computer/parakeet-unified-en-0.6b-gguf
+Conversion revision: d5249700b2382bf5c5024c2421d101b8db54a629
+The conversion card declares CC-BY-4.0. The NVIDIA base model remains subject
+to the NVIDIA Open Model License; see the accompanying license text/PDF.
+https://creativecommons.org/licenses/by/4.0/
+
+DazeDev downloads this preconverted model without changing its weights.

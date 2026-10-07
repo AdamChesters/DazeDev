@@ -1,0 +1,77 @@
+name: Portable update verification
+on:
+  workflow_dispatch:
+    inputs:
+      manifest:
+        description: Signed release manifest JSON (public metadata only)
+        required: true
+        type: string
+      previous_version:
+        description: Optional installed version to upgrade from (without v)
+        required: false
+        type: string
+permissions:
+  contents: read
+jobs:
+  update:
+    runs-on: windows-2022
+    env:
+      GH_TOKEN: ${{ github.token }}
+      SIGNED_MANIFEST: ${{ inputs.manifest }}
+      PREVIOUS_VERSION: ${{ inputs.previous_version }}
+    steps:
+      - name: Download exact published ZIP
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $manifest = $env:SIGNED_MANIFEST | ConvertFrom-Json
+          $release = $manifest.payload | ConvertFrom-Json
+          if ($release.version -notmatch '^\d+\.\d+\.\d+(?:-[0-9A-Za-z.-]+)?$') { throw 'Invalid version' }
+          gh release download "v$($release.version)" -R $env:GITHUB_REPOSITORY -p "DazeDev_$($release.version)_windows-x64.zip" -D "$env:RUNNER_TEMP/download"
+          if ($LASTEXITCODE -ne 0) { throw 'Release download failed' }
+          $zip = (Get-ChildItem "$env:RUNNER_TEMP/download/*.zip").FullName
+          if ((Get-FileHash $zip -Algorithm SHA256).Hash.ToLower() -ne $release.sha256) { throw 'Archive checksum mismatch' }
+          $root = Join-Path $env:RUNNER_TEMP 'Portable path with spaces'
+          $oldZip = $zip
+          if ($env:PREVIOUS_VERSION) {
+            if ($env:PREVIOUS_VERSION -notmatch '^\d+\.\d+\.\d+(?:-[0-9A-Za-z.-]+)?$') { throw 'Invalid previous version' }
+            gh release download "v$env:PREVIOUS_VERSION" -R $env:GITHUB_REPOSITORY -p "DazeDev_$($env:PREVIOUS_VERSION)_windows-x64.zip" -D "$env:RUNNER_TEMP/previous"
+            if ($LASTEXITCODE -ne 0) { throw 'Previous release download failed' }
+            $oldZip = (Get-ChildItem "$env:RUNNER_TEMP/previous/*.zip").FullName
+          }
+          Expand-Archive $oldZip $root
+          $stage = Join-Path $root '.updates/staged-test'
+          New-Item -ItemType Directory -Force "$stage/app", "$root/data/models" | Out-Null
+          Expand-Archive $zip "$stage/app"
+          Copy-Item $zip "$stage/update.zip"
+          [IO.File]::WriteAllText("$stage/release.json", $env:SIGNED_MANIFEST)
+          [IO.File]::WriteAllText("$root/data/device.json", '{"hosts":[],"activeHost":"","activeWorkspace":"","voice":{"model":"parakeet","backend":"cpu","cleanup":true,"automatic":false,"microphone":""},"sidebar":true,"checkUpdates":false,"voiceSetupDismissed":true}')
+          [IO.File]::WriteAllText("$root/data/models/preserve.txt", 'model stays')
+          $settingsHash = (Get-FileHash "$root/data/device.json").Hash
+          $old = Start-Process "$root/DazeDev.exe" -PassThru
+          Start-Sleep -Seconds 8
+          if ($old.HasExited) { throw 'Original app did not start' }
+          $helper = Start-Process "$stage/app/DazeDev.exe" -ArgumentList @('--apply-update', "`"$root`"", "$($old.Id)") -PassThru
+          Start-Sleep -Seconds 2
+          if ($helper.HasExited) { throw 'Helper did not wait for original app' }
+          Stop-Process -Id $old.Id
+          if (!$helper.WaitForExit(90000)) { if (Test-Path "$root/data/update-error.txt") { Get-Content "$root/data/update-error.txt" }; throw 'Helper timed out' }
+          if ($helper.ExitCode -ne 0) { throw "Update helper failed: $($helper.ExitCode)" }
+          Start-Sleep -Seconds 12
+          function Normalize-Path([string]$path) {
+            if ($path.StartsWith('\\?\')) { $path = $path.Substring(4) }
+            return [IO.Path]::GetFullPath($path).Replace('/', '\')
+          }
+          $expectedPath = Normalize-Path (Join-Path $root 'DazeDev.exe')
+          $processes = @(Get-Process DazeDev -ErrorAction SilentlyContinue)
+          $processes | Select-Object Id, Path | Format-Table
+          $restarted = @($processes | Where-Object { (Normalize-Path $_.Path) -eq $expectedPath })
+          if (!$restarted.Count) {
+            Get-Content "$root/data/startup-error.txt", "$root/data/update-error.txt" -ErrorAction SilentlyContinue
+            throw 'Updated app did not restart'
+          }
+          if ((Get-FileHash "$root/data/device.json").Hash -ne $settingsHash) { throw 'Update changed settings' }
+          if ([IO.File]::ReadAllText("$root/data/models/preserve.txt") -ne 'model stays') { throw 'Update lost models' }
+          if (!(Get-ChildItem "$root/.updates" -Directory -Filter 'backup-*')) { throw 'No update backup' }
+          $restarted | Stop-Process
+          Write-Host 'Verified signed ZIP, helper wait, replacement, backup, restart and settings/model preservation.'

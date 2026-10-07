@@ -1,0 +1,18 @@
+{
+  "identifier": "default",
+  "description": "Main application window",
+  "windows": [
+    "main",
+    "terminal-*"
+  ],
+  "permissions": [
+    "core:default",
+    "core:window:allow-destroy",
+    "core:window:allow-show",
+    "core:window:allow-unminimize",
+    "core:window:allow-set-focus",
+    "core:window:allow-set-fullscreen",
+    "core:window:allow-is-fullscreen",
+    "core:window:allow-is-maximized"
+  ]
+}

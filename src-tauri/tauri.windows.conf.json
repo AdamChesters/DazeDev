@@ -1,0 +1,9 @@
+{
+  "bundle": {
+    "resources": {
+      "runtime/": "runtime/",
+      "licenses/": "licenses/",
+      "transcribe-libs/*": "."
+    }
+  }
+}

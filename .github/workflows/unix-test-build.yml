@@ -1,0 +1,103 @@
+name: macOS and Linux test packages
+on:
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  package:
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - runner: macos-14
+            platform: darwin-arm64
+          - runner: macos-15-intel
+            platform: darwin-x64
+          - runner: ubuntu-24.04
+            platform: linux-x64
+    runs-on: ${{ matrix.runner }}
+    env:
+      MACOSX_DEPLOYMENT_TARGET: '14.0'
+      TRANSCRIBE_CMAKE_ARGS: '-DGGML_NATIVE=OFF'
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with: {node-version: 22, cache: npm}
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+        with: {workspaces: 'src-tauri -> target', key: 'unix-portable-v1', cache-on-failure: true}
+      - name: Linux dependencies
+        if: runner.os == 'Linux'
+        run: sudo apt-get update && sudo apt-get install -y libwebkit2gtk-4.1-dev libgtk-3-dev libssl-dev librsvg2-dev libayatana-appindicator3-dev patchelf tmux xvfb webkit2gtk-driver
+      - name: Mac test dependencies
+        if: runner.os == 'macOS'
+        run: brew install tmux
+      - run: npm ci
+      - run: npm run gate
+      - run: node scripts/prepare-runtime.mjs
+      - run: node scripts/collect-licenses.mjs
+      - run: cargo test --manifest-path src-tauri/Cargo.toml --no-default-features --locked
+      - run: cargo run --manifest-path src-tauri/Cargo.toml --no-default-features --locked --example transport_smoke
+      - name: Native host destination check
+        shell: bash
+        run: |
+          python3 - <<'PYTEST'
+          import os,runpy,subprocess
+          host=runpy.run_path('src-tauri/resources/host.py')
+          target=subprocess.Popen(['sleep','30'])
+          try:
+              before=host['process_context'](target.pid)
+              assert str(target.pid) in before and before == host['process_context'](target.pid)
+          finally:
+              target.terminate();target.wait()
+          try:
+              host['process_context'](target.pid)
+              raise AssertionError('Exited process accepted')
+          except RuntimeError:
+              pass
+          print('Native host destination identity is stable and rejects exited processes.')
+          PYTEST
+      - name: Build macOS app
+        if: runner.os == 'macOS'
+        run: npm run tauri -- build --bundles app --config '{"mainBinaryName":"DazeDev","bundle":{"icon":["icons/icon.icns"],"macOS":{"minimumSystemVersion":"14.0","signingIdentity":"-"}}}'
+      - name: Build Linux app
+        if: runner.os == 'Linux'
+        run: cargo build --release --manifest-path src-tauri/Cargo.toml --features custom-protocol --locked
+      - name: Verify offline models on native architecture
+        shell: bash
+        run: |
+          set -euo pipefail
+          cargo build --release --manifest-path src-tauri/Cargo.toml --example voice_smoke --locked
+          curl -fL https://raw.githubusercontent.com/ggml-org/whisper.cpp/master/samples/jfk.wav -o "$RUNNER_TEMP/jfk.wav"
+          python3 -c 'import hashlib,os,pathlib; assert hashlib.sha256((pathlib.Path(os.environ["RUNNER_TEMP"])/"jfk.wav").read_bytes()).hexdigest()=="59dfb9a4acb36fe2a2affc14bacbee2920ff435cb13cc314a08c13f66ba7860e"'
+          export LD_LIBRARY_PATH="$PWD/src-tauri/runtime${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}"
+          for model in parakeet whisper-small whisper-medium whisper-turbo whisper-large; do
+            src-tauri/target/release/examples/voice_smoke "$RUNNER_TEMP/models" "$PWD/src-tauri/runtime/llama-server" "$RUNNER_TEMP/jfk.wav" "$model"
+            MODEL_ID="$model" python3 -c 'import json,os,pathlib; m=next(m for m in json.load(open("src-tauri/resources/models.json")) if m["id"]==os.environ["MODEL_ID"]); (pathlib.Path(os.environ["RUNNER_TEMP"])/"models"/m["file"]).unlink()'
+          done
+      - name: Package portable archive
+        run: bash scripts/package-unix.sh
+      - name: Verify packaged Linux startup and settings
+        if: runner.os == 'Linux'
+        run: xvfb-run -a python3 scripts/verify-linux-startup.py "$PWD/artifacts/DazeDev_$(node -p "require('./package.json').version")_linux-x64"
+      - name: Verify packaged macOS startup
+        if: runner.os == 'macOS'
+        shell: bash
+        run: |
+          set -euo pipefail
+          root="$PWD/artifacts/DazeDev_$(node -p "require('./package.json').version")_$(node -p "process.platform + '-' + process.arch")"
+          "$root/DazeDev.app/Contents/MacOS/DazeDev" > "$RUNNER_TEMP/startup.log" 2>&1 &
+          pid=$!
+          sleep 15
+          if ! kill -0 "$pid"; then cat "$RUNNER_TEMP/startup.log"; exit 1; fi
+          test -f "$root/data/device.json"
+          test ! -f "$root/data/startup-error.txt"
+          kill "$pid"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: DazeDev-${{ matrix.platform }}
+          path: |
+            artifacts/*.zip
+            artifacts/*.tar.gz
+          if-no-files-found: error
+          retention-days: 14
