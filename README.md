@@ -41,6 +41,7 @@ I got tired of typing The Lord of the Rings into agents [(seriously, I proved it
 - **DIY agent picker:** add your own agent (ASAP).
 - **Linux Mint:** a packaged desktop release.
 - **Mobile:** an app with on-device voice input.
+- **More voice options:** use your frontier plan’s voice models for speed and accuracy (uses your subscription/API).
 
 **macOS and Linux testers wanted.** [Join us on Discord](https://discord.gg/fs4WyaQPA).
 
