@@ -82,6 +82,15 @@ class HostIntegrationTest {
             assertEquals(1,(client.request("sessions") as JSONArray).length())
             stream.close();stream=null
             assertEquals(1,(client.request("sessions") as JSONArray).length())
+            repeat(3) {
+                val reopened=TerminalStream(ssh,scope)
+                try {
+                    reopened.attach(socket,session.getString("id"),session.getString("stamp"),80,24)
+                    repeat(12) {step->reopened.resize(72+step,20+step)}
+                    assertTrue((client.request("session_context",target) as String).startsWith(session.getString("id")))
+                } finally {reopened.close()}
+                assertEquals(1,(client.request("sessions") as JSONArray).length())
+            }
             client.request("rename",JSONObject(target.toString()).put("name",args.getString("name")+"-renamed"))
             val settings=client.request("tmux_settings_read",JSONObject().put("session",session.getString("id")).put("stamp",session.getString("stamp"))) as JSONObject
             assertTrue(settings.getString("revision").isNotBlank())
