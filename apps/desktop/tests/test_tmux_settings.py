@@ -53,3 +53,14 @@ class TmuxSettingsTests(unittest.TestCase):
   with patch.object(host,'tmux',side_effect=run):
    current=host.tmux_settings_read({})
    self.assertTrue(next(o for o in current['options'] if o['name']=='window-size')['unsupported'])
+
+ def test_window_selection_validates_membership_and_stamp(self):
+  session=self.start();other=host.tmux('new-session','-d','-P','-F','#{session_id}','-s','other','sleep 60')
+  added=host.tmux('new-window','-d','-P','-F','#{window_id}','-t',session['id'],'sleep 60')
+  args={'session':session['id'],'stamp':session['stamp']}
+  result=host.tmux_window_select(dict(args,window=added))
+  self.assertTrue(next(w for w in result['windows'] if w['id']==added)['active'])
+  foreign=host.tmux('list-windows','-t',other,'-F','#{window_id}').splitlines()[0]
+  with self.assertRaisesRegex(RuntimeError,'Window changed'):host.tmux_window_select(dict(args,window=foreign))
+  with self.assertRaisesRegex(RuntimeError,'Session changed'):host.tmux_window_select(dict(args,stamp='stale',window=added))
+  with self.assertRaises(ValueError):host.tmux_window_select({'window':added})

@@ -20,8 +20,9 @@ import org.json.JSONArray
 import org.json.JSONObject
 
 enum class ConnectionPhase { Disconnected, Connecting, Connected }
+data class TmuxWindow(val id:String,val name:String,val active:Boolean)
 data class UserMessage(val id: Long, val text: String)
-data class HostSummary(val profile: ConnectionProfile, val phase: ConnectionPhase, val workspaceCount: Int)
+data class HostSummary(val profile: ConnectionProfile, val phase: ConnectionPhase, val workspaceCount: Int, val fingerprint: String = "", val folders:List<WorkspaceFolder> = emptyList())
 data class DazeDevMobileUiState(
     val profile: ConnectionProfile = ConnectionProfile(),
     val hosts: List<HostSummary> = emptyList(),
@@ -48,6 +49,9 @@ data class DazeDevMobileUiState(
     val challengeHost: String = "",
     val challengeHostId: String = "",
     val conflict: Boolean = false,
+    val recoveryDraft: Boolean = false,
+    val draftReview: JSONObject? = null,
+    val windows: List<TmuxWindow> = emptyList(),
     val message: UserMessage? = null,
 )
 
@@ -84,11 +88,11 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     }
     init {store.loadAll().forEach {hosts[it.id]=HostState(it)};publishHosts()}
     private fun current(): HostState? = hosts[_uiState.value.profile.id]
-    private fun publishHosts() { _uiState.update {it.copy(hosts=hosts.values.map {h->HostSummary(h.profile,h.phase,h.shared?.folders()?.size?:0)})} }
+    private fun publishHosts() { _uiState.update {it.copy(hosts=hosts.values.map {h->HostSummary(h.profile,h.phase,h.shared?.folders()?.size?:0,h.fingerprint,h.shared?.folders().orEmpty())})} }
     private fun publish(h: HostState) {
         publishHosts()
         if (_uiState.value.profile.id != h.profile.id) return
-        _uiState.update {it.copy(profile=h.profile,connectionPhase=h.phase,folders=h.shared?.folders().orEmpty(),sessions=h.sessions,repositories=h.repositories,agents=h.agents,conflict=h.conflict,isRefreshing=h.refreshing,isCreating=h.creating,endingSessionName=h.ending)}
+        _uiState.update {it.copy(profile=h.profile,connectionPhase=h.phase,folders=h.shared?.folders().orEmpty(),sessions=h.sessions,repositories=h.repositories,agents=h.agents,conflict=h.conflict,recoveryDraft=store.draft(h.profile.id)!=null,isRefreshing=h.refreshing,isCreating=h.creating,endingSessionName=h.ending)}
     }
     fun showHosts() {closeTerminal();_uiState.update {it.copy(showHosts=true,selectedFolder=null,selectedSessionName=null,selectedSessionId=null)}}
     fun newHost() {closeTerminal();_uiState.update {it.copy(profile=ConnectionProfile(),showHosts=false,connectionPhase=ConnectionPhase.Disconnected,selectedFolder=null,selectedSessionName=null)}}
@@ -146,7 +150,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     }
     private fun openSession(h:HostState,id:String,stamp:String,name:String) {
         closeTerminal()
-        _uiState.update {it.copy(selectedSessionName=name,selectedSessionId=id,selectedStamp=stamp,selectedTargetHost=h.profile.id,selectedTargetLabel=h.profile.name.ifBlank {h.profile.host},tmuxSettings=null,terminalEpoch=attachmentGeneration)}
+        _uiState.update {it.copy(selectedSessionName=name,selectedSessionId=id,selectedStamp=stamp,selectedTargetHost=h.profile.id,selectedTargetLabel=h.profile.name.ifBlank {h.profile.host},tmuxSettings=null,windows=emptyList(),terminalEpoch=attachmentGeneration)}
         if(!foreground)return
         val generation=attachmentGeneration
         attachment=viewModelScope.launch {
@@ -161,7 +165,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
             catch(e:Exception){stream?.close();if(generation==attachmentGeneration)postMessage(e.message?:"Terminal connection failed. Refresh to retry.")}
         }
     }
-    private fun closeTerminal() {attachmentGeneration++;attachment?.cancel();attachment=null;_uiState.value.terminal?.close();_uiState.update {it.copy(terminal=null)}}
+    private fun closeTerminal() {attachmentGeneration++;attachment?.cancel();attachment=null;_uiState.value.terminal?.close();_uiState.update {it.copy(terminal=null,terminalEpoch=attachmentGeneration,tmuxSettings=null,windows=emptyList(),draftReview=null)}}
     fun refreshTerminal() {val s=_uiState.value;val h=hosts[s.selectedTargetHost]?:return;openSession(h,s.selectedSessionId?:return,s.selectedStamp?:return,s.selectedSessionName.orEmpty())}
     suspend fun prepareInputTarget():String {
         val state=_uiState.value
@@ -195,11 +199,41 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
             if(_uiState.value.terminalEpoch==state.terminalEpoch)_uiState.update {it.copy(tmuxSettings=result)}
         }catch(e:Exception){postMessage(e.message?:"Settings changed. Refresh before applying.")}}
     }
+    fun readWindows() {val state=_uiState.value;val h=hosts[state.selectedTargetHost]?:return
+        viewModelScope.launch {try {
+            val result=h.client.request("tmux_settings_read",JSONObject().put("session",state.selectedSessionId).put("stamp",state.selectedStamp)) as JSONObject
+            val rows=result.getJSONArray("windows")
+            if(_uiState.value.terminalEpoch==state.terminalEpoch)_uiState.update {it.copy(windows=(0 until rows.length()).map {i->val w=rows.getJSONObject(i);TmuxWindow(w.getString("id"),w.getString("name"),w.getBoolean("active"))})}
+        }catch(e:Exception){postMessage(e.message?:"Could not read tmux windows.")}}
+    }
+    fun selectWindow(id:String) {val state=_uiState.value;val h=hosts[state.selectedTargetHost]?:return
+        viewModelScope.launch {try {
+            h.client.request("tmux_window_select",JSONObject().put("session",state.selectedSessionId).put("stamp",state.selectedStamp).put("window",id))
+            if(_uiState.value.terminalEpoch==state.terminalEpoch)dismissWindows()
+        }catch(e:Exception){postMessage(e.message?:"Window changed; refresh before choosing.")}}
+    }
+    fun dismissWindows(){_uiState.update {it.copy(windows=emptyList())}}
+    fun reviewDraft() {val h=current()?:return
+        viewModelScope.launch {try {
+            val base=store.draftBase(h.profile.id)?:error("This draft has no recovery base. It is kept on this phone; reload before making a fresh edit.")
+            val draft=store.draft(h.profile.id)?:error("No saved draft.")
+            val fresh=SharedProfile(h.client.request("profile_load") as JSONObject);fresh.rebindOwner(h.profile.id,h.fingerprint)
+            val merged=ProfileMerge.reapply(base,draft,fresh.document)
+            h.shared=fresh;publish(h)
+            if(current()===h)_uiState.update {it.copy(draftReview=merged)}
+        }catch(e:Exception){postMessage(e.message?:"Draft cannot be safely reapplied. It remains saved.")}}
+    }
+    fun discardDraft(){val h=current()?:return;store.clearDraft(h.profile.id);h.conflict=false;dismissDraftReview();publish(h)}
+    fun dismissDraftReview(){_uiState.update {it.copy(draftReview=null)}}
+    fun applyDraftReview() {val h=current()?:return;val review=_uiState.value.draftReview?:return
+        viewModelScope.launch {try {save(h,SharedProfile(review),recovery=true);dismissDraftReview()}catch(e:Exception){postMessage(e.message?:"Host changed again. Draft remains saved; review again.")}}
+    }
     fun dismissTmuxSettings(){_uiState.update {it.copy(tmuxSettings=null)}}
     fun leaveTerminal() {closeTerminal();_uiState.update {it.copy(selectedSessionName=null,selectedSessionId=null,selectedTargetHost=null)}}
     fun sendInput(input:String) {if(!_uiState.value.terminal.let {it?.send(input.toByteArray())==true})postMessage("Input was not sent. Reconnect the terminal; input is never replayed.")}
-    private suspend fun save(h:HostState, draft:SharedProfile) = h.edits.withLock {
-        store.retainDraft(h.profile.id,draft.document)
+    private suspend fun save(h:HostState, draft:SharedProfile,recovery:Boolean=false) = h.edits.withLock {
+        require(recovery || store.draft(h.profile.id)==null){"Review the saved draft before making another edit. Your draft is kept."}
+        store.retainDraft(h.profile.id,draft.document,h.shared?.document)
         try {
             val result=h.client.request("profile_save",JSONObject().put("profile",draft.document).put("revision",draft.revision)) as JSONObject
             h.shared=SharedProfile(result);h.conflict=false;store.clearDraft(h.profile.id);publish(h)
@@ -209,6 +243,8 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     fun adoptSession(name:String) {val h=current()?:return;val s=h.sessions.firstOrNull {it.name==name}?:return;viewModelScope.launch {try {val draft=SharedProfile(requireNotNull(h.shared).document);draft.addSession(h.profile.id,h.fingerprint,JSONObject().put("id",s.id).put("name",s.name).put("stamp",s.stamp).put("agent",s.currentCommand),"");save(h,draft)}catch(e:Exception){postMessage(e.message?:"Could not save workspace. Your draft is retained.")}}}
     fun createSession(launch:SessionLaunch) {
         val h=current()?:return;if(h.creating)return
+        if(store.draft(h.profile.id)!=null){postMessage("Review the saved draft before starting more terminals.");return}
+        val navigationGeneration=attachmentGeneration
         viewModelScope.launch {
             h.creating=true;publish(h)
             val request=launch.arguments().apply {remove("operation")}.put("count",launch.count).put("workspaceId",launch.workspaceId).put("workspaceName",launch.workspaceName).toString()
@@ -223,12 +259,14 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                     val args=launch.arguments().put("operation","$operation-$i").put("name",if(launch.count==1)launch.name else "${launch.name}-${i+1}")
                     val session=h.client.request("create",args) as JSONObject
                     created.add(session)
-                    workspace=draft.addSession(h.profile.id,h.fingerprint,session.put("agent",launch.agent),launch.path,workspace,launch.workspaceName)
+                    workspace=draft.addSession(h.profile.id,h.fingerprint,session.put("agent",launch.agent).put("model",launch.model).put("effort",launch.effort).put("identity",launch.identity).put("operation","$operation-$i"),launch.path,workspace,launch.workspaceName)
                 }
                 save(h,draft);store.completeLaunch(h.profile.id,request);refresh(h)
-                val first=created.first();openSession(h,first.getString("id"),first.getString("stamp"),first.getString("name"))
+                val first=created.first()
+                if(attachmentGeneration==navigationGeneration && current()===h && !_uiState.value.showHosts)openSession(h,first.getString("id"),first.getString("stamp"),first.getString("name"))
+                else postMessage("Created ${created.size} terminals on ${h.profile.name.ifBlank {h.profile.host}}.")
             }catch(e:Exception){
-                if(created.isNotEmpty() && draft!=null)store.retainDraft(h.profile.id,draft.document)
+                if(created.isNotEmpty() && draft!=null)store.retainDraft(h.profile.id,draft.document,h.shared?.document)
                 postMessage((e.message?:"Session creation failed.")+" Refresh before retrying; any created sessions and unsaved draft are retained.")
                 runCatching {refresh(h)}
             } finally {h.creating=false;publish(h)}
@@ -236,7 +274,10 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     }
     fun renameSession(id:String,stamp:String,name:String) {val h=current()?:return;viewModelScope.launch {try {h.client.request("rename",JSONObject().put("id",id).put("stamp",stamp).put("name",name));refresh(h)}catch(e:Exception){postMessage(e.message?:"Could not rename this session.")}}}
     fun endSession(id:String,stamp:String,name:String) {val h=current()?:return;viewModelScope.launch {try {h.ending=name;publish(h);h.client.request("destroy",JSONObject().put("id",id).put("stamp",stamp));refresh(h)}catch(e:Exception){postMessage(e.message?:"Could not end this session.")}finally {h.ending=null;publish(h)}}}
-    fun answerHostKeyChallenge(id:Long,trust:Boolean){val hostId=_uiState.value.challengeHostId;hosts[hostId]?.prompts?.answer(id,trust);challenges.remove(hostId);publishChallenge()}
+    fun answerHostKeyChallenge(hostId:String,id:Long,trust:Boolean){
+        if(challenges[hostId]?.id!=id)return
+        hosts[hostId]?.prompts?.answer(id,trust);challenges.remove(hostId);publishChallenge()
+    }
     fun setForeground(value:Boolean){foreground=value;if(!value)closeTerminal()else if(_uiState.value.selectedSessionId!=null)refreshTerminal()}
     fun consumeMessage(id:Long){_uiState.update {if(it.message?.id==id)it.copy(message=null)else it}}
     private fun postMessage(text:String){_uiState.update {it.copy(message=UserMessage(ids.getAndIncrement(),text))}}

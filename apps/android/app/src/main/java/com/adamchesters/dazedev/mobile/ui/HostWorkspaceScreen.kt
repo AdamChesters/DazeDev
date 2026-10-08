@@ -18,10 +18,12 @@ import androidx.compose.ui.unit.dp
 @Composable
 fun HostWorkspaceScreen(state:DazeDevMobileUiState,padding:PaddingValues,viewModel:MainViewModel) {
     val context=LocalContext.current
-    var folderEdit by remember {mutableStateOf<WorkspaceFolder?>(null)}
-    var folderName by remember {mutableStateOf("")}
-    var folderRemove by remember {mutableStateOf<WorkspaceFolder?>(null)}
+    var discardDraft by remember(state.profile.id){mutableStateOf(false)}
+    var folderEdit by remember(state.profile.id) {mutableStateOf<WorkspaceFolder?>(null)}
+    var folderName by remember(state.profile.id) {mutableStateOf("")}
+    var folderRemove by remember(state.profile.id) {mutableStateOf<WorkspaceFolder?>(null)}
     var notices by remember {mutableStateOf<String?>(null)}
+    if(discardDraft)AlertDialog(onDismissRequest={discardDraft=false},title={Text("Discard saved draft?")},text={Text("This removes the unsaved workspace edits from this phone. The host profile and terminal sessions keep running.")},confirmButton={TextButton(onClick={viewModel.discardDraft();discardDraft=false}){Text("Discard draft")}},dismissButton={TextButton(onClick={discardDraft=false}){Text("Keep draft")}})
     folderEdit?.let {folder->AlertDialog(onDismissRequest={folderEdit=null},title={Text("Rename workspace")},text={OutlinedTextField(folderName,{folderName=it},label={Text("Name")})},confirmButton={TextButton(onClick={viewModel.editWorkspace(folder.id,name=folderName);folderEdit=null},enabled=folderName.isNotBlank()){Text("Save")}},dismissButton={TextButton(onClick={folderEdit=null}){Text("Cancel")}})}
     folderRemove?.let {folder->AlertDialog(onDismissRequest={folderRemove=null},title={Text("Remove workspace?")},text={Text("Remove ${folder.name} from the shared profile. Its terminal sessions keep running.")},confirmButton={TextButton(onClick={viewModel.editWorkspace(folder.id,remove=true);folderRemove=null}){Text("Remove workspace")}},dismissButton={TextButton(onClick={folderRemove=null}){Text("Cancel")}})}
     if(notices!=null)AlertDialog(onDismissRequest={notices=null},title={Text("Licenses and credits")},text={Text(notices.orEmpty(),modifier=Modifier.verticalScroll(rememberScrollState()))},confirmButton={TextButton(onClick={notices=null}){Text("Close")}})
@@ -54,6 +56,7 @@ fun HostWorkspaceScreen(state:DazeDevMobileUiState,padding:PaddingValues,viewMod
                 Text("Workspace changed on another device. Your unsaved draft is kept on this phone.",modifier=Modifier.padding(16.dp))
                 TextButton(onClick=viewModel::reloadProfile){Text("Reload host profile; keep draft")}
             }
+            if(state.recoveryDraft){TextButton(onClick=viewModel::reviewDraft){Text("Review and reapply saved draft")};TextButton(onClick={discardDraft=true}){Text("Discard saved draft")}}
             if(state.selectedFolder==null) {
                 TextButton(onClick={viewModel.selectFolder("__sessions")},modifier=Modifier.padding(8.dp)){Text("Discover or start a terminal")}
                 LazyColumn(contentPadding=PaddingValues(16.dp),verticalArrangement=Arrangement.spacedBy(8.dp)) {
@@ -80,7 +83,7 @@ fun HostWorkspaceScreen(state:DazeDevMobileUiState,padding:PaddingValues,viewMod
                 Text(folder?.name.orEmpty(),style=MaterialTheme.typography.titleLarge,modifier=Modifier.padding(16.dp))
                 LazyColumn(contentPadding=PaddingValues(16.dp),verticalArrangement=Arrangement.spacedBy(8.dp)) {
                     items(folder?.rows.orEmpty(),key={it.paneId}) {row->OutlinedButton(onClick={viewModel.selectPane(row)},modifier=Modifier.fillMaxWidth().heightIn(min=64.dp)){
-                        Column {Text(row.name);Text(if(row.hostKey.isBlank())"Target needs refresh" else if(row.hostId==state.profile.id)"Open terminal" else "Another host · connect its saved target")}
+                        Column {Text(row.name);val target=state.hosts.firstOrNull {it.fingerprint==row.hostKey && row.hostKey.isNotBlank()};Text(target?.let {"${it.profile.name.ifBlank {it.profile.host}} · ${it.phase}"}?:"Connect the saved target host") }
                     }}
                 }
             }

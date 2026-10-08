@@ -16,6 +16,7 @@ env=dict(PATH='/usr/bin:/bin',HOME=str(p/'home'),XDG_CONFIG_HOME=str(p/'config')
 (p/'fixture-socket.txt').write_text(fixture_socket)
 (p/'fixture-host-source.txt').write_text(str(pathlib.Path(__file__).resolve().parents[2]/'desktop/src-tauri/resources/host.py'))
 class Server(paramiko.ServerInterface):
+ def __init__(self):self.pty_requests={};self.masters={};self.processes={}
  def get_allowed_auths(self,u):return 'publickey,password,keyboard-interactive'
  def check_auth_none(self,u):
   events.append([u,'none']);
@@ -29,10 +30,18 @@ class Server(paramiko.ServerInterface):
   events.append([u,'publickey']);return paramiko.AUTH_SUCCESSFUL if u=='key-user' and k==client_key else paramiko.AUTH_FAILED
  def check_channel_request(self,k,i):return paramiko.OPEN_SUCCEEDED if k=='session' else paramiko.OPEN_FAILED_ADMINISTRATIVELY_PROHIBITED
  def check_channel_pty_request(self,c,term,width,height,pixelwidth,pixelheight,modes):
-  self.pty_size=(width,height);self.pty_term=term.decode();return options.real_host
+  self.pty_requests[c.get_id()]=((width,height),term.decode());return options.real_host
  def check_channel_window_change_request(self,c,width,height,pixelwidth,pixelheight):
-  master=getattr(self,'master',None)
-  if master is not None:fcntl.ioctl(master,termios.TIOCSWINSZ,struct.pack('HHHH',height,width,pixelheight,pixelwidth))
+  request=self.pty_requests.get(c.get_id())
+  if request:self.pty_requests[c.get_id()]=((width,height),request[1])
+  master=self.masters.get(c.get_id())
+  if master is not None:
+   fcntl.ioctl(master,termios.TIOCSWINSZ,struct.pack('HHHH',height,width,pixelheight,pixelwidth))
+   # This subprocess PTY has no interactive login assigning a foreground group.
+   pid=self.processes.get(c.get_id())
+   if pid:
+    try:os.killpg(pid,signal.SIGWINCH)
+    except ProcessLookupError:pass
   return True
  def check_channel_exec_request(self,c,cmd):
   if options.real_host:
@@ -40,10 +49,11 @@ class Server(paramiko.ServerInterface):
    def run():
     master=None
     try:
-     if hasattr(self,'pty_size'):
-      master,slave=pty.openpty();self.master=master
-      width,height=self.pty_size;fcntl.ioctl(master,termios.TIOCSWINSZ,struct.pack('HHHH',height,width,0,0))
-      process=subprocess.Popen(cmd.decode(),shell=True,stdin=slave,stdout=slave,stderr=slave,env=dict(env,TERM=self.pty_term),start_new_session=True)
+     if c.get_id() in self.pty_requests:
+      master,slave=pty.openpty();self.masters[c.get_id()]=master
+      (width,height),pty_term=self.pty_requests[c.get_id()];fcntl.ioctl(master,termios.TIOCSWINSZ,struct.pack('HHHH',height,width,0,0))
+      process=subprocess.Popen(cmd.decode(),shell=True,stdin=slave,stdout=slave,stderr=slave,env=dict(env,TERM=pty_term),start_new_session=True)
+      self.processes[c.get_id()]=process.pid
       os.close(slave)
       def send_input():
        try:
@@ -66,7 +76,8 @@ class Server(paramiko.ServerInterface):
      status=process.wait();c.send_exit_status(status if status>=0 else 128-status)
     except (OSError,EOFError):pass
     finally:
-     if master is not None:os.close(master)
+     self.processes.pop(c.get_id(),None)
+     if master is not None:self.masters.pop(c.get_id(),None);os.close(master)
      c.close()
    threading.Thread(target=run,daemon=True).start();return True
   def reply():

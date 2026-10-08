@@ -699,6 +699,14 @@ def tmux_settings_read(a):
     result['revision']=hashlib.sha256(json.dumps(result,sort_keys=True).encode()).hexdigest()
     return result
 
+def tmux_window_select(a):
+    if not a.get('session') or not a.get('stamp') or not a.get('window'):
+        raise ValueError('A current session, stamp and window are required')
+    current = tmux_settings_read(a)
+    # Membership and session stamp are checked before changing shared tmux focus.
+    tmux('select-window', '-t', current['window'])
+    return tmux_settings_read(a)
+
 def tmux_settings_apply(a):
     name=a.get('name')
     if name not in TMUX_SETTINGS: raise ValueError('Unsupported tmux setting')
@@ -777,6 +785,7 @@ def dispatch(method,a):
         return BROWSER.complete(a) if BROWSER else False
     file_methods = {"upload_preflight":upload_preflight,"upload_begin":upload_begin,"upload_chunk":upload_chunk,"upload_finish":upload_finish,"upload_abort":upload_abort,"documents":documents,"file_read":file_read,"image_read":image_read,"document_read":document_read,"document_save":document_save,"terminal_status":terminal_status}
     if method=='tmux_settings_read': return tmux_settings_read(a)
+    if method=='tmux_window_select': return tmux_window_select(a)
     if method=='tmux_settings_apply': return tmux_settings_apply(a)
     if method in file_methods: return file_methods[method](a)
     if method=='process_context': return process_context(a['pid'])

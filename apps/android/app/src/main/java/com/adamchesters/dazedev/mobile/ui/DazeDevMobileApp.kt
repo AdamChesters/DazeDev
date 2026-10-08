@@ -18,6 +18,8 @@ import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.setValue
 import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.ui.platform.LocalContext
 import androidx.lifecycle.Lifecycle
@@ -29,6 +31,7 @@ import kotlinx.coroutines.launch
 @Composable
 fun DazeDevMobileApp(viewModel: MainViewModel) {
     val uiState by viewModel.uiState.collectAsStateWithLifecycle()
+    var showSwitcher by remember {mutableStateOf(false)}
     val context = LocalContext.current
     val lifecycleOwner = LocalLifecycleOwner.current
     val snackbarHostState = remember { SnackbarHostState() }
@@ -119,6 +122,8 @@ fun DazeDevMobileApp(viewModel: MainViewModel) {
                 onRefresh = viewModel::refreshTerminal,
                 onSend = viewModel::sendInput,
                 onSettings = viewModel::readTmuxSettings,
+                onSwitchTerminal = {showSwitcher=true},
+                onWindows = viewModel::readWindows,
                 onPrepareTarget = viewModel::prepareInputTarget,
                 onValidateTarget = viewModel::validateInputTarget,
                 onMessage = { text ->
@@ -131,11 +136,15 @@ fun DazeDevMobileApp(viewModel: MainViewModel) {
         }
     }
 
+    if(showSwitcher) TerminalSwitcher(uiState,{showSwitcher=false}) {hostId,row->showSwitcher=false;viewModel.selectHost(hostId);viewModel.selectPane(row)}
+    if(uiState.windows.isNotEmpty()) TmuxWindowPicker(uiState.windows,viewModel::selectWindow,viewModel::dismissWindows)
+    uiState.draftReview?.let {review->DraftReview(review,viewModel::applyDraftReview,viewModel::dismissDraftReview)}
     uiState.tmuxSettings?.let {settings->TmuxSettingsSheet(settings,viewModel::applyTmuxSetting,viewModel::dismissTmuxSettings)}
     uiState.hostKeyChallenge?.let { challenge ->
+        val promptHostId=uiState.challengeHostId
         AlertDialog(
             onDismissRequest = {
-                viewModel.answerHostKeyChallenge(challenge.id, false)
+                viewModel.answerHostKeyChallenge(promptHostId,challenge.id, false)
             },
             title = { Text("Verify SSH server") },
             text = {
@@ -145,14 +154,14 @@ fun DazeDevMobileApp(viewModel: MainViewModel) {
             },
             confirmButton = {
                 Button(onClick = {
-                    viewModel.answerHostKeyChallenge(challenge.id, true)
+                    viewModel.answerHostKeyChallenge(promptHostId,challenge.id, true)
                 }) {
                     Text("Trust key")
                 }
             },
             dismissButton = {
                 TextButton(onClick = {
-                    viewModel.answerHostKeyChallenge(challenge.id, false)
+                    viewModel.answerHostKeyChallenge(promptHostId,challenge.id, false)
                 }) {
                     Text("Cancel")
                 }

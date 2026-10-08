@@ -9,6 +9,8 @@ import androidx.compose.runtime.*
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalConfiguration
+import androidx.compose.ui.layout.onSizeChanged
+import androidx.compose.ui.unit.IntSize
 import androidx.compose.ui.viewinterop.AndroidView
 import com.adamchesters.dazedev.mobile.ssh.TerminalStream
 import java.io.ByteArrayInputStream
@@ -20,7 +22,10 @@ class TerminalController {
     var web:WebView?=null
     var ready by mutableStateOf(false)
     fun call(method:String,argument:String="") {web?.evaluateJavascript("window.daze?.$method($argument)",null)}
-    fun paste(text:String) {if(ready && text.toByteArray().size<=65_536)call("paste",JSONObject.quote(text))}
+    fun paste(text:String):Boolean {
+        if(!ready || text.toByteArray().size>65_536)return false
+        call("paste",JSONObject.quote(text));return true
+    }
     fun clear(){call("clear")}
 }
 
@@ -30,6 +35,7 @@ fun InteractiveTerminal(stream:TerminalStream,controller:TerminalController,onMe
     val context=LocalContext.current
     val fontScale=LocalConfiguration.current.fontScale
     val ready=remember(stream){CompletableDeferred<Unit>()}
+    var viewport by remember(stream){mutableStateOf(IntSize.Zero)}
     val acknowledgements=remember(stream){java.util.concurrent.ConcurrentHashMap<Long,CompletableDeferred<Unit>>()}
     val web=remember(stream) {
         WebView(context).apply {
@@ -82,6 +88,10 @@ fun InteractiveTerminal(stream:TerminalStream,controller:TerminalController,onMe
         }catch(e:CancellationException){throw e}catch(e:Exception){stream.close();onMessage(e.message?:"Terminal stopped.")}
     }
     LaunchedEffect(web,fontScale){withTimeout(15_000){ready.await()};controller.call("font",fontScale.toString())}
+    LaunchedEffect(web,viewport){
+        withTimeout(15_000){ready.await()}
+        if(viewport.width>0 && viewport.height>0)controller.call("viewport","${viewport.width},${viewport.height}")
+    }
     DisposableEffect(web) {onDispose {controller.clear();controller.web=null;controller.ready=false;web.removeJavascriptInterface("DazeBridge");web.destroy();stream.close();acknowledgements.values.forEach {it.cancel()};acknowledgements.clear()}}
-    AndroidView(factory={web},modifier=modifier)
+    AndroidView(factory={web},modifier=modifier.onSizeChanged {viewport=it})
 }

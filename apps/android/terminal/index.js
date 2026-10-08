@@ -117,6 +117,22 @@ function updateMods() {
   }
 }
 const drawer = document.getElementById("keys");
+const container = document.getElementById("terminal");
+let nativeViewport = null;
+function layout() {
+  const width = nativeViewport?.width ?? innerWidth;
+  const height = nativeViewport?.height ?? innerHeight;
+  document.documentElement.style.width = `${width}px`;
+  document.documentElement.style.height = `${height}px`;
+  document.body.style.width = `${width}px`;
+  document.body.style.height = `${height}px`;
+  drawer.style.maxHeight = `${height * 0.4}px`;
+  const keysHeight = drawer.hidden ? 0 : Math.ceil(drawer.getBoundingClientRect().height);
+  container.style.height = `${Math.max(0, height - keysHeight)}px`;
+  requestAnimationFrame(() => fit.fit());
+}
+addEventListener("resize", layout);
+new ResizeObserver(layout).observe(drawer);
 const heldModifiers = new Set(),
   usedModifiers = new Set();
 let modifierEpoch = 0;
@@ -235,7 +251,7 @@ window.daze = {
   },
   keys: (visible) => {
     drawer.hidden = !visible;
-    fit.fit();
+    layout();
   },
   clear: () => {
     stopRepeat();
@@ -255,6 +271,11 @@ window.daze = {
     term.options.fontSize = Math.min(28, Math.max(14, 14 * scale));
     fit.fit();
   },
+  viewport: (width, height) => {
+    // Android may lay out the WebView after its first document measurement.
+    nativeViewport = {width: width / devicePixelRatio, height: height / devicePixelRatio};
+    layout();
+  },
   dispose: () => {
     stopRepeat();
     term.dispose();
@@ -264,6 +285,7 @@ new ResizeObserver(() => fit.fit()).observe(
   document.getElementById("terminal"),
 );
 requestAnimationFrame(() => {
+  layout();
   fit.fit();
   ready = true;
   bridge("ready", { cols: term.cols, rows: term.rows });

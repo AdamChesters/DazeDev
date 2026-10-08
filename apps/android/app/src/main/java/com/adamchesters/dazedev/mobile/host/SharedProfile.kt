@@ -65,8 +65,8 @@ class SharedProfile(document: JSONObject) {
         val pid=java.util.UUID.randomUUID().toString()
         val pane=JSONObject().put("id",pid).put("hostId",hostId).put("hostKey",fingerprint).put("sessionId",session.getString("id"))
             .put("stamp",session.getString("stamp")).put("name",session.getString("name")).put("directory",directory)
-            .put("shell",true).put("repo","").put("identity","").put("agent",session.optString("agent","shell"))
-            .put("model","").put("effort","").put("operation","")
+            .put("shell",session.optString("agent","shell")=="shell").put("repo","").put("identity",session.optString("identity")).put("agent",session.optString("agent","shell"))
+            .put("model",session.optString("model")).put("effort",session.optString("effort")).put("operation",session.optString("operation"))
         val workspaces=document.getJSONArray("workspaces")
         if(workspaceId.isNotBlank()) {
             val existing=(0 until workspaces.length()).map {workspaces.getJSONObject(it)}.firstOrNull {it.getString("id")==workspaceId}

@@ -8,6 +8,7 @@ import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.PaddingValues
+import androidx.compose.foundation.layout.WindowInsets
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
@@ -88,6 +89,8 @@ fun TerminalScreen(
     onRefresh: () -> Unit,
     onSend: (String) -> Unit,
     onSettings: () -> Unit,
+    onSwitchTerminal: () -> Unit,
+    onWindows: () -> Unit,
     onPrepareTarget: suspend () -> String,
     onValidateTarget: suspend (String) -> Boolean,
     onMessage: (String) -> Unit,
@@ -110,7 +113,7 @@ fun TerminalScreen(
             try {
                 val token=frozenTarget?:onPrepareTarget()
                 if(!onValidateTarget(token)) {onMessage("The recording target changed or disconnected. Your draft is saved. Review before choosing the current terminal.");return@launch}
-                terminalController.paste(input)
+                if(!terminalController.paste(input))onMessage("Draft was not pasted. Wait for the terminal, or reduce it to 64 KiB. Your draft is saved.")
             }catch(e:Exception){onMessage(e.message?:"Draft remains saved; input was not sent.")}
         }
     }
@@ -164,13 +167,14 @@ fun TerminalScreen(
             .imePadding(),
     ) {
         TopAppBar(
+            windowInsets=WindowInsets(0,0,0,0),
             navigationIcon = {
                 IconButton(onClick = onBack) {
                     Icon(Icons.AutoMirrored.Rounded.ArrowBack, contentDescription = "Back to sessions")
                 }
             },
             title = {
-                Column {
+                TextButton(onClick=onSwitchTerminal) {Column {
                     Text(
                         text = uiState.selectedSessionName.orEmpty(),
                         maxLines=1,overflow=TextOverflow.Ellipsis,
@@ -178,11 +182,12 @@ fun TerminalScreen(
                         fontFamily = FontFamily.Monospace,
                     )
                     Text(
-                        text = "tmux on ${uiState.selectedTargetLabel}",
+                        text = "tmux on ${uiState.selectedTargetLabel} · switch",
+                        maxLines=1,overflow=TextOverflow.Ellipsis,
                         style = MaterialTheme.typography.bodyMedium,
                         color = MaterialTheme.colorScheme.onSurfaceVariant,
                     )
-                }
+                }}
             },
             actions = {
                 Row(
@@ -213,7 +218,6 @@ fun TerminalScreen(
                             )
                         }
                     }
-                    TextButton(onClick={showDraft=true}){Text("Draft / voice")}
                     IconButton(onClick = onRefresh) {
                         Icon(Icons.Rounded.Refresh, contentDescription = "Refresh terminal")
                     }
@@ -234,8 +238,10 @@ fun TerminalScreen(
             else InteractiveTerminal(stream,terminalController,onMessage,Modifier.fillMaxSize())
         }
         Row(Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()),horizontalArrangement=Arrangement.spacedBy(8.dp)) {
-            TextButton(onClick=onSettings){Text("tmux settings")}
+            TextButton(onClick={showDraft=true}){Text("Draft / voice")}
             TextButton(onClick={showKeys=!showKeys;terminalController.call("keys",showKeys.toString())}) {Text(if(showKeys)"Hide keys" else "Keys")}
+            TextButton(onClick=onWindows){Text("tmux windows")}
+            TextButton(onClick=onSettings){Text("tmux settings")}
             TextButton(onClick={scope.launch {try {frozenTarget=onPrepareTarget();drafts.edit().putString("target:$draftKey",frozenTarget).apply();onMessage("Draft now targets the current terminal.")}catch(e:Exception){onMessage("Current target is unavailable.")}}}){Text("Choose current target")}
             TextButton(onClick={input=drafts.getString("original:$draftKey",input).orEmpty();showDraft=true}){Text("Restore transcript")}
             TextButton(onClick={terminalController.call("selectAll")}){Text("Select all")}
@@ -244,7 +250,7 @@ fun TerminalScreen(
             TextButton(onClick={terminalController.call("copy")}){Text("Copy selection")}
             TextButton(onClick={
                 val clipboard=context.getSystemService(android.content.Context.CLIPBOARD_SERVICE) as android.content.ClipboardManager
-                clipboard.primaryClip?.getItemAt(0)?.coerceToText(context)?.toString()?.let {terminalController.paste(it)}
+                clipboard.primaryClip?.getItemAt(0)?.coerceToText(context)?.toString()?.let {if(!terminalController.paste(it))onMessage("Clipboard was not pasted. Wait for the terminal, or choose text smaller than 64 KiB.")}
             }){Text("Paste")}
         }
 

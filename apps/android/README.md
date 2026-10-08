@@ -11,3 +11,5 @@ Application ID: `com.adamchesters.dazedev.mobile`. It installs alongside the for
 Moonshine English Medium Streaming stays local after preparation. First use downloads about 269 MB with consent. Pasting a draft does not press Enter. No remote transcription fallback is configured.
 
 Built with AndroidX/Compose, JSch, xterm.js and Moonshine. Full notices are available offline in Licenses and credits.
+
+Device-only voice tests never download models. Build `./gradlew assembleDebugAndroidTest`, install the debug app and test APK, then run `MoonshineDeviceTest#modelManifest` with AndroidJUnitRunner to inspect the pinned runtime's download manifest. After separately preparing and verifying the model, run `MoonshineDeviceTest#offlineInferenceWithExplicitlyStagedFixture` with `modelDirectory` and `pcmFixture` arguments. The fixture must be at most ten seconds of 16 kHz mono signed 16-bit PCM; optional `expectedPhrase` checks its transcription. Disable device networking to verify installed inference. The result records load/inference times and final PSS, not a thermal or peak-memory qualification.

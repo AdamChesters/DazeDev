@@ -5,7 +5,9 @@
 | Desktop     | `apps/desktop`, Svelte and Tauri                       | Existing Windows application; Unix build scripts share the same source. A source layout does not establish Linux/macOS release validation. |
 | Android     | `apps/android`, Kotlin and Compose, Android 9 or newer | SSH/tmux companion with host/workspace folders and one interactive terminal at a time. Separate application ID and device settings.        |
 
-Android uses the desktop host helper over authenticated SSH. Hosts need Python 3 and tmux. Saved workspace layouts stay intact; the phone uses them to order terminal rows. Credentials stay on the device. A changed workspace revision requires reloading; an unsaved draft is retained locally. Windows-local broker sessions are not available through this SSH transport.
+Android uses the desktop host helper over authenticated SSH. Hosts need Python 3 and tmux. Saved workspace layouts stay intact; the phone uses them to order terminal rows. Credentials stay on the device. A changed workspace revision keeps an unsaved draft locally. Reload the host profile, then review and reapply edits that do not conflict with newer changes. Windows-local broker sessions are not available through this SSH transport.
+
+Tap the terminal title to search connected hosts and their workspace terminals. The separate tmux-window picker changes the active window for all clients attached to that session.
 
 The terminal uses the same pinned xterm implementation as desktop, with a Keys panel, native copy/paste controls and bounded SSH streams. Reconnecting discards queued input. Closing the app detaches its client and leaves tmux sessions running.
 

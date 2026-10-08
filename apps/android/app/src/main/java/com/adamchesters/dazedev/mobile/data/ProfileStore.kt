@@ -32,7 +32,12 @@ class ProfileStore(context: Context) {
         return prefs.getString(key,null)?:java.util.UUID.randomUUID().toString().also {prefs.edit().putString(key,it).apply()}
     }
     fun completeLaunch(host:String,request:String){val digest=java.security.MessageDigest.getInstance("SHA-256").digest(request.toByteArray()).joinToString(""){"%02x".format(it)};prefs.edit().remove("launch:$host:$digest").apply()}
-    fun retainDraft(host: String, document: JSONObject) { prefs.edit().putString("draft:$host",document.toString()).apply() }
+    fun retainDraft(host: String, document: JSONObject, base: JSONObject? = null) {
+        val edit=prefs.edit().putString("draft:$host",document.toString())
+        if(base!=null)edit.putString("draft-base:$host",base.toString())
+        edit.apply()
+    }
+    fun draftBase(host:String):JSONObject?=prefs.getString("draft-base:$host",null)?.let(::JSONObject)
     fun draft(host: String): JSONObject? = prefs.getString("draft:$host",null)?.let(::JSONObject)
-    fun clearDraft(host: String) { prefs.edit().remove("draft:$host").apply() }
+    fun clearDraft(host: String) { prefs.edit().remove("draft:$host").remove("draft-base:$host").apply() }
 }

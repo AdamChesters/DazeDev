@@ -57,6 +57,10 @@ class HostIntegrationTest {
             stream.resize(72,20)
             assertTrue(stream.send("stty -echo; printf '\\nPTY_OK_界\\n'\r".toByteArray()))
             try {received.await()}catch(e:Exception){throw AssertionError("PTY never ran the Unicode command; output: $output",e)}
+            val resized=StringBuilder()
+            val resizeConfirmed=async {withTimeout(10_000){attached.output.first {bytes->resized.append(bytes.toString(Charsets.UTF_8));resized.contains("SIZE_OK_19 72\r\n")}}}
+            assertTrue(stream.send("printf 'SIZE_OK_'; stty size\r".toByteArray()))
+            resizeConfirmed.await()
             val waiting=StringBuilder()
             val foregroundReady=async {withTimeout(15_000){attached.output.first {bytes->waiting.append(bytes.toString(Charsets.UTF_8));waiting.contains("WAIT_READY\r\n")}}}
             assertTrue(stream.send("printf 'WAIT_READY\\n'; sleep 30; printf 'WAIT_DONE\\n'\r".toByteArray()))

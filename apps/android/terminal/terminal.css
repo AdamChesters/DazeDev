@@ -16,7 +16,8 @@ body {
   flex-direction: column;
 }
 #terminal {
-  flex: 1;
+  flex: none;
+  height: 100%;
   min-height: 0;
   padding: 4px;
 }
