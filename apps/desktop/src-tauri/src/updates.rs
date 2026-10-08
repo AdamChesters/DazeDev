@@ -643,6 +643,15 @@ mod tests {
         assert!(github_candidate(&list, "0.2.0").unwrap().is_none());
     }
     #[test]
+    fn desktop_updater_ignores_android_releases_even_with_a_manifest() {
+        let mut android = github_fixture("99.0.0", false);
+        android["tag_name"] = serde_json::json!("android/v99.0.0");
+        android["assets"][0]["browser_download_url"] = serde_json::json!(format!("{GITHUB_DOWNLOAD}android/v99.0.0/latest.json"));
+        let list = serde_json::to_vec(&vec![android.clone(), github_fixture("0.4.0", false)]).unwrap();
+        assert_eq!(github_candidate(&list,"0.3.3-alpha.0").unwrap().unwrap().0.to_string(), "0.4.0");
+        assert!(github_candidate(&serde_json::to_vec(&vec![android]).unwrap(),"0.3.3-alpha.0").unwrap().is_none());
+    }
+    #[test]
     fn discovers_only_the_matching_github_release() {
         let list = serde_json::to_vec(&vec![github_fixture("0.2.0", false)]).unwrap();
         let (metadata, key) = github_signed("0.2.0", &format!("{GITHUB_DOWNLOAD}v0.2.0/app.zip"));

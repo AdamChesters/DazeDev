@@ -248,6 +248,26 @@ def inventory():
     warnings=[]; found=repos(profile['preferences'].get('roots',[]),warnings)
     return {'warnings':list(dict.fromkeys(warnings)), 'hostname':socket.gethostname(),'user':getpass.getuser(),'machine':MACHINE,'home':str(P.home()),'tmux':shutil.which('tmux'),'agents':agents,'identities':identities,'repos':found, 'sessions':sessions(),'observedAt':time.time(), 'profileError':profile_error}
 
+def capabilities():
+    # The companion reads only local CLI metadata; model enumeration must not contact providers.
+    agents=[]
+    for name in AGENTS:
+        path=agent_path(name)
+        if not path: continue
+        try:
+            version=run([path,'--version'],timeout=5,check=False)[:160]
+            helptext=run([path,'--help'],timeout=5,check=False)
+        except Exception:
+            version='';helptext=''
+        models=[]
+        if name=='codex':
+            cache=P.home()/'.codex/models_cache.json'
+            try:
+                models=[{'id':m['slug'],'efforts':[e.get('reasoning_effort',e.get('effort','')) for e in m.get('supported_reasoning_levels',[])]} for m in json.loads(cache.read_text()).get('models',[]) if m.get('slug')]
+            except (OSError,ValueError,KeyError): pass
+        agents.append({'id':name,'version':version,'models':models,'modelFlag':'--model' in helptext,'effortFlag':'--effort' in helptext or name=='codex'})
+    return {'agents':agents,'protocol':1,'transport':'ssh-tmux','features':['profiles','sessions','repositories','tmux-settings']}
+
 def create_session(a):
     name=a['name']
     if not re.fullmatch(r'[\w-]+',name): raise ValueError('Use letters, numbers, underscores and hyphens for session names')
@@ -762,6 +782,7 @@ def dispatch(method,a):
     if method=='process_context': return process_context(a['pid'])
     if method=='dictionary_read': return dictionary_read(a)
     if method=='dictionary_write': return dictionary_write(a)
+    if method=='capabilities': return capabilities()
     if method=='ping': return {'machine':MACHINE,'user':getpass.getuser(),'hostname':socket.gethostname()}
     if method=='profile_load': return load_profile()
     if method=='profile_save': return save_profile(a['profile'],a['revision'])

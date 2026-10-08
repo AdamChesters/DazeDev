@@ -10,3 +10,13 @@ artifacts/
 **/src-tauri/gen/
 **/src-tauri/transcribe-libs/
 **/src-tauri/icons/icon.icns
+
+# Android local outputs and machine configuration
+.gradle/
+.kotlin/
+**/build/
+local.properties
+*.apk
+*.aab
+*.jks
+*.keystore

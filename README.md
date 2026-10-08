@@ -60,4 +60,6 @@ I love making things. Anything I've ever built has been to have fun, share fun, 
 
 [Discord](https://discord.gg/fs4WyaQPA) · [AdamCh.com](https://adamch.com) · [More projects](https://github.com/AdamChesters)
 
+The Android companion lives in [apps/android](apps/android/README.md). See [platform support](docs/PLATFORM-SUPPORT.md) for its current scope and build requirements.
+
 Built with Tauri, Svelte, xterm.js and the projects in [Licenses and credits](docs/CREDITS.md). Full [third-party notices](apps/desktop/src-tauri/licenses/) are bundled with the app.

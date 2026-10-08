@@ -5,10 +5,11 @@
     "dev": "npm --prefix apps/desktop run dev",
     "build": "npm --prefix apps/desktop run build",
     "check": "npm --prefix apps/desktop run check",
-    "test": "npm --prefix apps/desktop test",
+    "test": "npm --prefix apps/desktop run test --",
     "gate": "npm --prefix apps/desktop run gate",
-    "tauri": "npm --prefix apps/desktop run tauri",
+    "tauri": "npm --prefix apps/desktop run tauri --",
     "test:host": "python3 -m unittest discover -s apps/desktop/tests -p test_*.py",
-    "test:rust": "cargo test --manifest-path apps/desktop/src-tauri/Cargo.toml --no-default-features --locked"
+    "test:rust": "cargo test --manifest-path apps/desktop/src-tauri/Cargo.toml --no-default-features --locked",
+    "android:check": "cd apps/android && ./gradlew lintDebug testDebugUnitTest assembleDebug assembleRelease"
   }
 }

@@ -1,0 +1,25 @@
+.gradle/
+.idea/
+build/
+**/build/
+local.properties
+*.iml
+captures/
+.externalNativeBuild/
+.cxx/
+*.jks
+*.keystore
+keystore.properties
+
+# Local credentials and distributable artifacts
+.env
+.env.*
+*.pem
+*.key
+id_rsa*
+id_ed25519*
+known_hosts*
+*.apk
+*.aab
+*.p12
+*.pfx
