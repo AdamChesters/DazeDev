@@ -23,7 +23,7 @@ The app preserves pending workspace changes locally before exit. Plain shell pro
 
 Each Windows release needs its portable ZIP and a signed `latest.json` asset on the same `v<version>` GitHub release. A Git tag or ZIP alone is not an update. Keep the signing key stable across releases so installed builds retain their trust in the publisher. Keep the key outside the repository and packages.
 
-After building and verifying the matching source version, prepare metadata locally:
+After building and verifying the matching source version, run from `apps/desktop` to prepare metadata locally:
 
 ```sh
 python3 scripts/github-release.py artifacts/DazeDev_<version>_windows-x64.zip \

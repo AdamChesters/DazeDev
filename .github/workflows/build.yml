@@ -3,6 +3,9 @@ on:
   push:
     branches: [main, 'feat/**']
   workflow_dispatch:
+defaults:
+  run:
+    working-directory: apps/desktop
 permissions:
   contents: read
 jobs:
@@ -27,7 +30,7 @@ jobs:
         with: { node-version: 22, cache: npm }
       - uses: dtolnay/rust-toolchain@stable
       - uses: Swatinem/rust-cache@v2
-        with: { workspaces: 'src-tauri -> target', key: portable-complete-v1 }
+        with: { workspaces: 'apps/desktop/src-tauri -> target', key: portable-complete-v1 }
       - name: Install Vulkan build tools
         shell: pwsh
         run: |
@@ -68,6 +71,6 @@ jobs:
       - uses: actions/upload-artifact@v4
         with:
           name: DazeDev-Windows-Portable
-          path: artifacts/DazeDev_*_windows-x64.zip
+          path: apps/desktop/artifacts/DazeDev_*_windows-x64.zip
           if-no-files-found: error
           retention-days: 14

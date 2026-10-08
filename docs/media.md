@@ -9,4 +9,4 @@ Matching banners for the README, AdamCh.com and social posts. Each layout uses t
 | LinkedIn post | 1200 × 627 | [PNG](assets/dazedev-linkedin.png) · [SVG](assets/dazedev-linkedin.svg) |
 | X post | 1600 × 900 | [PNG](assets/dazedev-x.png) · [SVG](assets/dazedev-x.svg) |
 
-The screenshots use sample hosts and terminal output, with one terminal highlighted while listening for voice input. The app icon comes from [the DazeDev logo](../public/brand.svg).
+The screenshots use sample hosts and terminal output, with one terminal highlighted while listening for voice input. The app icon comes from [the DazeDev logo](../apps/desktop/public/brand.svg).

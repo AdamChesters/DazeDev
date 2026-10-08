@@ -1,6 +1,9 @@
 name: Native Mac voice diagnostics
 on:
   workflow_dispatch:
+defaults:
+  run:
+    working-directory: apps/desktop
 permissions:
   contents: read
 jobs:
@@ -15,7 +18,7 @@ jobs:
         with: {node-version: 22}
       - uses: dtolnay/rust-toolchain@stable
       - uses: Swatinem/rust-cache@v2
-        with: {workspaces: 'src-tauri -> target', key: 'unix-portable-v1', cache-on-failure: true}
+        with: {workspaces: 'apps/desktop/src-tauri -> target', key: 'unix-portable-v1', cache-on-failure: true}
       - run: node scripts/prepare-runtime.mjs
       - run: cargo build --release --manifest-path src-tauri/Cargo.toml --no-default-features --features voice --example voice_smoke --locked
       - name: Native exit backtrace

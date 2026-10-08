@@ -58,4 +58,4 @@ Screenshots show the app interface with sample hosts and terminal output.
 - Keep the adjacent `data/` folder when moving or manually updating DazeDev.
 - Closing a tmux view leaves the session running. Plain shells may end; PowerShell offers background sessions.
 
-[Update help](../UPDATES.md) · [Build instructions](BUILDING.md) · [Credits](CREDITS.md)
+[Update help](../apps/desktop/UPDATES.md) · [Build instructions](BUILDING.md) · [Credits](CREDITS.md)

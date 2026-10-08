@@ -1,6 +1,9 @@
 name: Windows connection verification
 on:
   workflow_dispatch:
+defaults:
+  run:
+    working-directory: apps/desktop
 permissions:
   contents: read
 jobs:

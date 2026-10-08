@@ -1,5 +1,5 @@
 <p align="center">
-  <img src="public/brand.svg" width="80" height="80" alt="DazeDev logo" />
+  <img src="apps/desktop/public/brand.svg" width="80" height="80" alt="DazeDev logo" />
 </p>
 
 <h1 align="center">DazeDev</h1>
@@ -47,7 +47,7 @@ I got tired of typing The Lord of the Rings into agents [(seriously, I proved it
 
 In-app feedback goes straight to our Slack. Ask, get.
 
-[User guide](docs/USER-GUIDE.md) · [Updates](UPDATES.md) · [Banner downloads](docs/media.md)
+[User guide](docs/USER-GUIDE.md) · [Updates](apps/desktop/UPDATES.md) · [Banner downloads](docs/media.md)
 
 <details>
 <summary>Support DazeDev</summary>
@@ -60,4 +60,4 @@ I love making things. Anything I've ever built has been to have fun, share fun, 
 
 [Discord](https://discord.gg/fs4WyaQPA) · [AdamCh.com](https://adamch.com) · [More projects](https://github.com/AdamChesters)
 
-Built with Tauri, Svelte, xterm.js and the projects in [Licenses and credits](docs/CREDITS.md). Full [third-party notices](src-tauri/licenses/) are bundled with the app.
+Built with Tauri, Svelte, xterm.js and the projects in [Licenses and credits](docs/CREDITS.md). Full [third-party notices](apps/desktop/src-tauri/licenses/) are bundled with the app.
