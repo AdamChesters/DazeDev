@@ -22,13 +22,10 @@ fun TerminalSwitcher(state:DazeDevMobileUiState,onClose:()->Unit,onChoose:(Strin
             TextButton(onClick=onClose){Text("Close")}
             OutlinedTextField(query,{query=it},label={Text("Search host, workspace or terminal")},modifier=Modifier.fillMaxWidth())
             val entries=state.hosts.filter {it.phase==ConnectionPhase.Connected}.flatMap {host->host.folders.flatMap {folder->folder.rows.map {Triple(host,folder,it)}}}
-                .filter {(host,folder,row)->listOf(host.profile.name,host.profile.host,folder.name,row.name).any {it.contains(query,ignoreCase=true)}}
+                .filter {(host,folder,row)->listOf(host.profile.name,host.profile.host,folder.name,row.name,state.destination(row).label,state.destination(row).reference.address).any {it.contains(query,ignoreCase=true)}}
             LazyColumn(Modifier.weight(1f),verticalArrangement=Arrangement.spacedBy(8.dp),contentPadding=PaddingValues(vertical=16.dp)) {
                 items(entries,key={(host,folder,row)->"${host.profile.id}:${folder.id}:${row.paneId}"}) {(host,folder,row)->
-                    val target=state.hosts.firstOrNull {it.fingerprint==row.hostKey && row.hostKey.isNotBlank()}
-                    OutlinedButton(onClick={onChoose(host.profile.id,row)},enabled=target?.phase==ConnectionPhase.Connected,modifier=Modifier.fillMaxWidth().heightIn(min=64.dp)) {
-                        Column {Text(row.name);Text("${folder.name} · ${target?.profile?.let {it.name.ifBlank {it.host}}?:"Connect saved target host"}")}
-                    }
+                    TerminalHostCard(state,row,{onChoose(host.profile.id,row)},folder.name)
                 }
                 if(entries.isEmpty())item {Text("No matching terminals on connected hosts.")}
             }

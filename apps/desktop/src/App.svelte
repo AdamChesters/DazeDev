@@ -1958,7 +1958,9 @@
       };
     const joinedHost = device.hosts.find((h) => h.id === id);
     if (joinedHost) {
-      refreshHostIdentity(joinedHost, result, Object.values(profiles));
+      const changed = refreshHostIdentity(joinedHost, result, Object.values(profiles));
+      for (const [hostId, profile] of Object.entries(profiles))
+        if (changed.has(profile)) saved(hostId);
     }
     persistDevice();
     if (id === device.activeHost) sessions = result.sessions;

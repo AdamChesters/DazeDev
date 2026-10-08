@@ -8,7 +8,9 @@ Use `python3 scripts/check-local.py --fixture-python /path/to/venv/bin/python` w
 
 Application ID: `com.adamchesters.dazedev.mobile`. It installs alongside the former app; it cannot read another application's private settings. Passwords and passphrases are not saved. Check server fingerprints before trusting them. Windows-local sessions need a separate bridge.
 
-Moonshine English Medium Streaming stays local after preparation. First use downloads about 269 MB with consent. Pasting a draft does not press Enter. No remote transcription fallback is configured.
+Moonshine English Medium Streaming stays local after preparation. First use downloads about 269 MB with consent. Installed models skip the preparation dialog. Tap Enter to submit the reviewed voice draft and press Return; a successful submission clears the draft. Clipboard Paste only inserts text. No remote transcription fallback is configured.
+
+Terminal cards show their target host before you open them. If a host is not configured on this phone, its connection form opens with any saved non-secret details. Older workspace entries may require an SSH address. Saved Tailscale SSH targets reconnect on tap when tailnet access permits; the saved host identity is verified before opening the terminal. Plain SSH over Tailscale uses its configured SSH authentication method.
 
 Built with AndroidX/Compose, JSch, xterm.js and Moonshine. Full notices are available offline in Licenses and credits.
 

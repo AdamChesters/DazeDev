@@ -38,7 +38,9 @@ import androidx.compose.material3.TextButton
 import androidx.compose.material3.Button
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.ExperimentalMaterial3Api
-import androidx.compose.material3.FilledTonalIconButton
+import androidx.compose.material3.FilledIconButton
+import androidx.compose.material3.IconButtonDefaults
+import androidx.compose.material3.FilledTonalButton
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.LinearProgressIndicator
@@ -79,6 +81,8 @@ import com.adamchesters.dazedev.mobile.voice.VoiceInputPhase
 import com.adamchesters.dazedev.mobile.voice.VoiceInputStatus
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.withTimeout
+import kotlinx.coroutines.CancellationException
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -108,23 +112,18 @@ fun TerminalScreen(
     var frozenTarget by rememberSaveable(draftKey){mutableStateOf(drafts.getString("target:$draftKey",null))}
     val scope=rememberCoroutineScope()
     val terminalController = remember(uiState.terminalEpoch) { TerminalController() }
-    fun pasteDraft() {
-        scope.launch {
-            try {
-                val token=frozenTarget?:onPrepareTarget()
-                if(!onValidateTarget(token)) {onMessage("The recording target changed or disconnected. Your draft is saved. Review before choosing the current terminal.");return@launch}
-                if(!terminalController.paste(input))onMessage("Draft was not pasted. Wait for the terminal, or reduce it to 64 KiB. Your draft is saved.")
-            }catch(e:Exception){onMessage(e.message?:"Draft remains saved; input was not sent.")}
-        }
-    }
+    var submitting by remember(draftKey) { mutableStateOf(false) }
+    var startingVoice by remember(draftKey) { mutableStateOf(false) }
 
     var showKeys by remember(uiState.terminalEpoch) { mutableStateOf(false) }
     var voiceConsent by remember { mutableStateOf(false) }
     var showDraft by rememberSaveable(draftKey) {mutableStateOf(false)}
+    var draftMessage by remember(draftKey) {mutableStateOf("")}
+    fun reportDraft(message:String) {draftMessage=message;onMessage(message)}
     val terminalScroll = rememberScrollState()
     val terminalHorizontalScroll = rememberScrollState()
 
-    val voiceController = remember(uiState.selectedSessionId,uiState.selectedTargetHost) {
+    val voiceController = remember(draftKey) {
         VoiceInputController(
             context = context.applicationContext,
             onStatusChanged = { voiceStatus = it },
@@ -138,13 +137,72 @@ fun TerminalScreen(
         )
     }
 
+    var permissionController by remember { mutableStateOf<VoiceInputController?>(null) }
     val microphonePermission = rememberLauncherForActivityResult(
         contract = ActivityResultContracts.RequestPermission(),
     ) { granted ->
         if (!granted) {
             onMessage("Microphone permission is required for voice input.")
-        } else if (lifecycleOwner.lifecycle.currentState.isAtLeast(Lifecycle.State.STARTED)) {
+        } else if (permissionController === voiceController && lifecycleOwner.lifecycle.currentState.isAtLeast(Lifecycle.State.STARTED)) {
             voiceController.start()
+        }
+        permissionController = null
+    }
+
+    suspend fun startVoice() {
+        frozenTarget = onPrepareTarget()
+        drafts.edit().putString("target:$draftKey", frozenTarget).apply()
+        voicePrefix = input.trim()
+        if (ContextCompat.checkSelfPermission(context, Manifest.permission.RECORD_AUDIO) == PackageManager.PERMISSION_GRANTED) {
+            voiceController.start()
+        } else {
+            permissionController = voiceController
+            microphonePermission.launch(Manifest.permission.RECORD_AUDIO)
+        }
+    }
+
+    fun toggleVoice() {
+        if (voiceStatus.isActive) { voiceController.stop(); return }
+        if (startingVoice || submitting) return
+        startingVoice = true
+        scope.launch {
+            try {
+                if (!voiceController.isAvailable) voiceController.start()
+                else if (voiceController.hasPreparedModel()) startVoice()
+                else voiceConsent = true
+            } catch (e: CancellationException) { throw e }
+            catch (e: Exception) { onMessage(e.message ?: "Voice input could not start.") }
+            finally { startingVoice = false }
+        }
+    }
+
+    fun enterDraft() {
+        if (submitting || startingVoice || !connected || !terminalController.ready) return
+        draftMessage = ""
+        submitting = true
+        scope.launch {
+            try {
+                if (voiceStatus.isActive) {
+                    voiceController.stop()
+                    withTimeout(3_000) { while (voiceStatus.isActive) delay(25) }
+                }
+                val text = input
+                if (text.isBlank()) return@launch
+                val token = frozenTarget ?: onPrepareTarget()
+                if (!onValidateTarget(token)) {
+                    reportDraft("The recording target changed or disconnected. Your draft is saved. Review before choosing the current terminal.")
+                    return@launch
+                }
+                if (terminalController.submit(text)) {
+                    input = ""
+                    voicePrefix = ""
+                    frozenTarget = null
+                    drafts.edit().remove(draftKey).remove("target:$draftKey").apply()
+                    reportDraft("Entered in the terminal.")
+                } else reportDraft("Draft was not entered. Wait for the terminal, or reduce it to 64 KiB. Your draft is saved.")
+            } catch (e: CancellationException) { throw e }
+            catch (e: Exception) { reportDraft("Submission was not confirmed. Check the terminal before retrying; your draft is saved.") }
+            finally { submitting = false }
         }
     }
 
@@ -237,170 +295,115 @@ fun TerminalScreen(
             if (stream == null) Box(Modifier.fillMaxSize(),contentAlignment=Alignment.Center) {Text("Connecting terminal…",color=TerminalForeground)}
             else InteractiveTerminal(stream,terminalController,onMessage,Modifier.fillMaxSize())
         }
-        Row(Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()),horizontalArrangement=Arrangement.spacedBy(8.dp)) {
-            TextButton(onClick={showDraft=true}){Text("Draft / voice")}
-            TextButton(onClick={showKeys=!showKeys;terminalController.call("keys",showKeys.toString())}) {Text(if(showKeys)"Hide keys" else "Keys")}
-            TextButton(onClick=onWindows){Text("tmux windows")}
-            TextButton(onClick=onSettings){Text("tmux settings")}
-            TextButton(onClick={scope.launch {try {frozenTarget=onPrepareTarget();drafts.edit().putString("target:$draftKey",frozenTarget).apply();onMessage("Draft now targets the current terminal.")}catch(e:Exception){onMessage("Current target is unavailable.")}}}){Text("Choose current target")}
-            TextButton(onClick={input=drafts.getString("original:$draftKey",input).orEmpty();showDraft=true}){Text("Restore transcript")}
-            TextButton(onClick={terminalController.call("selectAll")}){Text("Select all")}
-            TextButton(onClick={terminalController.call("clearSelection")}){Text("Clear selection")}
-            TextButton(onClick={terminalController.call("bottom")}){Text("Latest output")}
-            TextButton(onClick={terminalController.call("copy")}){Text("Copy selection")}
-            TextButton(onClick={
-                val clipboard=context.getSystemService(android.content.Context.CLIPBOARD_SERVICE) as android.content.ClipboardManager
-                clipboard.primaryClip?.getItemAt(0)?.coerceToText(context)?.toString()?.let {if(!terminalController.paste(it))onMessage("Clipboard was not pasted. Wait for the terminal, or choose text smaller than 64 KiB.")}
-            }){Text("Paste")}
-        }
-
-        if(showDraft) ModalBottomSheet(onDismissRequest={showDraft=false;voiceController.stop()},sheetState=rememberModalBottomSheetState(skipPartiallyExpanded=true)) {
-        Column(
-            modifier = Modifier
-                .fillMaxWidth()
-                .padding(12.dp)
-                .imePadding()
-                .verticalScroll(rememberScrollState()),
-            verticalArrangement = Arrangement.spacedBy(8.dp),
+        Row(
+            Modifier.fillMaxWidth().padding(horizontal = 12.dp, vertical = 8.dp),
+            horizontalArrangement = Arrangement.spacedBy(8.dp),
+            verticalAlignment = Alignment.CenterVertically,
         ) {
-            when (voiceStatus.phase) {
-                VoiceInputPhase.Loading -> Column(
-                    verticalArrangement = Arrangement.spacedBy(6.dp),
-                ) {
-                    val progress = voiceStatus.downloadProgress
-                    Text(
-                        text = progress?.let {
-                            "Downloading Moonshine Medium: ${(it * 100).toInt()}%"
-                        } ?: "Preparing Moonshine Medium on this phone...",
-                        style = MaterialTheme.typography.bodyMedium,
-                        color = MaterialTheme.colorScheme.primary,
-                    )
-                    if (progress == null) {
-                        LinearProgressIndicator(modifier = Modifier.fillMaxWidth())
-                    } else {
-                        LinearProgressIndicator(
-                            progress = { progress },
-                            modifier = Modifier.fillMaxWidth(),
-                        )
-                    }
-                }
-                VoiceInputPhase.Listening -> Text(
-                    text = "Listening on this phone. Pause freely, then tap stop.",
-                    style = MaterialTheme.typography.bodyMedium,
-                    color = MaterialTheme.colorScheme.primary,
-                )
-                VoiceInputPhase.Stopping -> Text(
-                    text = "Finishing the on-device transcript...",
-                    style = MaterialTheme.typography.bodyMedium,
-                    color = MaterialTheme.colorScheme.primary,
-                )
-                VoiceInputPhase.Idle -> Unit
+            Row(Modifier.weight(1f).horizontalScroll(rememberScrollState())) {
+                TextButton(onClick={showKeys=!showKeys;terminalController.call("keys",showKeys.toString())}) {Text(if(showKeys)"Hide keys" else "Keys")}
+                TextButton(onClick=onWindows){Text("Windows")}
+                TextButton(onClick=onSettings){Text("Settings")}
+                TextButton(onClick={scope.launch {try {frozenTarget=onPrepareTarget();drafts.edit().putString("target:$draftKey",frozenTarget).apply();onMessage("Draft now targets the current terminal.")}catch(e:Exception){onMessage("Current target is unavailable.")}}}){Text("Choose target")}
+                TextButton(onClick={input=drafts.getString("original:$draftKey",input).orEmpty();showDraft=true}){Text("Restore transcript")}
+                TextButton(onClick={terminalController.call("selectAll")}){Text("Select all")}
+                TextButton(onClick={terminalController.call("clearSelection")}){Text("Clear selection")}
+                TextButton(onClick={terminalController.call("bottom")}){Text("Latest output")}
+                TextButton(onClick={terminalController.call("copy")}){Text("Copy")}
+                TextButton(onClick={
+                    val clipboard=context.getSystemService(android.content.Context.CLIPBOARD_SERVICE) as android.content.ClipboardManager
+                    clipboard.primaryClip?.getItemAt(0)?.coerceToText(context)?.toString()?.let {if(!terminalController.paste(it))onMessage("Clipboard was not pasted. Wait for the terminal, or choose text smaller than 64 KiB.")}
+                }){Text("Paste clipboard")}
             }
+            FilledTonalButton(onClick={showDraft=true}, modifier=Modifier.heightIn(min=56.dp)) {
+                Icon(Icons.Rounded.Mic, contentDescription=null)
+                Spacer(Modifier.size(8.dp))
+                Text("Voice")
+            }
+        }
 
-            Row(
-                modifier = Modifier.fillMaxWidth(),
-                horizontalArrangement = Arrangement.spacedBy(10.dp),
-                verticalAlignment = Alignment.Bottom,
+        if (showDraft) ModalBottomSheet(
+            onDismissRequest={showDraft=false;voiceController.stop()},
+            sheetState=rememberModalBottomSheetState(skipPartiallyExpanded=true),
+        ) {
+            Column(
+                Modifier.fillMaxWidth().padding(horizontal=20.dp, vertical=12.dp).imePadding().verticalScroll(rememberScrollState()),
+                verticalArrangement=Arrangement.spacedBy(12.dp),
             ) {
-                FilledTonalIconButton(
-                    onClick = {
-                        if (voiceStatus.isActive) {
-                            voiceController.stop()
-                        } else {
-                            voicePrefix = input.trim()
-                            voiceConsent = true
-
-                        }
-                    },
-                    enabled = voiceStatus.phase != VoiceInputPhase.Stopping,
-                    modifier = Modifier.size(56.dp),
-                ) {
-                    Icon(
-                        imageVector = if (voiceStatus.isActive) Icons.Rounded.Stop else Icons.Rounded.Mic,
-                        contentDescription = when (voiceStatus.phase) {
-                            VoiceInputPhase.Loading -> "Cancel voice preparation"
-                            VoiceInputPhase.Listening -> "Stop listening"
-                            VoiceInputPhase.Stopping -> "Finishing voice input"
-                            VoiceInputPhase.Idle -> "Start voice input"
-                        },
-                    )
-                }
-
-                OutlinedTextField(
-                    value = input,
-                    onValueChange = { input = it },
-                    label = { Text("Draft to paste") },
-                    placeholder = { Text("Speak or type") },
-                    minLines = 1,
-                    maxLines = 4,
-                    readOnly = voiceStatus.phase == VoiceInputPhase.Stopping,
-                    keyboardOptions = KeyboardOptions(imeAction = ImeAction.Send),
-                    keyboardActions = KeyboardActions(
-                        onSend = {
-                            if (
-                                input.isNotBlank() && connected && terminalController.ready && !uiState.isSending &&
-                                voiceStatus.phase != VoiceInputPhase.Stopping
-                            ) {
-                                pasteDraft()
-                            }
-                        },
-                    ),
-                    modifier = Modifier
-                        .weight(1f)
-                        .heightIn(min = 56.dp),
-                )
-
-                Button(
-                    onClick = {
-                        pasteDraft()
-                    },
-                    enabled = input.isNotBlank() && connected && terminalController.ready &&
-                        !uiState.isSending &&
-                        voiceStatus.phase != VoiceInputPhase.Stopping,
-                    contentPadding = PaddingValues(horizontal = 16.dp),
-                    modifier = Modifier.heightIn(min = 56.dp),
-                ) {
-                    if (uiState.isSending) {
-                        CircularProgressIndicator(
-                            modifier = Modifier.size(19.dp),
-                            strokeWidth = 2.dp,
-                            color = MaterialTheme.colorScheme.onPrimary,
-                        )
-                    } else {
-                        Icon(Icons.AutoMirrored.Rounded.Send, contentDescription = null)
-                        Spacer(Modifier.size(7.dp))
-                        Text("Paste")
+                Row(Modifier.fillMaxWidth(), verticalAlignment=Alignment.CenterVertically) {
+                    Column(Modifier.weight(1f)) {
+                        Text("Voice draft", style=MaterialTheme.typography.headlineSmall)
+                        Text(uiState.selectedTargetLabel + " · " + uiState.selectedSessionName.orEmpty(), style=MaterialTheme.typography.bodySmall, color=MaterialTheme.colorScheme.onSurfaceVariant)
+                    }
+                    Surface(color=MaterialTheme.colorScheme.primaryContainer, shape=RoundedCornerShape(99.dp)) {
+                        Text("On device", Modifier.padding(horizontal=12.dp,vertical=8.dp), style=MaterialTheme.typography.labelMedium, color=MaterialTheme.colorScheme.onPrimaryContainer)
                     }
                 }
+                when (voiceStatus.phase) {
+                    VoiceInputPhase.Loading -> {
+                        val progress=voiceStatus.downloadProgress
+                        Text(progress?.let {"Downloading Moonshine Medium: ${(it*100).toInt()}%"} ?: "Loading voice model…", color=MaterialTheme.colorScheme.primary)
+                        if(progress==null) LinearProgressIndicator(Modifier.fillMaxWidth())
+                        else LinearProgressIndicator(progress={progress},modifier=Modifier.fillMaxWidth())
+                    }
+                    VoiceInputPhase.Listening -> Text("Listening. Pause freely, then tap stop or Enter.", color=MaterialTheme.colorScheme.primary)
+                    VoiceInputPhase.Stopping -> Text("Finishing your transcript…", color=MaterialTheme.colorScheme.primary)
+                    VoiceInputPhase.Idle -> Unit
+                }
+                OutlinedTextField(
+                    value=input,
+                    onValueChange={input=it},
+                    label={Text("Prompt")},
+                    placeholder={Text("Speak or type, then Enter")},
+                    minLines=3, maxLines=7,
+                    readOnly=submitting || voiceStatus.phase==VoiceInputPhase.Stopping,
+                    keyboardOptions=KeyboardOptions(imeAction=ImeAction.Send),
+                    keyboardActions=KeyboardActions(onSend={if(input.isNotBlank())enterDraft()}),
+                    modifier=Modifier.fillMaxWidth(),
+                )
+                if(draftMessage.isNotBlank()) Text(draftMessage,style=MaterialTheme.typography.bodyMedium,color=MaterialTheme.colorScheme.onSurface)
+                Row(Modifier.fillMaxWidth(), horizontalArrangement=Arrangement.spacedBy(12.dp), verticalAlignment=Alignment.CenterVertically) {
+                    Column(Modifier.weight(1f)) {
+                        Text("Review before entering", style=MaterialTheme.typography.labelLarge)
+                        Text("Enter sends this prompt and presses Return.", style=MaterialTheme.typography.bodySmall, color=MaterialTheme.colorScheme.onSurfaceVariant)
+                    }
+                    Button(onClick=::enterDraft, enabled=input.isNotBlank() && connected && terminalController.ready && !submitting && !startingVoice && !uiState.isSending, modifier=Modifier.heightIn(min=56.dp), contentPadding=PaddingValues(horizontal=16.dp)) {
+                        if(submitting) CircularProgressIndicator(Modifier.size(20.dp), strokeWidth=2.dp, color=MaterialTheme.colorScheme.onPrimary)
+                        else {Icon(Icons.AutoMirrored.Rounded.Send,contentDescription=null);Spacer(Modifier.size(8.dp));Text("Enter")}
+                    }
+                    Column(horizontalAlignment=Alignment.CenterHorizontally) {
+                        FilledIconButton(
+                            onClick=::toggleVoice,
+                            enabled=!submitting && !startingVoice && voiceStatus.phase!=VoiceInputPhase.Stopping,
+                            colors=IconButtonDefaults.filledIconButtonColors(containerColor=MaterialTheme.colorScheme.primary,contentColor=MaterialTheme.colorScheme.onPrimary),
+                            modifier=Modifier.size(64.dp),
+                        ) {
+                            if(startingVoice) CircularProgressIndicator(Modifier.size(24.dp),strokeWidth=2.dp,color=MaterialTheme.colorScheme.onPrimary)
+                            else Icon(if(voiceStatus.isActive)Icons.Rounded.Stop else Icons.Rounded.Mic, contentDescription=if(voiceStatus.isActive)"Stop listening" else "Start voice input", modifier=Modifier.size(30.dp))
+                        }
+                        Text(if(voiceStatus.isActive)"Stop" else "Voice",style=MaterialTheme.typography.labelMedium,color=MaterialTheme.colorScheme.primary)
+                    }
+                }
+                Text("Moonshine Medium runs on this phone. Installed models work offline.",style=MaterialTheme.typography.bodySmall,color=MaterialTheme.colorScheme.onSurfaceVariant)
+                Spacer(Modifier.size(8.dp))
             }
-            Text(
-                text = "Moonshine Medium runs on this phone. First voice use downloads about 269 MB; later use works offline.",
-                style = MaterialTheme.typography.bodySmall,
-                color = MaterialTheme.colorScheme.onSurfaceVariant,
-            )
-            Text(
-                text = "Paste inserts this draft without pressing Enter. Use the terminal keys to run it.",
-                style = MaterialTheme.typography.bodySmall,
-                color = MaterialTheme.colorScheme.onSurfaceVariant,
-            )
         }
     }
-    }
 
-    if (voiceConsent) AlertDialog(
-        onDismissRequest={voiceConsent=false}, title={Text("Local voice input")},
-        text={Text("Moonshine Medium runs on this phone. First use downloads about 269 MB. The transcript stays in this draft until you paste it; nothing is sent automatically.")},
+    if(voiceConsent) AlertDialog(
+        onDismissRequest={voiceConsent=false},
+        title={Text("Prepare local voice")},
+        text={Text("Moonshine Medium needs a one-time download of about 269 MB. After that, voice works on this phone offline. Review your transcript, then tap Enter to submit it.")},
         confirmButton={TextButton(onClick={
             voiceConsent=false
-            scope.launch {try {
-                frozenTarget=onPrepareTarget()
-                drafts.edit().putString("target:$draftKey",frozenTarget).apply()
-                if(ContextCompat.checkSelfPermission(context,Manifest.permission.RECORD_AUDIO)==PackageManager.PERMISSION_GRANTED)voiceController.start()
-                else microphonePermission.launch(Manifest.permission.RECORD_AUDIO)
-            }catch(e:Exception){onMessage(e.message?:"Recording target unavailable.")}}
-
-        }){Text("Prepare and listen")}},
-        dismissButton={TextButton(onClick={voiceConsent=false}){Text("Cancel")}}
+            startingVoice=true
+            scope.launch {
+                try {startVoice()}
+                catch(e:CancellationException){throw e}
+                catch(e:Exception){onMessage(e.message?:"Recording target unavailable.")}
+                finally {startingVoice=false}
+            }
+        }){Text("Download and listen")}},
+        dismissButton={TextButton(onClick={voiceConsent=false}){Text("Cancel")}},
     )
-
 }

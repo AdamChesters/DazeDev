@@ -53,6 +53,7 @@ export interface Inventory {
   sessions: Session[];
 }
 export interface Pane {
+  hostDetails?: Pick<Host, 'name' | 'kind' | 'address' | 'user' | 'port' | 'socket'>;
   hideStatus?: boolean;
   colors?: import('./colors').TabColors;
   id: string;

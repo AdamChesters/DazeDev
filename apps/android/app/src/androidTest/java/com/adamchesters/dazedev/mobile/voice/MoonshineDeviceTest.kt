@@ -16,6 +16,14 @@ import java.nio.ByteOrder
 /** Explicit device checks; this harness never downloads models or uses a microphone. */
 @RunWith(AndroidJUnit4::class)
 class MoonshineDeviceTest {
+    @Test fun preparedModelCachePresence() {
+        val context=InstrumentationRegistry.getInstrumentation().targetContext
+        val expected=InstrumentationRegistry.getArguments().getString("expectedPrepared")
+        require(expected in listOf("true","false")) { "Pass expectedPrepared; this test never downloads or loads a model." }
+        val controller=VoiceInputController(context, {}, {_,_->}, {})
+        try {assertEquals(expected=="true",kotlinx.coroutines.runBlocking {controller.hasPreparedModel()})}
+        finally {controller.destroy()}
+    }
     @Test fun modelManifest() {
         val context=InstrumentationRegistry.getInstrumentation().targetContext
         val manifest=Transcriber.getSttDependencies("en",listOf(TranscriberOption("model_arch",JNI.MOONSHINE_MODEL_ARCH_MEDIUM_STREAMING.toString())))

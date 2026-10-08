@@ -47,4 +47,21 @@ class HostContractTest {
     @Test fun boundedNonceScopedFramesHandleLargeReplies(){val text="界".repeat(10000);val base=Base64.getEncoder().encodeToString(text.toByteArray());val chunks=base.chunked(48);val frames=HostFrames("test");assertNull(frames.line("DAZED:other:@0/1:e30="));var result:String?=null;chunks.forEachIndexed {i,c->result=frames.line("DAZED:test:@$i/${chunks.size}:$c")};assertEquals(text,result)}
     @Test(expected=IllegalArgumentException::class) fun reorderedFramesAreRefused(){HostFrames("test").line("DAZED:test:@1/2:eA==")}
     @Test(expected=IllegalArgumentException::class) fun excessiveFramesAreRefused(){HostFrames("test").line("DAZED:test:@0/999999:eA==")}
+    @Test fun foreignIdentitySurvivesOwnerIdCollisionAndDetailsStayIndependent() {
+        val source=fixture()
+        val panes=source.getJSONArray("workspaces").getJSONObject(0).getJSONArray("panes")
+        val foreign=panes.getJSONObject(1)
+        val foreignKey=foreign.getString("hostKey")
+        foreign.put("hostId","desktop-a").put("hostDetails",JSONObject().put("name","Foreign").put("futureHost",true))
+        panes.getJSONObject(0).put("hostDetails",JSONObject().put("futureHost",true))
+        val profile=SharedProfile(source)
+        profile.rebindOwner("mobile-a","machine-a:user:socket-a",HostReference("Owner","tailscale","owner.ts.net","user"))
+        val saved=profile.document.getJSONArray("workspaces").getJSONObject(0).getJSONArray("panes")
+        assertEquals(foreignKey,saved.getJSONObject(1).getString("hostKey"))
+        assertEquals("Foreign",saved.getJSONObject(1).getJSONObject("hostDetails").getString("name"))
+        assertTrue(saved.getJSONObject(0).getJSONObject("hostDetails").getBoolean("futureHost"))
+        assertEquals("owner.ts.net",saved.getJSONObject(0).getJSONObject("hostDetails").getString("address"))
+        assertFalse(saved.getJSONObject(0).getJSONObject("hostDetails").has("privateKeyUri"))
+    }
+
 }

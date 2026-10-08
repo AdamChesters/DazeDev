@@ -88,7 +88,7 @@ fun DazeDevMobileApp(viewModel: MainViewModel) {
         if (uiState.selectedFolder != null) viewModel.selectFolder(null) else viewModel.showHosts()
     }
 
-    BackHandler(enabled = !uiState.showHosts && uiState.connectionPhase != ConnectionPhase.Connected) {viewModel.showHosts()}
+    BackHandler(enabled = !uiState.showHosts && uiState.connectionPhase != ConnectionPhase.Connected) {viewModel.cancelConnection()}
 
     Scaffold(
         snackbarHost = { SnackbarHost(snackbarHostState) },
@@ -100,7 +100,7 @@ fun DazeDevMobileApp(viewModel: MainViewModel) {
                 contentPadding = contentPadding,
                 onPickPrivateKey = { privateKeyPicker.launch(arrayOf("*/*")) },
                 onConnect = viewModel::connect,
-                onCancel = viewModel::disconnect,
+                onCancel = viewModel::cancelConnection,
             )
             uiState.selectedSessionName == null && uiState.selectedFolder != "__sessions" -> HostWorkspaceScreen(uiState,contentPadding,viewModel)
             uiState.selectedSessionName == null -> SessionListScreen(

@@ -65,7 +65,7 @@ fun ConnectionScreen(
     var port by rememberSaveable(savedProfile.id) { mutableStateOf(savedProfile.port.toString()) }
     var username by rememberSaveable(savedProfile.id) { mutableStateOf(savedProfile.username) }
     var authMethod by rememberSaveable(savedProfile.id) { mutableStateOf(savedProfile.authMethod) }
-    var secret by remember { mutableStateOf("") }
+    var secret by remember(savedProfile.id) { mutableStateOf("") }
     var formError by remember { mutableStateOf<String?>(null) }
     val isConnecting = uiState.connectionPhase == ConnectionPhase.Connecting
 
@@ -104,6 +104,16 @@ fun ConnectionScreen(
             color = MaterialTheme.colorScheme.onSurfaceVariant,
         )
 
+        uiState.pendingTerminalConnection?.let {pending->
+            Spacer(Modifier.height(16.dp))
+            Surface(color=MaterialTheme.colorScheme.secondaryContainer,shape=RoundedCornerShape(16.dp),modifier=Modifier.fillMaxWidth()) {
+                Column(Modifier.padding(16.dp),verticalArrangement=Arrangement.spacedBy(6.dp)) {
+                    Text("Terminal on another host",style=MaterialTheme.typography.titleMedium,color=MaterialTheme.colorScheme.onSecondaryContainer)
+                    Text(pending.row.name,style=MaterialTheme.typography.bodyLarge,color=MaterialTheme.colorScheme.onSecondaryContainer)
+                    Text(if(savedProfile.host.isBlank()) "Its SSH address is not saved in this workspace. Enter the address and choose how to sign in." else "Connect to ${savedProfile.username}@${savedProfile.host}. The saved terminal opens after its host identity is verified.",color=MaterialTheme.colorScheme.onSecondaryContainer)
+                }
+            }
+        }
         Spacer(Modifier.height(28.dp))
         Card(
             modifier = Modifier

@@ -14,7 +14,7 @@ class ProfileStore(context: Context) {
                 authMethod=AuthMethod.valueOf(p.getString("authMethod")),
                 privateKeyUri=p.optString("privateKeyUri").ifBlank { null },
                 privateKeyName=p.optString("privateKeyName").ifBlank { null },
-                workingDirectory=p.optString("workingDirectory"), id=p.getString("id"), name=p.optString("name"), socket=p.optString("socket"))
+                workingDirectory=p.optString("workingDirectory"), id=p.getString("id"), name=p.optString("name"), socket=p.optString("socket"), fingerprint=p.optString("fingerprint"))
         }
     }.getOrDefault(emptyList())
     fun load(): ConnectionProfile = loadAll().firstOrNull() ?: ConnectionProfile()
@@ -23,7 +23,7 @@ class ProfileStore(context: Context) {
         val a = JSONArray()
         for (p in hosts) a.put(JSONObject().put("id",p.id).put("name",p.name).put("host",p.host).put("port",p.port)
             .put("username",p.username).put("authMethod",p.authMethod.name).put("privateKeyUri",p.privateKeyUri)
-            .put("privateKeyName",p.privateKeyName).put("workingDirectory",p.workingDirectory).put("socket",p.socket))
+            .put("privateKeyName",p.privateKeyName).put("workingDirectory",p.workingDirectory).put("socket",p.socket).put("fingerprint",p.fingerprint))
         prefs.edit().putString("hosts",a.toString()).apply()
     }
     fun launchOperation(host:String,request:String):String {

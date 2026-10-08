@@ -82,9 +82,7 @@ fun HostWorkspaceScreen(state:DazeDevMobileUiState,padding:PaddingValues,viewMod
                 val folder=state.folders.firstOrNull {it.id==state.selectedFolder}
                 Text(folder?.name.orEmpty(),style=MaterialTheme.typography.titleLarge,modifier=Modifier.padding(16.dp))
                 LazyColumn(contentPadding=PaddingValues(16.dp),verticalArrangement=Arrangement.spacedBy(8.dp)) {
-                    items(folder?.rows.orEmpty(),key={it.paneId}) {row->OutlinedButton(onClick={viewModel.selectPane(row)},modifier=Modifier.fillMaxWidth().heightIn(min=64.dp)){
-                        Column {Text(row.name);val target=state.hosts.firstOrNull {it.fingerprint==row.hostKey && row.hostKey.isNotBlank()};Text(target?.let {"${it.profile.name.ifBlank {it.profile.host}} · ${it.phase}"}?:"Connect the saved target host") }
-                    }}
+                    items(folder?.rows.orEmpty(),key={it.paneId}) {row->TerminalHostCard(state,row,{viewModel.selectPane(row)})}
                 }
             }
         }

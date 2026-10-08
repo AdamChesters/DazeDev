@@ -26,6 +26,13 @@ class TerminalController {
         if(!ready || text.toByteArray().size>65_536)return false
         call("paste",JSONObject.quote(text));return true
     }
+    suspend fun submit(text:String):Boolean {
+        val page=web ?: return false
+        if(!ready || text.isBlank() || text.toByteArray().size>65_536)return false
+        val result=CompletableDeferred<Boolean>()
+        page.evaluateJavascript("window.daze?.submit(${JSONObject.quote(text)})") {value->result.complete(value=="true")}
+        return withTimeout(5_000){result.await()}
+    }
     fun clear(){call("clear")}
 }
 
@@ -56,6 +63,7 @@ fun InteractiveTerminal(stream:TerminalStream,controller:TerminalController,onMe
                 }
             }
             addJavascriptInterface(object {
+                @JavascriptInterface fun submit(text:String):Boolean = stream.send(text.toByteArray())
                 @JavascriptInterface fun event(text:String) {
                     if(text.length>500_000){post {onMessage("Selection is too large. Choose a smaller region.")};return}
                     runCatching {

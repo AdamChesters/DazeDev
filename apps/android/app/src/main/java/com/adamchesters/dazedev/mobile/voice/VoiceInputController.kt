@@ -1,6 +1,9 @@
 package com.adamchesters.dazedev.mobile.voice
 
 import ai.moonshine.voice.JNI
+import ai.moonshine.voice.AssetDownloader
+import ai.moonshine.voice.ModelCache
+import ai.moonshine.voice.ModelSpec
 import ai.moonshine.voice.MicTranscriber
 import android.content.Context
 import android.content.pm.PackageManager
@@ -8,6 +11,8 @@ import android.os.Handler
 import android.os.Looper
 import java.util.concurrent.ExecutorService
 import java.util.concurrent.Executors
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.withContext
 
 enum class VoiceInputPhase {
     Idle,
@@ -60,6 +65,7 @@ class VoiceInputController(
     private val onTranscript: (String, Boolean) -> Unit,
     private val onError: (String) -> Unit,
 ) : SpeechEngine {
+    private val appContext = context.applicationContext
     private val mainHandler = Handler(Looper.getMainLooper())
     private val worker: ExecutorService = Executors.newSingleThreadExecutor { task ->
         Thread(task, "dazedev-mobile-moonshine").apply { isDaemon = true }
@@ -68,7 +74,7 @@ class VoiceInputController(
     private val transcript = TranscriptAccumulator()
     private var status = VoiceInputStatus()
     private var generation = 0L
-    private var modelLoaded = false
+    @Volatile private var modelLoaded = false
     private var destroyed = false
     private var initializationError: Throwable? = null
 
@@ -96,6 +102,13 @@ class VoiceInputController(
 
     override val isAvailable: Boolean
         get() = microphone != null
+
+    suspend fun hasPreparedModel(): Boolean = withContext(Dispatchers.IO) {
+        if (modelLoaded) true else runCatching {
+            val spec = ModelSpec.stt("en", JNI.MOONSHINE_MODEL_ARCH_MEDIUM_STREAMING, false)
+            AssetDownloader().isModelPresent(ModelCache.directoryFor(appContext, spec, null), spec)
+        }.getOrDefault(false)
+    }
 
     override fun start() {
         val activeMicrophone = microphone

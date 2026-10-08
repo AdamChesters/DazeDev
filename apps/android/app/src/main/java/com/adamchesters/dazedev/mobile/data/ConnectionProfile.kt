@@ -17,6 +17,7 @@ data class ConnectionProfile(
     val id: String = java.util.UUID.randomUUID().toString(),
     val name: String = "",
     val socket: String = "",
+    val fingerprint: String = "",
 ) {
     fun validationError(secret: String): String? = when {
         host.isBlank() || host.any { it.isWhitespace() || it.isISOControl() } ||

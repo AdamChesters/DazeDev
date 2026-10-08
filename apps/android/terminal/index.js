@@ -28,6 +28,7 @@ const mods = { Control: 0, Alt: 0, Shift: 0 };
 let ready = false,
   repeat = null,
   dispatching = false;
+let submission = null;
 const stopRepeat = () => {
   clearTimeout(repeat);
   clearInterval(repeat);
@@ -38,6 +39,10 @@ const clearOnce = () => {
   updateMods();
 };
 term.onData((data) => {
+  if (submission !== null) {
+    submission.push(data);
+    return;
+  }
   if (
     !dispatching &&
     [...data].length === 1 &&
@@ -263,6 +268,21 @@ window.daze = {
     term.blur();
   },
   paste: (text) => term.paste(text),
+  submit: (text) => {
+    if (!ready || typeof text !== "string" || !text.trim()) return false;
+    submission = [];
+    let payload;
+    try {
+      // xterm supplies the current bracketed-paste mode and newline conversion.
+      term.paste(text);
+      payload = submission.join("") + "\r";
+    } finally {
+      submission = null;
+    }
+    const accepted = window.DazeBridge.submit(payload);
+    if (accepted) clearOnce();
+    return accepted;
+  },
   key,
   selectAll: () => term.selectAll(),
   copy: () => bridge("copy", term.getSelection()),

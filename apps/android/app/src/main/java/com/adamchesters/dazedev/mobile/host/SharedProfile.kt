@@ -4,7 +4,7 @@ import org.json.JSONArray
 import org.json.JSONObject
 
 data class TerminalRow(val paneId: String, val name: String, val sessionId: String, val stamp: String,
-    val hostId: String, val hostKey: String, val directory: String)
+    val hostId: String, val hostKey: String, val directory: String, val hostDetails:HostReference? = null)
 data class WorkspaceFolder(val id: String, val name: String, val rows: List<TerminalRow>, val background: String = "")
 
 class SharedProfile(document: JSONObject) {
@@ -15,16 +15,22 @@ class SharedProfile(document: JSONObject) {
         require(revision >= 0 && document.optJSONArray("workspaces") != null && document.optJSONObject("preferences") != null) { "Invalid host profile. Existing host data is preserved." }
         folders()
     }
-    fun rebindOwner(hostId: String, fingerprint: String) {
+    fun rebindOwner(hostId: String, fingerprint: String, details:HostReference? = null) {
         val workspaces = document.getJSONArray("workspaces")
         for (i in 0 until workspaces.length()) {
             val w = workspaces.getJSONObject(i);val old = w.getString("hostId");w.put("hostId",hostId)
             val panes = w.getJSONArray("panes")
             for (j in 0 until panes.length()) {
                 val p = panes.getJSONObject(j)
-                if (p.optString("hostId") == old) p.put("hostId",hostId)
-                if (p.optString("hostKey") == fingerprint) p.put("hostId",hostId)
-                else if (p.optString("hostId") == hostId) p.put("hostKey",fingerprint)
+                if (p.optString("hostKey") == fingerprint || (p.optString("hostKey").isBlank() && p.optString("hostId") == old)) {
+                    p.put("hostId",hostId).put("hostKey",fingerprint)
+                    if(details!=null) {
+                        val existing=p.optJSONObject("hostDetails") ?: JSONObject()
+                        val fields=details.toJson()
+                        fields.keys().forEach {key->existing.put(key,fields.get(key))}
+                        p.put("hostDetails",existing)
+                    }
+                }
             }
         }
     }
@@ -45,7 +51,7 @@ class SharedProfile(document: JSONObject) {
             folder.optJSONObject("layout")?.let {walk(it,0)}
             order.addAll(records.map {it.getString("id")}.filterNot {it in order})
             WorkspaceFolder(folder.getString("id"),folder.optString("name","Workspace"),order.distinct().mapNotNull { id ->
-                byId[id]?.let {p -> TerminalRow(id,p.optString("name","Terminal"),p.optString("sessionId"),p.optString("stamp"),p.optString("hostId"),p.optString("hostKey"),p.optString("directory"))}
+                byId[id]?.let {p -> TerminalRow(id,p.optString("name","Terminal"),p.optString("sessionId"),p.optString("stamp"),p.optString("hostId"),p.optString("hostKey"),p.optString("directory"),p.optJSONObject("hostDetails")?.let(HostReference::fromJson))}
             },folder.optJSONObject("colors")?.optString("background").orEmpty())
         }
     }
