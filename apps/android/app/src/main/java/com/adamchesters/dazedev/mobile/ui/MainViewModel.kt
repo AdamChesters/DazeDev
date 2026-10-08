@@ -134,6 +134,8 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     }
     fun disconnect() {val h=current()?:return;h.connectJob?.cancel();closeTerminal();h.client.close();h.ssh.disconnectNow();h.phase=ConnectionPhase.Disconnected;_uiState.update {it.copy(selectedSessionName=null,selectedSessionId=null)};publish(h)}
     private suspend fun refresh(h:HostState) {
+        val shared=SharedProfile(h.client.request("profile_load") as JSONObject)
+        shared.rebindOwner(h.profile.id,h.fingerprint);h.shared=shared
         val sessions=h.client.request("sessions") as JSONArray
         h.sessions=(0 until sessions.length()).map {i->val s=sessions.getJSONObject(i);TmuxSession(s.getString("name"),s.getInt("windows"),s.getInt("attached"),0,s.optString("agent","shell"),s.getString("id"),s.getString("stamp"))}
         val repos=h.client.request("repositories") as JSONObject
