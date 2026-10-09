@@ -1,6 +1,7 @@
 <script lang="ts">
   import type { SearchNavigation } from '../lib/terminal-search';
   import { restoreLinkHoverOnReentry } from '../lib/link-hover';
+  import { copySelectedTerminalText } from '../lib/terminal-copy';
   import HtmlPreview from './HtmlPreview.svelte';
   import SourceViewer from './SourceViewer.svelte';
   import { previewKind } from '../lib/source-viewer';
@@ -350,15 +351,19 @@
       if (viewState?.ready) void request('binary', { data: btoa(value) }).catch(fail);
     });
     terminal.attachCustomKeyEventHandler((event) => {
+      if (
+        copySelectedTerminalText(
+          event,
+          terminal.getSelection(),
+          (text) => navigator.clipboard.writeText(text),
+          (message) => (notice = message),
+        )
+      )
+        return false;
       if (event.type !== 'keydown' || !(event.ctrlKey || event.metaKey)) return true;
       if (!event.altKey && event.code === 'KeyV') {
         event.preventDefault();
         void pasteClipboard().catch(fail);
-        return false;
-      }
-      if (event.shiftKey && event.code === 'KeyC') {
-        event.preventDefault();
-        void navigator.clipboard.writeText(terminal.getSelection()).catch(fail);
         return false;
       }
       if (event.shiftKey && event.code === 'KeyF') {

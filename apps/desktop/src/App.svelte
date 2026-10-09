@@ -4187,7 +4187,9 @@
                       {@const tab = w.panes.find((pane) => pane.id === tabId)}
                       {#if tab}<button
                           role="tab"
+                          data-terminal-tab={tab.id}
                           aria-selected={p.id === tab.id}
+                          tabindex={p.id === tab.id ? 0 : -1}
                           onclick={() => {
                             selectPane(tab.id, w);
                             maximize = '';
@@ -4209,6 +4211,14 @@
                                     tabs.panes.length;
                             selectPane(tabs.panes[next], w);
                             maximize = '';
+                            const nextId = CSS.escape(tabs.panes[next]);
+                            void tick().then(() =>
+                              document
+                                .querySelector<HTMLButtonElement>(
+                                  `[data-pane-id="${nextId}"] [data-terminal-tab="${nextId}"]`,
+                                )
+                                ?.focus(),
+                            );
                           }}>{tab.name}</button
                         >{/if}
                     {/each}

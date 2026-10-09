@@ -306,7 +306,11 @@
             } else if (e.key === 'ContextMenu' || (e.shiftKey && e.key === 'F10')) {
               e.preventDefault();
               const box = e.currentTarget.getBoundingClientRect();
-              menu = { host: h, x: box.left, y: Math.min(box.bottom, innerHeight - 250) };
+              menu = {
+                host: h,
+                x: box.left,
+                y: Math.max(8, Math.min(box.bottom, innerHeight - 250)),
+              };
             }
           }}
         >
@@ -387,7 +391,11 @@
                 } else if (e.key === 'ContextMenu' || (e.shiftKey && e.key === 'F10')) {
                   e.preventDefault();
                   const box = e.currentTarget.getBoundingClientRect();
-                  menu = { workspace: w, x: box.left, y: Math.min(box.bottom, innerHeight - 250) };
+                  menu = {
+                    workspace: w,
+                    x: box.left,
+                    y: Math.max(8, Math.min(box.bottom, innerHeight - 250)),
+                  };
                 }
               }}><LayoutGrid size={14} /><span>{w.name}</span></button
             >
@@ -434,6 +442,8 @@
     tabindex="-1"
     style:left={`${menu.x}px`}
     style:top={`${menu.y}px`}
+    style:max-height={`calc(100vh - ${menu.y + 8}px)`}
+    style:overflow-y="auto"
     use:focusDialog
     onkeydown={menuKeys}
   >
