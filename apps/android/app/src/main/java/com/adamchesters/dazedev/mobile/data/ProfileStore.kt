@@ -19,13 +19,22 @@ class ProfileStore(context: Context) {
     }.getOrDefault(emptyList())
     fun load(): ConnectionProfile = loadAll().firstOrNull() ?: ConnectionProfile()
     fun save(profile: ConnectionProfile) {
-        val hosts = loadAll().filterNot { it.id == profile.id } + profile
+        val existing = loadAll()
+        val hosts = if (existing.any {it.id == profile.id}) existing.map {if(it.id == profile.id)profile else it} else existing + profile
         val a = JSONArray()
         for (p in hosts) a.put(JSONObject().put("id",p.id).put("name",p.name).put("host",p.host).put("port",p.port)
             .put("username",p.username).put("authMethod",p.authMethod.name).put("privateKeyUri",p.privateKeyUri)
             .put("privateKeyName",p.privateKeyName).put("workingDirectory",p.workingDirectory).put("socket",p.socket).put("fingerprint",p.fingerprint))
         prefs.edit().putString("hosts",a.toString()).apply()
     }
+    fun releaseHistory():String=prefs.getString("release-history","[]")?:"[]"
+    fun localWorkspaces():JSONObject?=prefs.getString("local-workspaces",null)?.let(::JSONObject)
+    fun saveLocalWorkspaces(value:JSONObject){prefs.edit().putString("local-workspaces",value.toString()).apply()}
+    fun saveReleaseHistory(value:String){prefs.edit().putString("release-history",value).apply()}
+    fun lastUpdateCheck():Long=prefs.getLong("last-update-check",0L)
+    fun checkedUpdates(){prefs.edit().putLong("last-update-check",System.currentTimeMillis()).apply()}
+    fun ignoredUpdate():String=prefs.getString("ignored-update","")?:""
+    fun ignoreUpdate(version:String){prefs.edit().putString("ignored-update",version).apply()}
     fun launchOperation(host:String,request:String):String {
         val digest=java.security.MessageDigest.getInstance("SHA-256").digest(request.toByteArray()).joinToString(""){"%02x".format(it)}
         val key="launch:$host:$digest"

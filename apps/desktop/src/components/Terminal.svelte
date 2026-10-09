@@ -2,6 +2,7 @@
   import { restoreLinkHoverOnReentry } from '../lib/link-hover';
   import { ReadinessDeadline, ConnectionOperations } from '../lib/connection-health';
   import { uploadClipboardFiles, readClipboardContent } from '../lib/clipboard-upload';
+  import { copySelectedTerminalText } from '../lib/terminal-copy';
   import { terminalNotification } from '../lib/terminal-alerts';
   import { onMount, tick } from 'svelte';
   import { diagnostic } from '../lib/diagnostics';
@@ -671,15 +672,19 @@
     });
     addonsReady = true;
     term.attachCustomKeyEventHandler((e) => {
+      if (
+        copySelectedTerminalText(
+          e,
+          term.getSelection(),
+          (text) => navigator.clipboard.writeText(text),
+          reportClipboard,
+        )
+      )
+        return false;
       if (e.type !== 'keydown' || !(e.ctrlKey || e.metaKey)) return true;
       if (e.shiftKey && e.code === 'KeyF') {
         e.preventDefault();
         showFind();
-        return false;
-      }
-      if (e.shiftKey && e.code === 'KeyC') {
-        e.preventDefault();
-        void navigator.clipboard.writeText(term.getSelection());
         return false;
       }
       if (!e.altKey && e.code === 'KeyV') {
@@ -764,6 +769,15 @@
       pasteBroadcast: (text, expectedContext) => paste(text, true, expectedContext, true),
       pasteDictation: (text, enter) => paste(text, enter, undefined, true),
       pasteForReview: (text, expectedContext) => paste(text, false, expectedContext, true),
+      submitReviewed: async (expectedContext) => {
+        await inputChain;
+        if (!expectedContext || context() !== expectedContext)
+          throw new Error(
+            'The terminal changed after dictation. Review its text and press Enter there.',
+          );
+        contextEpoch++;
+        await send('\r');
+      },
       context,
       processId: () => remotePid,
       selection: selectedText,

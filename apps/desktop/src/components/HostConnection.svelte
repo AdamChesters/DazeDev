@@ -60,14 +60,14 @@
         ? 'Authentication required'
         : authentication === 'browser'
           ? 'Browser verification required'
-          : authentication === 'host-error' || authentication === 'closed'
+          : ['host-error', 'host-unknown', 'unsupported-target', 'closed'].includes(authentication)
             ? 'Connection needs attention'
             : 'Connecting...'}
   </p>
   {#if output}
     <details
       open={authentication === 'trust' ||
-        authentication === 'host-error' ||
+        ['host-error', 'host-unknown', 'unsupported-target'].includes(authentication) ||
         authentication === 'closed'}
     >
       <summary>Connection details</summary>
@@ -106,18 +106,35 @@
         }
       }}>Copy verification link</button
     >
+  {:else if authentication === 'unsupported-target'}
+    <p>
+      This device runs Windows. Use the WSL/Linux device's own Tailscale name and username, with
+      Tailscale SSH enabled there. DazeDev remote hosts need Python 3 and tmux.
+    </p>
+    <button onclick={onedit}>Edit host</button>
   {:else if authentication === 'host-error'}
     <p>
       Host key verification failed. Check the host identity before retrying. The changed key has not
       been accepted.
     </p>
+  {:else if authentication === 'host-unknown'}
+    <p>
+      This host key is not yet trusted. Verify the host identity before retrying; no key has been
+      accepted automatically.
+    </p>
+    {#if host.kind === 'tailscale'}
+      <p>
+        Tailscale SSH requires a supported host. Native Windows cannot host Tailscale SSH; use its
+        WSL/Linux endpoint. Ordinary SSH over Tailscale is a different connection type.
+      </p>
+    {/if}
   {:else if authentication === 'closed'}
     <p>Check the connection details, host address and access policy.</p>
   {/if}
   {#if error}<p class="inline-error" role="alert">{error}</p>{/if}
   <div class="connection-actions">
     <button onclick={() => void cancel()}>{closed ? 'Dismiss' : 'Cancel connection'}</button>
-    {#if closed || authentication === 'host-error'}
+    {#if closed || authentication === 'host-error' || authentication === 'host-unknown'}
       <button onclick={onretry}>Retry</button>
       <button onclick={onedit}>Edit host</button>
     {/if}

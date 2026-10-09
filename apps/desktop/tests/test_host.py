@@ -100,6 +100,15 @@ class HostTests(unittest.TestCase):
   p['preferences']['guidance']='second';host.save_profile(p,1)
   self.assertTrue((host.config_dir()/'host.json.bak').exists())
   self.assertEqual((host.config_dir()/'host.json').stat().st_mode&0o777,0o600)
+ def test_shared_tabs_and_order_roundtrip_with_revision_checks(self):
+  fixture=json.loads((ROOT.parents[1]/'shared/protocol/profile-v1.json').read_text())
+  fixture['revision']=0
+  saved=host.save_profile(fixture,0)
+  loaded=host.load_profile()
+  self.assertEqual(loaded['workspaces'],fixture['workspaces'])
+  self.assertTrue(loaded['workspaces'][0]['tabGroups'][0]['futureGroup'])
+  with self.assertRaisesRegex(RuntimeError,'CONFLICT'):host.save_profile(host.empty(),0)
+  self.assertEqual(host.load_profile(),loaded)
  def test_unknown_schema_preserved(self):
   d=host.config_dir();d.mkdir();p=d/'host.json';p.write_text('{"schema":99,"machines":{}}')
   with self.assertRaisesRegex(RuntimeError,'Unsupported'):host.load_profile()

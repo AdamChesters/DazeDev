@@ -1,0 +1,227 @@
+[
+  {
+    "platform": "desktop",
+    "version": "0.3.4-alpha.0",
+    "date": "2026-10-09",
+    "channel": "development",
+    "notes": "Workspace and input controls\n\n\u2022 Copy selected terminal text with Ctrl+C without interrupting the session.\n\u2022 Reorder hosts, expand their workspaces with one click and fit more rows in the sidebar.\n\u2022 Group terminals into tabs and clone persistent terminal views into hostless workspaces.\n\u2022 Discover voice shortcuts on first Listen and double-tap the toggle hotkey to submit reviewed dictation.\n\u2022 Read desktop and mobile release history together.\n\u2022 Explain unsupported Windows Tailscale SSH targets and distinguish unknown host keys from changed keys."
+  },
+  {
+    "platform": "mobile",
+    "version": "0.1.0-alpha.3",
+    "date": "2026-10-09",
+    "channel": "development",
+    "notes": "Workspaces and navigation\n\n\u2022 Use the DazeDev home layout with host sections, workspace menus and credits at the bottom.\n\u2022 Drag workspace handles to reorder the host profile.\n\u2022 Group terminals as tabs and collect existing terminal views in hostless workspaces on the phone.\n\u2022 Read the global changelog with platform filters.\n\u2022 Check the public GitHub repository for Android APK updates; offline development installs remain available.\n\u2022 Keep the first-tap listening and Enter-to-close voice flow."
+  },
+  {
+    "platform": "mobile",
+    "version": "0.1.0-alpha.2",
+    "date": "2026-10-09",
+    "channel": "development",
+    "notes": "Voice input\n\n\u2022 Tap Voice to open a blank prompt and start listening.\n\u2022 Tap End to stop and edit, or Enter to submit once and return to the terminal.\n\u2022 Keep the draft when delivery fails or the terminal changes."
+  },
+  {
+    "version": "0.3.3-alpha.0",
+    "date": "2026-10-07",
+    "notes": "Updates\n\n\u2022 Download signed Windows updates from GitHub Releases over HTTPS.\n\u2022 Use configured HTTP proxies when checking and downloading updates.",
+    "platform": "desktop"
+  },
+  {
+    "version": "0.3.2-alpha.0",
+    "date": "2026-10-07",
+    "notes": "Fixes\n\n\u2022 Keep unchanged runtime files in place during updates so files still in use do not block installation.\n\u2022 Check changed files for locks before replacing the app and retry short Windows file locks.\n\u2022 Identify the blocked file if installation cannot continue.",
+    "platform": "desktop"
+  },
+  {
+    "version": "0.3.1-alpha.0",
+    "date": "2026-10-07",
+    "notes": "Major features\n\n\u2022 Search live terminals in the current terminal, workspace, host or all hosts. Browse scrollable results, then use Enter and Shift+Enter to move between matches across workspaces with a compact search bar. Search uses current terminal buffers without saving content or query history.\n\nImprovements\n\n\u2022 Shift-click terminal headers to select a group, then drop it onto a workspace to move the terminals immediately into a vertical stack on the right.\n\u2022 Drag workspaces to reorder them within a host in the sidebar.\n\u2022 Show terminal and tmux names in a large, bold single line at the top left, with the session type beside them.\n\u2022 Keep repository and tmux controls visible as terminal headers narrow, then reduce them to tmux and the menu, and finally the menu alone.",
+    "platform": "desktop"
+  },
+  {
+    "version": "0.3.0-alpha.0",
+    "date": "2026-10-06",
+    "notes": "Improvements\n\n\u2022 Begin the Alpha-V0.3 release series. Incremental updates use 0.3.01, 0.3.02 and onward.\n\nBug fixes\n\n\u2022 Restore image and file link clicks after closing a preview, including repeated clicks on the same terminal cell in main and detached windows.\n\u2022 Close stale PowerShell terminals and workspaces when their session has already ended, without getting stuck in the End sessions prompt.",
+    "platform": "desktop"
+  },
+  {
+    "version": "0.2.0-alpha.30",
+    "date": "2026-10-06",
+    "notes": "Improvements\n\n\u2022 Open relative image, HTML, Markdown and source file paths from terminal output in the built-in viewer.\n\u2022 Rename the sidebar Feedback / Donate button to Feedback / Support.\n\nBug fixes\n\n\u2022 Open complete URLs across wrapped terminal rows, including Windows screen snapshots and filenames split at a hyphen. Retain the continuation and query string.\n\u2022 Click an image to open its in-app viewer. Ctrl+click an image URL to open it in your browser (Cmd+click on macOS).",
+    "platform": "desktop"
+  },
+  {
+    "version": "0.2.0-alpha.29",
+    "date": "2026-10-05",
+    "notes": "Improvements\n\n\u2022 Open Settings from the bottom-left sidebar. Reduce spacing between its bottom actions.\n\nBug fixes\n\n\u2022 Open complete URLs across soft-wrapped terminal lines, including long links. Recover hostnames broken at a hyphen near the edge by terminal output formatting.",
+    "platform": "desktop"
+  },
+  {
+    "version": "0.2.0-alpha.28",
+    "date": "2026-10-05",
+    "notes": "Improvements\n\n\u2022 Send feedback through the public HTTPS relay. Remember contact details and retain messages when delivery cannot be confirmed.\n\u2022 Bundle shared donation links, artwork and feedback copy locally; no remote code is loaded.",
+    "platform": "desktop"
+  },
+  {
+    "version": "0.2.0-alpha.27",
+    "date": "2026-10-05",
+    "notes": "Improvements\n\n\u2022 Show the publication date before each version in the changelog. Historical dates use the recorded release dates.",
+    "platform": "desktop"
+  },
+  {
+    "version": "0.2.0-alpha.26",
+    "date": "2026-10-04",
+    "notes": "Major features\n\n\u2022 View images inside DazeDev with wheel zoom, drag to pan and double-click to fit.\n\u2022 Ctrl-click (Cmd-click on macOS) supported image, HTML, Markdown and source file paths in terminal output to open them on the terminal\u2019s host. HTML and Markdown open in preview mode; other text files open as source.\n\u2022 Find Feedback, updates, Discord and donation options together in the sidebar Feedback / Donate popup. GitHub Sponsors, Buy Me a Coffee and PayPal are enabled with branded buttons and checkout notes.\n\nImprovements\n\n\u2022 Refine popup spacing and version status. Turn off the sidebar glow with the checkbox in the popup.\n\u2022 Explain broadcast prompts with examples for returning to long-running sessions and wrapping up work.\n\nNotes\n\nHTML previews block scripts and external assets. Local file paths must be absolute or start with ~/; quote paths with spaces or use Markdown links. Soft voice cues remain parked.",
+    "platform": "desktop"
+  },
+  {
+    "version": "0.2.0-alpha.25",
+    "date": "2026-10-04",
+    "notes": "Major features\n\n\u2022 Open Donate and about from the sidebar version area, with app version, update controls, feedback guidance and project links.\n\u2022 Support DazeDev through the PayPal donation page. Buy Me a Coffee and GitHub Sponsors are marked Coming soon.\n\nBug fixes\n\n\u2022 Show PowerShell close choices in a two-by-two layout with wrapping labels, keeping End sessions visible.\n\u2022 Use PowerShell session labels in Sessions and Install agents on local Windows hosts.",
+    "platform": "desktop"
+  },
+  {
+    "version": "0.2.0-alpha.24",
+    "date": "2026-10-04",
+    "notes": "Major features\n\n\u2022 Add a Local Windows PowerShell host with persistent sessions. Close DazeDev and reconnect to the same running shell, variables and work. Choose End sessions, Keep in background or Continue in PowerShell window when closing. PowerShell 7 is available when already installed.\n\u2022 Add Connect all hosts above New host.\n\nBug fixes\n\n\u2022 Keep terminal colours on detached windows and update them when workspace colours change.\n\u2022 Put Close at the bottom of terminal context menus.\n\u2022 Keep collapsed terminal menu text readable with light workspace colours.\n\nNotes\n\nNative PowerShell persistence is Windows-only. Physical multi-monitor movement, desktop focus and visible external-console interaction have not been verified on the remote test desktop. Soft voice cues remain parked.",
+    "platform": "desktop"
+  },
+  {
+    "version": "0.2.0-alpha.23",
+    "date": "2026-10-02",
+    "notes": "Major features\n\n\u2022 Move terminals into separate windows on other screens. They stay in their workspace and remain open when switching workspaces; selecting a workspace raises its windows.\n\u2022 Connect several hosts without blocking the workspace. Recover saved mixed-host workspaces with Connect or Keep disconnected.\n\u2022 Click secondary-host labels to connect or disconnect that host and its terminals.\n\u2022 Paste clipboard text, images and files with Ctrl+V or Ctrl+Shift+V.\n\u2022 Open Markdown and rules from the host menu; collapsed terminal controls now read Menu.\n\nBug fixes\n\n\u2022 Return focus to the terminal after pasting a repository prompt, so Enter submits it instead of reopening Repo.\n\u2022 Keep the same terminal session when detaching or docking its window. Retain output when explicitly disconnected.\n\nWindows build, update tests and native interface checks passed. Physical multi-monitor dragging, visible overlap order and voice-device behavior still need confirmation on an interactive desktop.",
+    "platform": "desktop"
+  },
+  {
+    "version": "0.2.0-alpha.22",
+    "date": "2026-09-29",
+    "notes": "Major features\n\n\u2022 Compact Settings into expandable sections, with PIN setup shown only when needed.\n\u2022 Read concise feature and bug-fix lists throughout the changelog history.\n\nBug fixes\n\n\u2022 Keep browser-link clicks on the desktop instead of also sending them to remote agents.\n\u2022 Let image uploads finish while the terminal prints output.\n\u2022 Match Split and Move/duplicate to the other terminal menu items.\n\u2022 Keep the dictionary action available and preserve selected text when opening it.\n\nUse Ctrl+Shift+V or Paste for clipboard images. Ordinary Ctrl+V handling is unchanged.",
+    "platform": "desktop"
+  },
+  {
+    "version": "0.2.0-alpha.21",
+    "date": "2026-09-27",
+    "notes": "Major features\n\n\u2022 Keep the last terminal text visible and copyable while disconnected. A muted-red, single-line banner offers reconnection and shortens in narrow panes.\n\u2022 Read release notes as separate feature and bug-fix lists.\n\nBug fixes\n\n\u2022 Keep reconnect attempts from clearing the retained display; restore live input only when the terminal is ready.\n\u2022 Reduce the recording tail from 750 ms to 250 ms to test whether it reduces invented trailing words.\n\nThe recording change is experimental; it does not establish that transcription hallucinations are fixed.",
+    "platform": "desktop"
+  },
+  {
+    "version": "0.2.0-alpha.20",
+    "date": "2026-09-27",
+    "notes": "Major features\n\n\u2022 Dock multiple Monaco viewers beside terminals. Move, resize and arrange them without losing edits; preview Markdown and static HTML.\n\u2022 Open links in your desktop browser with Ctrl-click (Cmd-click on macOS). New remote shells and agents can use the same browser.\n\u2022 Use separate voice hotkeys for terminal dictation and IDE commands. Review commands and broadcasts before sending them.\n\u2022 Save a personal phrase dictionary, with backups, import/export and optional sync through your own SSH host.\n\u2022 Set host and terminal colours, use square-first Balance layouts and adjust supported tmux settings.\n\u2022 Paste screenshots and files up to 10 MiB to upload them and insert their paths without pressing Enter. Uploads check available space.\n\u2022 Add an optional startup PIN, off by default.\n\u2022 Find update status in the sidebar and at the top of Settings, with automatic checks every 30 minutes.\n\u2022 Use the Split-first terminal menu and drag commands into your preferred order. Find third-party licences in Settings.\n\nBug fixes\n\n\u2022 Restore reconnect controls and recover interrupted host and terminal connections.\n\u2022 Keep voice input in the open command or broadcast dialog. Enter finishes recording, Escape cancels, and a 750 ms audio tail helps retain the last word.\n\u2022 Correct S1-mini cleanup controls.\n\u2022 Keep cross-host highlighting on the host label and collapse narrow terminal controls into a menu.\n\u2022 Set a Windows taskbar identity to prevent incorrect app grouping.\n\u2022 Return browser-launch errors without blocking the app or leaving hidden Windows error dialogs.\n\nNotes\n\nRestart existing remote agents to inherit browser forwarding. Remote localhost/OAuth forwarding is not included. HTML previews block scripts and external assets. Native PowerShell persistence, multi-monitor detachment and microphone forwarding remain deferred.",
+    "platform": "desktop"
+  },
+  {
+    "version": "0.2.0-alpha.19",
+    "date": "2026-09-26",
+    "notes": "Major features\n\n\u2022 Move terminals between workspaces; Ctrl-drag adds another view of the same tmux session. Connections stay on their original hosts.\n\u2022 Duplicate plain terminals into fresh shells, keeping the working directory where detectable.\n\u2022 Hover over a workspace to switch and choose a docking position. Escape or an invalid drop cancels.\n\u2022 Group GitHub repositories by owner, separate local repositories, and list worktrees with modification dates.\n\u2022 Open the agent\u2019s live model/effort picker from the bottom right.\n\nBug fixes\n\n\u2022 Reduce and balance terminal padding; restore the standard Host button.\n\u2022 Collapse repeated repository scan messages.\n\u2022 Show the changelog once after each update.",
+    "platform": "desktop"
+  },
+  {
+    "version": "0.2.0-alpha.18",
+    "date": "2026-09-25",
+    "notes": "Major features\n\n\u2022 Check published GitHub releases on Windows. Public releases need no GitHub login; downloads still require confirmation.\n\nBug fixes\n\n\u2022 Move dictation recovery copies into the terminal title-bar menu. Remove repeated banners that resized the workspace.",
+    "platform": "desktop"
+  },
+  {
+    "version": "0.2.0-alpha.16",
+    "date": "2026-09-22",
+    "notes": "Major features\n\n\u2022 Add portable macOS Apple Silicon, macOS Intel and Linux x64 test builds with native offline voice runtimes. Updates on these platforms are manual.\n\nBug fixes\n\n\u2022 Stop the host/workspace menu covering the app when its dismiss layer is hovered.",
+    "platform": "desktop"
+  },
+  {
+    "version": "0.2.0-alpha.15",
+    "date": "2026-09-21",
+    "notes": "Major features\n\n\u2022 Highlight retained dictation with the selected border effect.\n\u2022 Review the full transcription in a scrollable window before copying or discarding it. Closing the window retains the text; review and copy never submit it.\n\nBug fixes\n\n\u2022 Include the Windows SSH startup fix from alpha14.",
+    "platform": "desktop"
+  },
+  {
+    "version": "0.2.0-alpha.14",
+    "date": "2026-09-21",
+    "notes": "Bug fixes\n\n\u2022 Fix Windows SSH and Tailscale SSH failures reporting \u201cThe filename or extension is too long.\u201d Send the host helper after authentication to stay within Windows command limits.",
+    "platform": "desktop"
+  },
+  {
+    "version": "0.2.0-alpha.13",
+    "date": "2026-09-20",
+    "notes": "Major features\n\n\u2022 Add per-host clipboard permissions, screen-reader output, diagnostics and SSH Include aliases.\n\u2022 Allow model downloads to be cancelled and check available disk space.\n\u2022 Warn before closing plain terminals or sharing working copies; retain local profile recovery.\n\u2022 Animate highlights independently of Windows settings by default.\n\nBug fixes\n\n\u2022 Keep dictation tied to its original terminal and foreground program. Retain uncertain deliveries for review or copy.\n\u2022 Recover interrupted microphones and damaged settings.\n\u2022 Keep host controls responsive during discovery and ignore stale connection events.\n\u2022 Release GPU renderers for hidden terminals.\n\u2022 Keep highlight particle density proportional and prevent terminal glow from being clipped.",
+    "platform": "desktop"
+  },
+  {
+    "version": "0.2.0-alpha.12",
+    "date": "2026-09-20",
+    "notes": "Bug fixes\n\n\u2022 Reconnect hosts after sleep or network loss, with controls for failed panes.\n\u2022 Keep terminal writes off the UI thread and limit waits for stalled input or host probes.\n\u2022 Retry detached terminals without restarting the app or replaying commands.\n\u2022 Preserve tmux sessions and healthy terminals when host management reconnects.",
+    "platform": "desktop"
+  },
+  {
+    "version": "0.2.0-alpha.11",
+    "date": "2026-09-20",
+    "notes": "Major features\n\n\u2022 Start maximized.\n\u2022 Compact Settings into one model download/selection list, followed by voice hotkeys and behaviour.\n\u2022 Show transcription, model loading, S1-mini cleanup and paste progress.\n\u2022 Use 60 slower highlight particles with drifting smoke and varied brightness.\n\u2022 Speed up cleanup with verified speculative decoding.\n\nBug fixes\n\n\u2022 Return to usable shells after agent, tmux or shell exit.\n\u2022 Repair retained dead panes in DazeDev-created sessions.",
+    "platform": "desktop"
+  },
+  {
+    "version": "0.2.0-alpha.10",
+    "date": "2026-09-20",
+    "notes": "Major features\n\n\u2022 Detect hardware, recommend a voice model and report Vulkan availability.\n\u2022 Centre voice status and slightly blur the rest of the app during dictation.\n\u2022 Start fullscreen; use F11 to toggle fullscreen.\n\nBug fixes\n\n\u2022 Buffer audio within a RAM limit, batch speech when behind and adapt previews to inference speed.\n\u2022 Reduce resource contention with binary audio transfer, bounded inference threads and cleanup after recording.\n\u2022 Unload voice models when settings change.\n\u2022 Move energy and rainbow animations to the compositor.\n\u2022 Validate tmux names at the first Next step.",
+    "platform": "desktop"
+  },
+  {
+    "version": "0.2.0-alpha.9",
+    "date": "2026-09-20",
+    "notes": "Major features\n\n\u2022 Show voice status in a softly pulsing box in the secondary terminal bar.\n\u2022 Show only an alert while preparing. During listening, fade in the border, dim the app and lift the receiving pane; restore the view when listening stops.\n\u2022 Use 30 blue-energy particles at a quarter of their previous speed, with drifting paths, wispy tails and varied sparkle.",
+    "platform": "desktop"
+  },
+  {
+    "version": "0.2.0-alpha.8",
+    "date": "2026-09-20",
+    "notes": "Major features\n\n\u2022 Add per-device choices to follow system motion settings, always animate highlights or keep them still.\n\u2022 Explain when reduced motion stops an effect. The override applies only to terminal, workspace and preview highlights.",
+    "platform": "desktop"
+  },
+  {
+    "version": "0.2.0-alpha.7",
+    "date": "2026-09-20",
+    "notes": "Major features\n\n\u2022 Add blue particle trails and pulsing rainbow borders; use the selected effect on the active workspace.\n\u2022 Make the sidebar resizable, wrap names and enlarge New workspace buttons.\n\u2022 Apply themes to the app shell while retaining terminal backgrounds.\n\u2022 Move notifications into the title bar.\n\u2022 Remove terminal Agent buttons and rename the sidebar action Install agents.",
+    "platform": "desktop"
+  },
+  {
+    "version": "0.2.0-alpha.6",
+    "date": "2026-09-19",
+    "notes": "Major features\n\n\u2022 Add compact workspace controls, theme cycling and workspace/terminal colours.\n\u2022 Show Listen indicators, live transcription and download progress; add hold-to-talk.\n\u2022 Add terminal links, search, clipboard, GPU rendering, images, ligatures, output export and flow control.\n\u2022 Install agents visibly in tmux; add native model/effort pickers and per-host repository prompt templates.\n\u2022 Offer Blue energy, Rainbow shimmer and Static colour recording borders.\n\nBug fixes\n\n\u2022 Keep terminal input working when host management disconnects.\n\u2022 Reveal and retain the dictation destination through recording, cleanup and paste.",
+    "platform": "desktop"
+  },
+  {
+    "version": "0.2.0-alpha.5",
+    "date": "2026-09-19",
+    "notes": "Major features\n\n\u2022 Add a minimal home screen and shared branding.\n\u2022 Add instant splits, drag docking with edge previews, adaptive tiling and column layouts.\n\u2022 Add direct dictation and configurable Windows keyboard, mouse and media hotkeys.\n\nBug fixes\n\n\u2022 Preserve terminal processes when arranging or maximizing panes; return to a shell after tmux detach.\n\u2022 Keep dialogs open during text-selection drags.",
+    "platform": "desktop"
+  },
+  {
+    "version": "0.2.0-alpha.4",
+    "date": "2026-09-19",
+    "notes": "Major features\n\n\u2022 Create workspaces with a name, host and terminal count.\n\u2022 Open plain shells without launching an agent or creating a tmux session.\n\u2022 Join an existing session or create a named session with an optional agent, repository and orientation.\n\u2022 Warn about unsaved work before deleting a session.",
+    "platform": "desktop"
+  },
+  {
+    "version": "0.2.0-alpha.3",
+    "date": "2026-09-19",
+    "notes": "Major features\n\n\u2022 Add specific connection prompts and host-trust buttons.\n\u2022 Explain voice model choices, discover named microphones and show voice readiness.\n\u2022 Add Blue, Charcoal and Green themes, empty-state host actions and the changelog.\n\nBug fixes\n\n\u2022 Fix Windows connection-terminal startup and authentication submission.\n\u2022 Restore one-click voice setup.",
+    "platform": "desktop"
+  },
+  {
+    "version": "0.2.0-alpha.2",
+    "date": "2026-09-19",
+    "notes": "Major features\n\n\u2022 Rename the app to DazeDev.\n\u2022 Keep client data portable and migrate legacy data.\n\u2022 Add host deletion, first-run voice setup, signed update checks and the portable updater.",
+    "platform": "desktop"
+  },
+  {
+    "version": "0.2.0-alpha.1",
+    "date": "2026-09-19",
+    "notes": "Major features\n\n\u2022 Add a collapsible host/workspace sidebar, workspace deletion and Tailscale SSH connections.",
+    "platform": "desktop"
+  },
+  {
+    "version": "0.1.0-preview.1",
+    "date": "2026-09-19",
+    "notes": "Major features\n\n\u2022 Introduce terminal workspaces, local/SSH tmux management, agent discovery and offline voice processing.",
+    "platform": "desktop"
+  }
+]

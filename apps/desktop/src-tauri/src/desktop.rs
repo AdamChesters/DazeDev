@@ -411,6 +411,13 @@ fn ssh_aliases() -> Vec<String> {
 }
 
 #[tauri::command]
+async fn release_history() -> Result<Value, String> {
+    tauri::async_runtime::spawn_blocking(crate::updates::changelog)
+        .await
+        .map_err(|e| e.to_string())?
+}
+
+#[tauri::command]
 async fn update_check(
     state: State<'_, AppState>,
 ) -> Result<Option<crate::updates::Release>, String> {
@@ -797,6 +804,7 @@ pub fn run() {
                 feedback_send,
                 input_configure,
                 update_check,
+                release_history,
                 update_download,
                 update_install,
                 client_info,

@@ -20,6 +20,7 @@
     dragHover = '',
     reorderDisabled = false,
     onreorder = () => {},
+    onhostreorder = () => {},
     highlight = 'energy',
     highlightColor = '#39bdd7',
     hosts,
@@ -48,6 +49,7 @@
     dragHover?: string;
     reorderDisabled?: boolean;
     onreorder?: (source: Workspace, target: Workspace, after: boolean) => void;
+    onhostreorder?: (source: Host, target: Host, after: boolean) => void;
     highlight?: RecordingHighlight;
     highlightColor?: string;
     hosts: Host[];
@@ -79,6 +81,78 @@
   let reorderAfter = $state(false);
   let suppressSelect = false;
   let cancelReorder: (() => void) | null = null;
+  let draggingHost = $state('');
+  let hostTarget = $state('');
+  let hostAfter = $state(false);
+  let suppressHostSelect = false;
+  function stepHost(h: Host, direction: number) {
+    const target = hosts[hosts.findIndex((item) => item.id === h.id) + direction];
+    if (target && !reorderDisabled) onhostreorder(h, target, direction > 0);
+  }
+  function startHostDrag(e: PointerEvent, h: Host) {
+    if (e.button !== 0 || reorderDisabled) return;
+    cancelReorder?.();
+    suppressHostSelect = false;
+    const button = e.currentTarget as HTMLButtonElement;
+    const x = e.clientX,
+      y = e.clientY;
+    let moved = false;
+    const locate = (event: PointerEvent) => {
+      const row = document
+        .elementFromPoint(event.clientX, event.clientY)
+        ?.closest<HTMLElement>('[data-host-row]');
+      hostTarget = row?.dataset.hostRow !== h.id ? row?.dataset.hostRow || '' : '';
+      if (row)
+        hostAfter =
+          event.clientY >= row.getBoundingClientRect().top + row.getBoundingClientRect().height / 2;
+    };
+    const move = (event: PointerEvent) => {
+      if (
+        event.pointerId !== e.pointerId ||
+        (!moved && Math.hypot(event.clientX - x, event.clientY - y) < 6)
+      )
+        return;
+      moved = true;
+      draggingHost = h.id;
+      menu = null;
+      const nav = button.closest('nav')!;
+      const box = nav.getBoundingClientRect();
+      if (event.clientY < box.top + 24) nav.scrollTop -= 12;
+      else if (event.clientY > box.bottom - 24) nav.scrollTop += 12;
+      locate(event);
+    };
+    const cleanup = () => {
+      suppressHostSelect = moved;
+      draggingHost = hostTarget = '';
+      window.removeEventListener('pointermove', move);
+      window.removeEventListener('pointerup', finish);
+      window.removeEventListener('pointercancel', cleanup);
+      window.removeEventListener('blur', cleanup);
+      window.removeEventListener('keydown', key, true);
+      cancelReorder = null;
+    };
+    const key = (event: KeyboardEvent) => {
+      if (event.key === 'Escape') {
+        event.preventDefault();
+        event.stopImmediatePropagation();
+        cleanup();
+      }
+    };
+    const finish = (event: PointerEvent) => {
+      if (event.pointerId !== e.pointerId) return;
+      if (moved) locate(event);
+      const target = hosts.find((item) => item.id === hostTarget),
+        after = hostAfter;
+      cleanup();
+      if (moved && target && !reorderDisabled) onhostreorder(h, target, after);
+    };
+    cancelReorder = cleanup;
+    window.addEventListener('pointermove', move);
+    window.addEventListener('pointerup', finish);
+    window.addEventListener('pointercancel', cleanup);
+    window.addEventListener('blur', cleanup);
+    window.addEventListener('keydown', key, true);
+  }
   function stepWorkspace(w: Workspace, direction: number) {
     const list = profiles[w.hostId]?.workspaces || [];
     const target = list[list.findIndex((item) => item.id === w.id) + direction];
@@ -187,7 +261,14 @@
 
 <nav class="host-tree" aria-label="Hosts and workspaces">
   {#each hosts as h (h.id)}
-    <section class="host-group" aria-label={h.name}>
+    <section
+      class="host-group"
+      aria-label={h.name}
+      data-host-row={h.id}
+      class:workspace-dragging={draggingHost === h.id}
+      class:reorder-before={hostTarget === h.id && !hostAfter}
+      class:reorder-after={hostTarget === h.id && hostAfter}
+    >
       <div
         class="host-heading"
         class:chosen={activeHost === h.id}
@@ -206,11 +287,23 @@
         <button
           class="host-select"
           style:color={tabColors(h.colors)?.foreground}
-          title={`${h.name}: ${connections[h.id] || 'Disconnected'}. Select or connect.`}
-          onclick={() => onhost(h)}
+          title={`${h.name}: ${connections[h.id] || 'Disconnected'}. Click to expand or collapse; drag to reorder.`}
+          aria-expanded={!collapsed[h.id]}
+          aria-controls={`host-workspaces-${h.id}`}
+          onpointerdown={(e) => startHostDrag(e, h)}
+          onclick={(e) => {
+            if (!suppressHostSelect || e.detail === 0) {
+              onhost(h);
+              ontoggle(h);
+            }
+            suppressHostSelect = false;
+          }}
           oncontextmenu={(e) => openMenu(e, { host: h })}
           onkeydown={(e) => {
-            if (e.key === 'ContextMenu' || (e.shiftKey && e.key === 'F10')) {
+            if (e.altKey && ['ArrowUp', 'ArrowDown'].includes(e.key)) {
+              e.preventDefault();
+              stepHost(h, e.key === 'ArrowUp' ? -1 : 1);
+            } else if (e.key === 'ContextMenu' || (e.shiftKey && e.key === 'F10')) {
               e.preventDefault();
               const box = e.currentTarget.getBoundingClientRect();
               menu = { host: h, x: box.left, y: Math.min(box.bottom, innerHeight - 250) };
@@ -296,12 +389,7 @@
                   const box = e.currentTarget.getBoundingClientRect();
                   menu = { workspace: w, x: box.left, y: Math.min(box.bottom, innerHeight - 250) };
                 }
-              }}
-              ><LayoutGrid size={14} /><span
-                >{w.name}<small
-                  >{w.panes.length} {w.panes.length === 1 ? 'terminal' : 'terminals'}</small
-                ></span
-              ></button
+              }}><LayoutGrid size={14} /><span>{w.name}</span></button
             >
             <button
               class="icon workspace-close"
@@ -314,9 +402,12 @@
             >
           </div>
         {/each}
-        {#if !profiles[h.id]?.workspaces.length}<p class="empty-host">
-            {connections[h.id] === 'Connected' ? 'No workspaces yet' : 'Connect to load workspaces'}
-          </p>{/if}
+        {#if !profiles[h.id]?.workspaces.length}
+          {#if connections[h.id] === 'Connected'}<p class="empty-host">No workspaces yet</p>
+          {:else}<button class="host-new" onclick={() => onreconnect(h)}
+              >Connect to load workspaces</button
+            >{/if}
+        {/if}
         <button class="host-new new-workspace" onclick={() => onnew(h)}
           ><Plus size={13} /> New workspace</button
         >
@@ -349,11 +440,27 @@
     {#if menu.host}
       <button
         role="menuitem"
+        disabled={reorderDisabled || hosts[0]?.id === menu.host.id}
+        onclick={() => {
+          stepHost(menu!.host!, -1);
+          menu = null;
+        }}>Move host up</button
+      >
+      <button
+        role="menuitem"
+        disabled={reorderDisabled || hosts.at(-1)?.id === menu.host.id}
+        onclick={() => {
+          stepHost(menu!.host!, 1);
+          menu = null;
+        }}>Move host down</button
+      >
+      <button
+        role="menuitem"
         onclick={() => {
           const h = menu!.host!;
           menu = null;
           onreconnect(h);
-        }}>Reconnect host</button
+        }}>{connections[menu.host.id] === 'Connected' ? 'Reconnect host' : 'Connect host'}</button
       >
       <button
         role="menuitem"
@@ -445,6 +552,9 @@
   }
   .workspace-select {
     touch-action: none;
+    min-height: 30px;
+    padding: 5px 7px;
+    gap: 7px;
   }
   .workspace-dragging {
     opacity: 0.5;
@@ -474,7 +584,8 @@
     padding: 8px 4px 0;
   }
   .host-group {
-    margin-bottom: 12px;
+    position: relative;
+    margin-bottom: 5px;
   }
   .host-heading {
     display: flex;
@@ -494,12 +605,13 @@
   .host-select {
     flex: 1;
     min-width: 0;
-    padding: 9px 2px;
+    padding: 5px 2px;
     text-align: left;
     justify-content: flex-start;
     gap: 7px;
     background: transparent;
     border: 0;
+    touch-action: none;
   }
   .host-select > span:first-of-type {
     flex: 1;
@@ -512,8 +624,8 @@
     margin-top: 3px;
   }
   .host-workspaces {
-    margin: 5px 0 0 13px;
-    padding-left: 8px;
+    margin: 3px 0 0 11px;
+    padding-left: 6px;
     border-left: 1px solid var(--border);
   }
   .host-workspaces[hidden] {
@@ -523,8 +635,20 @@
     width: calc(100% - 6px);
     font-size: 13px;
     font-weight: 600;
-    min-height: 44px;
-    padding: 12px 10px;
+    min-height: 30px;
+    padding: 5px 7px;
+    margin: 5px 0;
+  }
+  .workspace-row {
+    margin-bottom: 2px;
+    border-radius: 3px;
+  }
+  @media (pointer: coarse) {
+    .workspace-select,
+    .host-select,
+    .host-new {
+      min-height: 44px;
+    }
   }
   .empty-host {
     color: var(--muted);

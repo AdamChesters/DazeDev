@@ -20,6 +20,8 @@ class HostContractTest {
         assertTrue(p.document.getJSONArray("workspaces").getJSONObject(0).getBoolean("futureWorkspace"))
         assertEquals(2,p.document.getJSONArray("workspaces").getJSONObject(0).getJSONArray("panes").getJSONObject(0).getJSONArray("futurePane").length())
         assertEquals("desktop-a",source.getJSONArray("workspaces").getJSONObject(0).getString("hostId"))
+        assertEquals(listOf("p2","p1"),p.folders().single().tabGroups.single().panes)
+        assertTrue(p.document.getJSONArray("workspaces").getJSONObject(0).getJSONArray("tabGroups").getJSONObject(0).getBoolean("futureGroup"))
     }
     @Test(expected=IllegalArgumentException::class) fun unknownSchemaIsRefused(){SharedProfile(fixture().put("schema",2))}
     @Test fun addingTerminalDoesNotChangeExistingWorkspace(){val p=SharedProfile(fixture());val before=p.document.getJSONArray("workspaces").getJSONObject(0).toString();p.addSession("mobile-a","machine-a:user:socket-a",JSONObject().put("id","$2").put("stamp","1:2:3").put("name","Added"),"/tmp");assertEquals(before,p.document.getJSONArray("workspaces").getJSONObject(0).toString());assertEquals(2,p.folders().size)}

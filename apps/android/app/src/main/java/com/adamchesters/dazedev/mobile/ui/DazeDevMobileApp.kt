@@ -38,8 +38,7 @@ fun DazeDevMobileApp(viewModel: MainViewModel) {
     val coroutineScope = rememberCoroutineScope()
 
     BackHandler(
-        enabled = uiState.connectionPhase == ConnectionPhase.Connected &&
-            uiState.selectedSessionName != null,
+        enabled = uiState.selectedSessionName != null,
         onBack = viewModel::leaveTerminal,
     )
 
@@ -85,17 +84,19 @@ fun DazeDevMobileApp(viewModel: MainViewModel) {
     }
 
     BackHandler(enabled = !uiState.showHosts && uiState.selectedSessionName == null) {
-        if (uiState.selectedFolder != null) viewModel.selectFolder(null) else viewModel.showHosts()
+        if (uiState.groupConnectionHost != null || uiState.pendingTerminalConnection != null) viewModel.cancelConnection()
+        else if (uiState.selectedFolder != null) viewModel.selectFolder(null) else viewModel.showHosts()
     }
 
-    BackHandler(enabled = !uiState.showHosts && uiState.connectionPhase != ConnectionPhase.Connected) {viewModel.cancelConnection()}
+    BackHandler(enabled = !uiState.showHosts && uiState.localGroupId == null && uiState.selectedSessionName == null && uiState.connectionPhase != ConnectionPhase.Connected) {viewModel.cancelConnection()}
 
     Scaffold(
         snackbarHost = { SnackbarHost(snackbarHostState) },
     ) { contentPadding ->
         when {
             uiState.showHosts -> HostWorkspaceScreen(uiState,contentPadding,viewModel)
-            uiState.connectionPhase != ConnectionPhase.Connected -> ConnectionScreen(
+            uiState.localGroupId != null && uiState.selectedSessionName == null && uiState.groupConnectionHost == null && uiState.pendingTerminalConnection == null -> LocalWorkspaceScreen(uiState,contentPadding,viewModel)
+            uiState.groupConnectionHost != null || uiState.pendingTerminalConnection != null || (uiState.localGroupId == null && uiState.connectionPhase != ConnectionPhase.Connected && uiState.selectedSessionName == null) -> ConnectionScreen(
                 uiState = uiState,
                 contentPadding = contentPadding,
                 onPickPrivateKey = { privateKeyPicker.launch(arrayOf("*/*")) },
@@ -123,6 +124,7 @@ fun DazeDevMobileApp(viewModel: MainViewModel) {
                 onSend = viewModel::sendInput,
                 onSettings = viewModel::readTmuxSettings,
                 onSwitchTerminal = {showSwitcher=true},
+                onSelectTab = viewModel::selectPane,
                 onWindows = viewModel::readWindows,
                 onPrepareTarget = viewModel::prepareInputTarget,
                 onValidateTarget = viewModel::validateInputTarget,
@@ -136,7 +138,27 @@ fun DazeDevMobileApp(viewModel: MainViewModel) {
         }
     }
 
-    if(showSwitcher) TerminalSwitcher(uiState,{showSwitcher=false}) {hostId,row->showSwitcher=false;viewModel.selectHost(hostId);viewModel.selectPane(row)}
+    if(showSwitcher) TerminalSwitcher(uiState,{showSwitcher=false}) {hostId,row->
+        val folder=uiState.hosts.firstOrNull {it.profile.id==hostId}?.folders?.firstOrNull {it.rows.any {pane->pane.paneId==row.paneId}}
+        showSwitcher=false;viewModel.selectHost(hostId);viewModel.selectFolder(folder?.id);viewModel.selectPane(row)
+    }
+    if(uiState.groupConnectPrompt) {
+        val needs=uiState.groupHosts()
+        AlertDialog(onDismissRequest=viewModel::dismissGroupConnect,title={Text("Connect to ${needs.size} hosts?")},
+            text={Text(needs.joinToString("\n"){it.label + if(it.host==null)" · add this host first" else ""} + "\n\nEach host keeps its own authentication. Already connected hosts stay connected.")},
+            confirmButton={TextButton(onClick=viewModel::connectGroupHosts,enabled=needs.any {it.host!=null}){Text("Connect hosts")}},
+            dismissButton={TextButton(onClick=viewModel::dismissGroupConnect){Text("Keep disconnected")}})
+    }
+    uiState.mobileUpdate?.let {update->
+        AlertDialog(onDismissRequest=viewModel::dismissUpdate,title={Text("Android update available")},
+            text={Text("DazeDev Mobile ${update.version} is available from the public GitHub repository. Download the APK and confirm installation in Android.\n\n${update.notes.take(1500)}")},
+            confirmButton={TextButton(onClick={
+                runCatching {context.startActivity(Intent(Intent.ACTION_VIEW,android.net.Uri.parse(update.url)))}
+                    .onFailure {coroutineScope.launch {snackbarHostState.showSnackbar("Could not open the download. Try again from Changelog.")}}
+                viewModel.dismissUpdate()
+            }){Text("Download APK")}},
+            dismissButton={TextButton(onClick=viewModel::dismissUpdate){Text("Later")}})
+    }
     if(uiState.windows.isNotEmpty()) TmuxWindowPicker(uiState.windows,viewModel::selectWindow,viewModel::dismissWindows)
     uiState.draftReview?.let {review->DraftReview(review,viewModel::applyDraftReview,viewModel::dismissDraftReview)}
     uiState.tmuxSettings?.let {settings->TmuxSettingsSheet(settings,viewModel::applyTmuxSetting,viewModel::dismissTmuxSettings)}

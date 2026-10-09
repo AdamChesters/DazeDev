@@ -95,6 +95,7 @@ fun TerminalScreen(
     onSend: (String) -> Unit,
     onSettings: () -> Unit,
     onSwitchTerminal: () -> Unit,
+    onSelectTab: (com.adamchesters.dazedev.mobile.host.TerminalRow) -> Unit = {},
     onWindows: () -> Unit,
     onPrepareTarget: suspend () -> String,
     onValidateTarget: suspend (String) -> Boolean,
@@ -307,6 +308,14 @@ fun TerminalScreen(
             },
         )
 
+        val tabs=uiState.terminalTabs()
+        if(tabs.isNotEmpty())Row(Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()).padding(horizontal=12.dp)) {
+            tabs.forEach {tab->
+                androidx.compose.material3.FilterChip(selected=uiState.selectedPaneId==tab.paneId,
+                    onClick={onSelectTab(tab)},enabled=!showDraft && voiceStatus.phase==VoiceInputPhase.Idle && !submitting && !startingVoice,
+                    label={Text(tab.name,maxLines=1,overflow=TextOverflow.Ellipsis)},modifier=Modifier.padding(end=6.dp))
+            }
+        }
         Surface(
             modifier = Modifier
                 .weight(1f)

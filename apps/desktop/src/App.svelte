@@ -137,6 +137,9 @@
     reorderWorkspaces,
   } from './lib/pane-transfer';
   import { terminalProjection, reconcileViewerLayout } from './lib/viewer-layout';
+  import { HOSTLESS, workspaceHosts } from './lib/workspace-groups';
+  import { ReviewHotkey } from './lib/review-hotkey';
+  import { cleanTabGroups, terminalTabs, tabLayout, retainTabPanes } from './lib/terminal-tabs';
   import { call, on, rpc, desktop } from './lib/bridge';
   import { parseCommand, commandCatalogue, type Action } from './lib/commands';
   import { reviewCommand, consumeReview, type CommandReview } from './lib/command-review';
@@ -156,7 +159,7 @@
     voiceStackReady,
     listMicrophones,
   } from './lib/voice-setup';
-  import { changelog, releaseHeading } from './lib/changelog';
+  import { changelog, mergeChangelog, releaseHeading, type ReleaseEntry } from './lib/changelog';
   import { releaseVersion } from './lib/release-version';
   import { focusDialog } from './lib/focus';
   let device = $state<Device>({
@@ -632,6 +635,9 @@
     microphoneError = $state(''),
     microphoneLoading = $state(false);
   let changelogReturn = $state('settings');
+  let releaseHistory = $state<ReleaseEntry[]>(changelog);
+  let releaseFilter = $state<'all' | 'desktop' | 'mobile'>('all');
+  let historyStatus = $state('');
   let pendingChangelog = $state('');
   $effect(() => {
     if (pendingChangelog && !modal && !busy) {
@@ -683,7 +689,21 @@
   }
   function showChangelog(origin = 'settings') {
     changelogReturn = origin;
+    releaseHistory = mergeChangelog(device.releaseHistory);
     modal = 'changelog';
+    if (desktop) {
+      historyStatus = 'Checking public release history…';
+      void call<unknown>('release_history')
+        .then((value) => {
+          releaseHistory = mergeChangelog(value, releaseHistory);
+          device.releaseHistory = releaseHistory;
+          persistDevice();
+          historyStatus = '';
+        })
+        .catch(() => {
+          historyStatus = 'Showing saved release history. Public history is currently unavailable.';
+        });
+    }
   }
   async function respond(hostId: string, value: string) {
     const attempt = hostAttempts.get(hostId);
@@ -798,6 +818,8 @@
   let draggingPanes = $state<string[]>([]);
   let selectionWorkspace = '';
   function selectPane(paneId: string, workspace: Workspace, additive = false) {
+    const group = terminalTabs(workspace, paneId);
+    if (group) (device.activeTerminalTabs ||= {})[group.id] = paneId;
     if (selectionWorkspace !== workspace.id) selectedPanes = [];
     selectionWorkspace = workspace.id;
     selectedPanes = selectPanes(selectedPanes, paneId, additive);
@@ -817,6 +839,8 @@
   let paneMenu = $state<{ pane: Pane; x: number; y: number; selection?: string } | null>(null);
   type VoiceMode = 'dictation' | 'command';
   let capturingShortcut = $state<VoiceMode | null>(null);
+  const reviewHotkey = new ReviewHotkey();
+  let listenIntroTarget = '';
   let shortcutStatus = $state('');
   let backdropPress = false;
   function bindingFor(mode: VoiceMode) {
@@ -851,6 +875,41 @@
     if (voiceStatus !== 'idle' && voiceMode !== destination) return;
     if (broadcastBusy || (broadcastResult && modal === 'broadcast')) return;
     if (device.inputMode !== 'hold') {
+      if (
+        pressed &&
+        mode === 'dictation' &&
+        destination === 'dictation' &&
+        voiceStatus === 'idle' &&
+        recentDictation?.submitContext &&
+        !modal
+      ) {
+        const reviewed = recentDictation;
+        const target = activePane?.id;
+        reviewHotkey.tap(
+          () => {
+            if (appHasFocus() && !modal && activePane?.id === target)
+              void task(() => record(destination));
+          },
+          () => {
+            if (!appHasFocus() || modal || activePane?.id !== reviewed.target) {
+              notice = 'Select the terminal containing the reviewed dictation before sending.';
+              return;
+            }
+            const expected = reviewed.submitContext!;
+            reviewed.submitContext = undefined;
+            void task(async () => {
+              const terminal = terminals.get(reviewed.target);
+              if (!terminal?.submitReviewed)
+                throw new Error(
+                  'Terminal is unavailable. The dictation remains available to copy.',
+                );
+              await terminal.submitReviewed(expected);
+              terminal.focus?.();
+            });
+          },
+        );
+        return;
+      }
       if (pressed) await record(destination);
       return;
     }
@@ -902,9 +961,14 @@
     form.name = `${agent}-${Date.now().toString(36)}`;
     await createSession();
   }
-  function addTerminal(edge: Edge, target = activePane) {
+  function addTerminal(edge: Edge, target = activePane, asTab = false) {
     if (!current) return;
     const w = current;
+    if (w.hostId === HOSTLESS) {
+      notice =
+        'Open a terminal in a host workspace, then hold Ctrl and drag its view into this group.';
+      return;
+    }
     target ||= {
       id: ids(layoutFor(w)).find(Boolean) || '',
       hostId: w.hostId,
@@ -938,7 +1002,18 @@
           )
         : { kind: 'pane', id: pane.id },
       focused: pane.id,
+      tabGroups: asTab
+        ? [
+            ...(w.tabGroups || []).filter((group) => !group.panes.includes(target!.id)),
+            {
+              id: terminalTabs(w, target.id)?.id || uid(),
+              panes: [...(terminalTabs(w, target.id)?.panes || [target.id]), pane.id],
+            },
+          ]
+        : w.tabGroups,
     });
+    const updated = profiles[w.hostId].workspaces.find((item) => item.id === w.id)!;
+    selectPane(pane.id, updated);
   }
   let dragCopy = $state(false);
   let dragHover = $state('');
@@ -951,6 +1026,10 @@
     copy: boolean,
   ) {
     let pane = original;
+    if (destination.hostId === HOSTLESS && !copy)
+      throw new Error(
+        'Hold Ctrl while dragging to add a view to this hostless workspace. The original stays in place.',
+      );
     if (source.id !== destination.id) {
       const header = document.querySelector<HTMLElement>(
         `[data-pane-id="${CSS.escape(original.id)}"] .pane-header`,
@@ -1000,6 +1079,10 @@
           'Cannot identify this terminal’s session safely. Return to its managed host shell and try again.',
         );
       const attached = status.attachment === 'tmux' || status.attachment === 'native';
+      if (destination.hostId === HOSTLESS && !attached)
+        throw new Error(
+          'Hostless workspaces need a persistent session. Open or create a managed terminal on its host first.',
+        );
       if (attached && !status.sessionId)
         throw new Error(
           'The host helper needs reconnecting before this session can be duplicated.',
@@ -1326,7 +1409,52 @@
       run();
       paneMenu = null;
     };
+    const owner = workspaces.find((w) => w.panes.some((pane) => pane.id === p.id));
     const items: TerminalMenuItem[] = [{ id: 'split', label: 'Split', kind: 'split' }];
+    if (owner?.hostId !== HOSTLESS)
+      items.push({
+        id: 'new-tab',
+        label: 'New terminal tab',
+        run: close(() => addTerminal('right', p, true)),
+      });
+    if (owner && terminalTabs(owner, p.id))
+      items.push({
+        id: 'ungroup-tab',
+        label: 'Move tab into its own pane',
+        run: close(() => {
+          updateWorkspace({
+            ...owner,
+            tabGroups: (owner.tabGroups || []).map((group) => ({
+              ...group,
+              panes: group.panes.filter((id) => id !== p.id),
+            })),
+          });
+        }),
+      });
+    if (owner && selectedPanes.length > 1)
+      items.push({
+        id: 'group-tabs',
+        label: 'Group selected terminals as tabs',
+        run: close(() => {
+          const members = owner.panes
+            .filter((pane) => selectedPanes.includes(pane.id))
+            .map((pane) => pane.id);
+          if (members.length < 2) return;
+          const group = { id: uid(), panes: members };
+          updateWorkspace({
+            ...owner,
+            tabGroups: [
+              ...(owner.tabGroups || []).map((g) => ({
+                ...g,
+                panes: g.panes.filter((id) => !members.includes(id)),
+              })),
+              group,
+            ],
+          });
+          (device.activeTerminalTabs ||= {})[group.id] = p.id;
+          persistDevice();
+        }),
+      });
     if (recentDictation?.target === p.id)
       items.push(
         {
@@ -1529,17 +1657,24 @@
     Object.fromEntries(
       workspaces.map((w) => [
         w.id,
-        reconcileViewerLayout(
-          terminalProjection(viewerLayouts[w.id] || w.layout, [
-            ...w.panes.filter((p) => !detachedPanes.has(p.id)).map((p) => p.id),
-            ...viewers.filter((v) => v.workspaceId === w.id).map((v) => v.id),
-          ]),
-          terminalProjection(
-            w.layout,
-            w.panes.filter((p) => !detachedPanes.has(p.id)).map((p) => p.id),
+        tabLayout(
+          reconcileViewerLayout(
+            terminalProjection(viewerLayouts[w.id] || w.layout, [
+              ...w.panes.filter((p) => !detachedPanes.has(p.id)).map((p) => p.id),
+              ...viewers.filter((v) => v.workspaceId === w.id).map((v) => v.id),
+            ]),
+            terminalProjection(
+              w.layout,
+              w.panes.filter((p) => !detachedPanes.has(p.id)).map((p) => p.id),
+            ) || { kind: 'pane' as const, id: '' },
+            viewers.filter((v) => v.workspaceId === w.id).map((v) => v.id),
           ) || { kind: 'pane' as const, id: '' },
-          viewers.filter((v) => v.workspaceId === w.id).map((v) => v.id),
-        ) || { kind: 'pane' as const, id: '' },
+          cleanTabGroups(
+            w.tabGroups,
+            w.panes.map((p) => p.id),
+          ),
+          device.activeTerminalTabs,
+        ),
       ]),
     ),
   );
@@ -1714,6 +1849,11 @@
     }, 180);
   }
   function saved(hostId: string) {
+    if (hostId === HOSTLESS) {
+      device.localWorkspaces = $state.snapshot(profiles[HOSTLESS]);
+      persistDevice();
+      return;
+    }
     recovery[hostId] = $state.snapshot(profiles[hostId]);
     changeSeq[hostId] = (changeSeq[hostId] || 0) + 1;
     if (saveState[hostId] !== 'Conflict') saveState[hostId] = 'Pending';
@@ -1752,9 +1892,16 @@
   }
   function updateWorkspace(w: Workspace) {
     const p = profiles[w.hostId];
+    w = {
+      ...w,
+      tabGroups: cleanTabGroups(
+        w.tabGroups,
+        w.panes.map((p) => p.id),
+      ),
+    };
     const previous = p.workspaces.find((x) => x.id === w.id);
     if (w.layout !== previous?.layout) viewerLayouts[w.id] = w.layout;
-    let savedLayout = w.layout;
+    let savedLayout = retainTabPanes(w.layout, w.tabGroups);
     for (const pane of w.panes)
       if (detachedPanes.has(pane.id) && !ids(savedLayout).includes(pane.id))
         savedLayout = ids(savedLayout).filter(Boolean).length
@@ -1786,6 +1933,33 @@
     maximize = '';
     persistDevice();
     if (desktop) void call('terminal_workspace_activate', { workspaceId: w.id }).catch(fail);
+    if (w.hostId === HOSTLESS) {
+      const needs = workspaceHosts(w, device.hosts, connections);
+      if (needs.panes.some((pane, index) => pane.hostId !== w.panes[index].hostId))
+        updateWorkspace({ ...w, panes: needs.panes });
+      if (needs.required.length || needs.missing.length) hostlessConnect = w;
+    }
+  }
+  let hostlessConnect = $state<Workspace | null>(null);
+  const hostlessNeeds = $derived(
+    hostlessConnect ? workspaceHosts(hostlessConnect, device.hosts, connections) : null,
+  );
+  function newHostlessWorkspace() {
+    const profile = (profiles[HOSTLESS] ||= blankProfile());
+    const workspace: Workspace = {
+      id: uid(),
+      name: 'Hostless workspace',
+      hostId: HOSTLESS,
+      panes: [],
+      layout: { kind: 'pane', id: '' },
+      focused: '',
+    };
+    profile.workspaces.push(workspace);
+    saved(HOSTLESS);
+    selectWorkspace(workspace);
+    workspaceTarget = workspace;
+    renameValue = workspace.name;
+    modal = 'workspace';
   }
   const mixedRecovery = new MixedHostRecovery();
   let recoveryPrompts = $state<HostRecovery[]>([]);
@@ -2259,13 +2433,19 @@
     }
     const owner = workspaces.find((w) => w.panes.some((pane) => pane.id === p.id));
     if (!owner) return;
-    if (!confirmed && nativePane(p) && offerNativeClose([p], () => closePane(p, true))) return;
+    if (
+      owner.hostId !== HOSTLESS &&
+      !confirmed &&
+      nativePane(p) &&
+      offerNativeClose([p], () => closePane(p, true))
+    )
+      return;
     if (!p.sessionId && !confirmed) {
       pendingClose = () => closePane(p, true);
       modal = 'close-terminal';
       return;
     }
-    const layout = remove(layoutFor(owner), p.id);
+    const layout = remove(retainTabPanes(layoutFor(owner), owner.tabGroups), p.id);
     if (!layout) {
       closeWorkspace(owner, confirmed);
       return;
@@ -2287,7 +2467,12 @@
       notice = 'Stop dictation before closing its workspace.';
       return;
     }
-    if (!confirmed && offerNativeClose(w.panes, () => closeWorkspace(w, true))) return;
+    if (
+      w.hostId !== HOSTLESS &&
+      !confirmed &&
+      offerNativeClose(w.panes, () => closeWorkspace(w, true))
+    )
+      return;
     if (!confirmed && w.panes.some((p) => !p.sessionId)) {
       pendingClose = () => closeWorkspace(w, true);
       modal = 'close-terminal';
@@ -2605,7 +2790,12 @@
       broadcastBusy = false;
     }
   }
-  let recentDictation = $state<{ text: string; raw: string; target: string } | null>(null);
+  let recentDictation = $state<{
+    text: string;
+    raw: string;
+    target: string;
+    submitContext?: string;
+  } | null>(null);
   let recoveryTimer: ReturnType<typeof setTimeout>;
   async function submitText() {
     if (!dictation.trim()) return;
@@ -2624,7 +2814,15 @@
     // PTY delivery does not require OS/window focus. A focus failure is advisory.
     await focusDictationTarget(pane.id).catch(() => {});
     await deliverDictation(terminal, dictation, device.voice.automatic && !finishWithoutSubmit);
-    recentDictation = { text: dictation, raw, target: pane.id };
+    recentDictation = {
+      text: dictation,
+      raw,
+      target: pane.id,
+      submitContext:
+        device.voice.automatic && !finishWithoutSubmit ? undefined : terminal.context(),
+    };
+    if (recentDictation.submitContext && device.inputMode !== 'hold')
+      notice = `Review the text in ${pane.name}. Double-tap ${bindingFor('dictation').label} to send.`;
     clearTimeout(recoveryTimer);
     recoveryTimer = setTimeout(() => {
       recentDictation = null;
@@ -2634,6 +2832,12 @@
   }
   async function record(mode: CaptureMode, target = activePane?.id || '') {
     if (!appHasFocus()) return;
+    reviewHotkey.cancel();
+    if (mode === 'dictation' && voiceStatus === 'idle' && !device.listenOnboarded) {
+      listenIntroTarget = target;
+      modal = 'listen-intro';
+      return;
+    }
     if (voiceStatus !== 'idle' && voiceMode !== mode) return;
     if (voiceStatus === 'listening') {
       const finishingRecording = recordingId;
@@ -3053,7 +3257,7 @@
             terminal: { ...terminalDefaults, ...data.terminal },
           };
           recovery = data.recovery || {};
-          profiles = { ...recovery };
+          profiles = { ...recovery, [HOSTLESS]: device.localWorkspaces || blankProfile() };
         }
         const listeners = await Promise.all([
           on<{ done: number; total: number }>(
@@ -3369,6 +3573,7 @@
       clearTimeout(blurTimer);
       blurTimer = setTimeout(() => {
         if (appHasFocus()) return;
+        reviewHotkey.cancel();
         captureKeys.reset();
         shortcutHeld = null;
         releasePending = true;
@@ -3404,6 +3609,7 @@
     window.addEventListener('focus', recoverConnections);
     return () => {
       cancelPaneDrag?.();
+      reviewHotkey.cancel();
       clearInterval(healthTimer);
       stopUpdatePolling();
       clearTimeout(recoveryTimer);
@@ -3532,6 +3738,32 @@
         >
         <button class="new-workspace new-host" onclick={addHost}><Plus size={16} /> New host</button
         >
+        <section class="local-workspaces" aria-label="Hostless workspaces">
+          <button class="new-workspace new-host" onclick={newHostlessWorkspace}
+            ><Plus size={16} /> Hostless workspace</button
+          >
+          {#each profiles[HOSTLESS]?.workspaces || [] as w (w.id)}
+            <div
+              class="local-workspace-row"
+              class:active={device.activeWorkspace === w.id}
+              class:drop-empty={dragHover === w.id}
+            >
+              <button
+                data-workspace-tab={w.id}
+                onclick={() => selectWorkspace(w)}
+                title={`${w.name} · saved on this device`}>{w.name}</button
+              >
+              <button
+                aria-label={`${w.name} options`}
+                onclick={() => {
+                  workspaceTarget = w;
+                  renameValue = w.name;
+                  modal = 'workspace';
+                }}>⋯</button
+              >
+            </div>
+          {/each}
+        </section>
         <HostTree
           hosts={device.hosts}
           {profiles}
@@ -3556,7 +3788,14 @@
           onhost={(h) => {
             device.activeHost = h.id;
             persistDevice();
-            if (connections[h.id] !== 'Connected') void connect(h);
+          }}
+          onhostreorder={(source, target, after) => {
+            const list = device.hosts.filter((h) => h.id !== source.id);
+            const index = list.findIndex((h) => h.id === target.id);
+            if (index < 0 || source.id === target.id) return;
+            list.splice(index + (after ? 1 : 0), 0, source);
+            device.hosts = list;
+            persistDevice();
           }}
           onreconnect={(h) => void reconnectHost(h)}
           oncolors={(h) => {
@@ -3731,10 +3970,19 @@
                 data-empty-workspace={w.id}
                 class:drop-empty={!!draggingPane && dropTarget?.id === ''}
               >
-                Drop a terminal here or create a new terminal.
-                <button onclick={() => addTerminal('right', { hostId: w.hostId } as Pane)}
-                  >New terminal</button
-                >
+                {#if w.hostId === HOSTLESS}
+                  <strong>This is a hostless workspace.</strong>
+                  <p>
+                    Connect to a host, create a workspace and open terminals, then hold Ctrl and
+                    drag terminal windows here. Their original views stay in place.
+                  </p>
+                  <small>This group is saved on this device.</small>
+                {:else}
+                  Drop a terminal here or create a new terminal.
+                  <button onclick={() => addTerminal('right', { hostId: w.hostId } as Pane)}
+                    >New terminal</button
+                  >
+                {/if}
               </div>
             {/if}
           {/each}
@@ -3742,15 +3990,18 @@
             {@const boxes = workspaceBoxes[w.id]}
 
             {@const id = p.id}
+            {@const tabs = terminalTabs(w, p.id)}
+            {@const activeTab = tabs?.panes.find((id) => !!boxes[id])}
             {@const box =
               detachedPanes.has(p.id) || maximize === p.id
                 ? { x: 0, y: 0, width: 100, height: 100 }
-                : boxes[p.id]}
+                : boxes[p.id] || (activeTab ? boxes[activeTab] : undefined)}
             {#if box}<section
                 role="group"
                 aria-label={`Terminal ${p.name}`}
                 data-pane-id={p.id}
                 class:hidden={detachedPanes.has(p.id) ||
+                  (!!tabs && activeTab !== p.id) ||
                   current?.id !== w.id ||
                   (!!maximize && maximize !== p.id)}
                 style={`position:absolute;left:calc(${box.x}% + 4px);top:calc(${box.y}% + 2px);width:calc(${box.width}% - 8px);height:calc(${box.height}% - 4px)`}
@@ -3931,6 +4182,41 @@
                     >
                   </PaneActions>
                 </div>
+                {#if tabs}<div class="terminal-tabs" role="tablist" aria-label="Terminal tabs">
+                    {#each tabs.panes as tabId}
+                      {@const tab = w.panes.find((pane) => pane.id === tabId)}
+                      {#if tab}<button
+                          role="tab"
+                          aria-selected={p.id === tab.id}
+                          onclick={() => {
+                            selectPane(tab.id, w);
+                            maximize = '';
+                            void tick().then(() => terminals.get(tab.id)?.focus?.());
+                          }}
+                          onkeydown={(event) => {
+                            if (!['ArrowLeft', 'ArrowRight', 'Home', 'End'].includes(event.key))
+                              return;
+                            event.preventDefault();
+                            const index = tabs.panes.indexOf(tab.id);
+                            const next =
+                              event.key === 'Home'
+                                ? 0
+                                : event.key === 'End'
+                                  ? tabs.panes.length - 1
+                                  : (index +
+                                      (event.key === 'ArrowLeft' ? -1 : 1) +
+                                      tabs.panes.length) %
+                                    tabs.panes.length;
+                            selectPane(tabs.panes[next], w);
+                            maximize = '';
+                          }}>{tab.name}</button
+                        >{/if}
+                    {/each}
+                    {#if w.hostId !== HOSTLESS}<button
+                        aria-label="New terminal tab"
+                        onclick={() => addTerminal('right', p, true)}>+</button
+                      >{/if}
+                  </div>{/if}
                 {#if !p.hideStatus || (voiceTarget === p.id && dictationActive)}{@const status =
                     paneStatus[p.id] || unknownStatus}
                   <div class="pane-context">
@@ -4006,6 +4292,7 @@
                     host={device.hosts.find((h) => h.id === p.hostId)}
                     active={w.focused === p.id}
                     visible={!detachedPanes.has(p.id) &&
+                      (!tabs || activeTab === p.id) &&
                       current?.id === w.id &&
                       (!maximize || maximize === p.id)}
                     connected={connections[p.hostId] === 'Connected'}
@@ -4153,6 +4440,50 @@
     </main>
   </div>
 </div>
+{#if hostlessConnect && hostlessNeeds}
+  <div class="modal-backdrop" role="presentation">
+    <div
+      class="modal"
+      role="dialog"
+      aria-modal="true"
+      aria-label="Connect workspace hosts"
+      tabindex="-1"
+      use:focusDialog
+    >
+      <h2>{hostlessConnect.name}</h2>
+      <p>
+        {hostlessNeeds.required.length
+          ? `Connect to ${hostlessNeeds.required.length} hosts to open this group's terminals?`
+          : 'Some hosts need to be set up on this device.'}
+      </p>
+      {#each hostlessNeeds.required as required}<p>{required.name}</p>{/each}
+      {#if hostlessNeeds.missing.length}<p class="hint">
+          Add these hosts with their original user and tmux socket: {hostlessNeeds.missing.join(
+            ', ',
+          )}.
+        </p>{/if}
+      <div class="row">
+        {#if hostlessNeeds.required.length}<button
+            class="primary"
+            onclick={() => {
+              const hosts = hostlessNeeds!.required;
+              hostlessConnect = null;
+              void task(async () => {
+                await Promise.all(hosts.map((h) => connect(h)));
+              });
+            }}>Connect to {hostlessNeeds.required.length} hosts</button
+          >{/if}
+        {#if hostlessNeeds.missing.length}<button
+            onclick={() => {
+              hostlessConnect = null;
+              addHost();
+            }}>Add host</button
+          >{/if}
+        <button onclick={() => (hostlessConnect = null)}>Keep disconnected</button>
+      </div>
+    </div>
+  </div>
+{/if}
 {#if draggingPane}<div
     class="pane-drag-ghost"
     style:left={`${dragPosition.x}px`}
@@ -4466,6 +4797,63 @@
             }}>Close terminal</button
           >
         </div>
+      {:else if modal === 'listen-intro'}
+        <h2>Speak into your terminal</h2>
+        <p>
+          Select a terminal, then tap <strong>{bindingFor('dictation').label}</strong> to listen. In toggle
+          mode, tap again to stop and review the text in that terminal. Double-tap the same shortcut to
+          send it with Enter.
+        </p>
+        <p>
+          Keyboard shortcuts and mouse or device buttons work while DazeDev is focused. You can also
+          choose hold-to-talk: hold to record, release to stop.
+        </p>
+        <p class="hint">
+          Transcription and optional tidy-up run locally. {voiceReady
+            ? 'Your voice models are ready.'
+            : 'The selected voice stack needs a one-time download. Installed models are reused.'}
+        </p>
+        {#if device.voice.automatic}<p class="hint">
+            Automatic Enter is currently enabled. Dictation will submit as soon as transcription
+            finishes. Turn it off in settings to review first.
+          </p>{/if}
+        <div class="row">
+          <button
+            class="primary"
+            onclick={() => {
+              device.listenOnboarded = true;
+              persistDevice();
+              if (!voiceReady) {
+                modal = 'voice-setup';
+                return;
+              }
+              modal = '';
+              void task(() => record('dictation', listenIntroTarget));
+            }}>{voiceReady ? 'Start listening' : 'Set up local voice'}</button
+          >
+          <button
+            onclick={() => {
+              device.listenOnboarded = true;
+              persistDevice();
+              void task(async () => {
+                await openSettings();
+                await tick();
+                const settings = document.querySelector<HTMLDetailsElement>('#voice-shortcuts');
+                if (settings) {
+                  settings.open = true;
+                  settings.scrollIntoView({ block: 'start' });
+                }
+              });
+            }}>Change keyboard or mouse shortcut</button
+          >
+          <button
+            onclick={() => {
+              device.listenOnboarded = true;
+              persistDevice();
+              modal = '';
+            }}>Later</button
+          >
+        </div>
       {:else if modal === 'voice-setup'}
         <p>
           Voice models are downloaded separately from DazeDev to keep the app small and let you
@@ -4529,14 +4917,32 @@
             ></progress>
           </div>{/each}
       {:else if modal === 'changelog'}
-        {#if availableUpdate && !changelog.some((entry) => entry.version === availableUpdate?.version)}<article
+        <div class="row" aria-label="Release platform">
+          {#each ['all', 'desktop', 'mobile'] as platform}
+            <button
+              aria-pressed={releaseFilter === platform}
+              onclick={() => (releaseFilter = platform as typeof releaseFilter)}
+              >{platform === 'all' ? 'All' : platform === 'desktop' ? 'Desktop' : 'Mobile'}</button
+            >
+          {/each}
+        </div>
+        {#if historyStatus}<p class="hint" role="status">{historyStatus}</p>{/if}
+        {#if releaseFilter !== 'mobile' && availableUpdate && !releaseHistory.some((entry) => entry.platform === 'desktop' && entry.version === availableUpdate?.version)}<article
             class="release-entry"
           >
-            <h3>{releaseHeading(availableUpdate.version)}</h3>
+            <h3>Desktop · {releaseHeading(availableUpdate.version)}</h3>
             <p>{availableUpdate.notes}</p>
           </article>{/if}
-        {#each changelog as entry}<article class="release-entry">
-            <h3>{releaseHeading(entry.version, entry.date)}</h3>
+        {#each releaseHistory.filter((entry) => releaseFilter === 'all' || entry.platform === releaseFilter) as entry}<article
+            class="release-entry"
+          >
+            <h3>
+              {entry.platform === 'desktop' ? 'Desktop' : 'Mobile'} · {entry.platform === 'desktop'
+                ? releaseHeading(entry.version, entry.date)
+                : `${entry.date} : ${entry.version}`}{entry.channel === 'development'
+                ? ' · Development build'
+                : ''}
+            </h3>
             <p>{entry.notes}</p>
           </article>{/each}
         <button onclick={() => (modal = changelogReturn)}>Back</button>
@@ -4733,6 +5139,8 @@
                 Uses your signed-in Tailscale device identity and Tailscale-verified host keys. No
                 SSH password or key is needed. The target must enable Tailscale SSH; an accept
                 policy connects directly, while a check policy can require browser reauthentication.
+                Native Windows cannot serve Tailscale SSH. For WSL, use its Linux endpoint's own
+                tailnet name. DazeDev remote hosts need Python 3 and tmux.
               {:else}
                 Your OpenSSH config, keys, certificates and agent are respected. Password and
                 host-key prompts appear next. Passwords are never saved.
@@ -5344,7 +5752,7 @@
                 ><Download size={14} /> Install missing stack components</button
               >{/if}
           </details>
-          <details class="settings-section settings-disclosure">
+          <details class="settings-section settings-disclosure" id="voice-shortcuts">
             <summary
               >Voice hotkeys and input <span
                 >{bindingFor('dictation').label} · {bindingFor('command').label}</span
@@ -5353,6 +5761,11 @@
             <p class="hint">
               Choose separate shortcuts for terminal dictation and IDE commands. Capture stops if
               DazeDev loses focus.
+            </p>
+            <p>
+              In toggle mode: tap to listen, tap to stop, then double-tap to submit the reviewed
+              text. The terminal must still be unchanged. Hold-to-talk keeps its press and release
+              behavior.
             </p>
             {#each ['dictation', 'command'] as mode}
               {@const voiceInput = mode as VoiceMode}
@@ -5940,7 +6353,7 @@
       onsplit={(edge) => addTerminal(edge, paneMenu!.pane)}
       transfers={workspaces.map((w) => ({
         id: w.id,
-        label: `${device.hosts.find((h) => h.id === w.hostId)?.name} / ${w.name}`,
+        label: `${w.hostId === HOSTLESS ? 'Hostless' : device.hosts.find((h) => h.id === w.hostId)?.name} / ${w.name}`,
       }))}
       transferDisabled={dictationActive}
       ontransfer={(id, duplicate) => {

@@ -19,5 +19,17 @@ fun DazeDevMobileUiState.destination(row:TerminalRow):TerminalDestination {
     val reference=host?.profile?.let(HostReference::fromProfile) ?: row.hostDetails ?: HostReference(
         user=identity.getOrNull(1).orEmpty(),socket=identity.getOrNull(2).orEmpty(),
     )
-    return TerminalDestination(row,host,reference,host?.profile?.id!=profile.id)
+    return TerminalDestination(row,host,reference,localGroupId!=null || host?.profile?.id!=profile.id)
+}
+
+fun DazeDevMobileUiState.groupHosts():List<TerminalDestination> = localGroups.firstOrNull {it.id==localGroupId}?.rows.orEmpty()
+    .map {destination(it)}.filter { !it.connected && it.host?.phase!=ConnectionPhase.Connecting }.distinctBy {it.row.hostKey.ifBlank {it.row.hostId}}
+
+fun DazeDevMobileUiState.currentFolder()=if(localGroupId!=null)localGroups.firstOrNull {it.id==localGroupId}else folders.firstOrNull {it.id==selectedFolder}
+
+fun DazeDevMobileUiState.terminalTabs():List<TerminalRow> {
+    val folder=currentFolder()?:return emptyList()
+    val pane=selectedPaneId?:return emptyList()
+    val group=folder.tabGroups.firstOrNull {pane in it.panes}?:return emptyList()
+    return group.panes.mapNotNull {id->folder.rows.firstOrNull {it.paneId==id}}
 }

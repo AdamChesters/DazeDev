@@ -1,5 +1,8 @@
 export const terminalMenuDefaults = [
   'split',
+  'new-tab',
+  'group-tabs',
+  'ungroup-tab',
   'copy-last',
   'copy-original',
   'review-undelivered',

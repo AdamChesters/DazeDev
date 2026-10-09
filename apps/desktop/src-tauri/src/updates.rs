@@ -17,6 +17,10 @@ const GITHUB_RELEASES: &str =
     "https://api.github.com/repos/AdamChesters/DazeDev/releases?per_page=100";
 const GITHUB_DOWNLOAD: &str = "https://github.com/AdamChesters/DazeDev/releases/download/";
 const MAX_ZIP: u64 = 256 * 1024 * 1024;
+pub fn changelog() -> Result<serde_json::Value, String> {
+    let bytes = fetch("https://raw.githubusercontent.com/AdamChesters/DazeDev/main/shared/releases/changelog.json", 1024 * 1024)?;
+    serde_json::from_slice(&bytes).map_err(|e| e.to_string())
+}
 #[derive(Clone, Serialize, Deserialize, Debug)]
 pub struct Release {
     pub version: String,
@@ -646,10 +650,24 @@ mod tests {
     fn desktop_updater_ignores_android_releases_even_with_a_manifest() {
         let mut android = github_fixture("99.0.0", false);
         android["tag_name"] = serde_json::json!("android/v99.0.0");
-        android["assets"][0]["browser_download_url"] = serde_json::json!(format!("{GITHUB_DOWNLOAD}android/v99.0.0/latest.json"));
-        let list = serde_json::to_vec(&vec![android.clone(), github_fixture("0.4.0", false)]).unwrap();
-        assert_eq!(github_candidate(&list,"0.3.3-alpha.0").unwrap().unwrap().0.to_string(), "0.4.0");
-        assert!(github_candidate(&serde_json::to_vec(&vec![android]).unwrap(),"0.3.3-alpha.0").unwrap().is_none());
+        android["assets"][0]["browser_download_url"] =
+            serde_json::json!(format!("{GITHUB_DOWNLOAD}android/v99.0.0/latest.json"));
+        let list =
+            serde_json::to_vec(&vec![android.clone(), github_fixture("0.4.0", false)]).unwrap();
+        assert_eq!(
+            github_candidate(&list, "0.3.3-alpha.0")
+                .unwrap()
+                .unwrap()
+                .0
+                .to_string(),
+            "0.4.0"
+        );
+        assert!(github_candidate(
+            &serde_json::to_vec(&vec![android]).unwrap(),
+            "0.3.3-alpha.0"
+        )
+        .unwrap()
+        .is_none());
     }
     #[test]
     fn discovers_only_the_matching_github_release() {

@@ -83,6 +83,7 @@ export type Layout =
       second: Layout;
     };
 export interface Workspace {
+  tabGroups?: import('./terminal-tabs').TerminalTabGroup[];
   colors?: import('./colors').TabColors;
   id: string;
   name: string;
@@ -104,6 +105,10 @@ export interface Profile {
   discovery: Record<string, unknown>;
 }
 export interface Device {
+  localWorkspaces?: Profile;
+  activeTerminalTabs?: Record<string, string>;
+  listenOnboarded?: boolean;
+  releaseHistory?: import('./changelog').ReleaseEntry[];
   paneMenuOrder?: string[];
   lastChangelogVersion?: string;
   terminalAlerts?: { visual: boolean; sound: boolean };

@@ -53,7 +53,17 @@
         }
       },
       "focused": "p1",
-      "futureWorkspace": true
+      "futureWorkspace": true,
+      "tabGroups": [
+        {
+          "id": "tabs-a",
+          "panes": [
+            "p2",
+            "p1"
+          ],
+          "futureGroup": true
+        }
+      ]
     }
   ],
   "discovery": {},

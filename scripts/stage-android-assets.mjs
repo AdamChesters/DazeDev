@@ -5,6 +5,8 @@ import { fileURLToPath } from "node:url";
 const root = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 const out = resolve(process.argv[2]);
 await mkdir(out, { recursive: true });
+await mkdir(resolve(out, "assets"), { recursive: true });
+await cp(resolve(root, "shared/releases/changelog.json"), resolve(out, "assets/changelog.json"));
 const svg = await readFile(
   resolve(root, "apps/desktop/public/brand.svg"),
   "utf8",

@@ -20,6 +20,7 @@ export interface TerminalControls {
   pasteBroadcast?(text: string, expectedContext: string): Promise<void>;
   pasteDictation(text: string, enter: boolean): Promise<void>;
   pasteForReview(text: string, expectedContext: string): Promise<void>;
+  submitReviewed?(expectedContext: string): Promise<void>;
   context(): string;
   processId(): number;
   copy(): Promise<void>;

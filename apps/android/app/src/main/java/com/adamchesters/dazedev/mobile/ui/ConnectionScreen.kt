@@ -220,7 +220,7 @@ fun ConnectionScreen(
 
                 if (authMethod == AuthMethod.TailscaleSsh) {
                     Text(
-                        text = "Uses the Tailscale identity active on this phone. No private key or SSH password is needed.",
+                        text = "Uses the Tailscale identity active on this phone. The destination must have Tailscale SSH enabled. Native Windows cannot serve Tailscale SSH: use the WSL/Linux device's own tailnet name and Linux username. DazeDev remote hosts need Python 3 and tmux. Ordinary SSH over Tailscale uses separate SSH credentials.",
                         style = MaterialTheme.typography.bodyMedium,
                         color = MaterialTheme.colorScheme.onSurfaceVariant,
                     )

@@ -14,8 +14,8 @@ android {
         applicationId = "com.adamchesters.dazedev.mobile"
         minSdk = 28
         targetSdk = 36
-        versionCode = 3
-        versionName = "0.1.0-alpha.2"
+        versionCode = 4
+        versionName = "0.1.0-alpha.3"
 
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
     }
@@ -97,6 +97,7 @@ android.sourceSets.getByName("main").assets.srcDir(layout.buildDirectory.dir("ge
 tasks.named("preBuild").configure { dependsOn(sharedHostAssets) }
 
 val mobileAssets = tasks.register<Exec>("stageMobileAssets") {
+    inputs.file(rootProject.file("../../shared/releases/changelog.json"))
     inputs.files(rootProject.file("../../scripts/stage-android-assets.mjs"), rootProject.file("../desktop/public/brand.svg"), rootProject.file("../desktop/package-lock.json"))
     inputs.dir(rootProject.file("terminal"))
     outputs.dir(layout.buildDirectory.dir("generated/mobile"))

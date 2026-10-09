@@ -57,6 +57,85 @@ fn tailscale_executable() -> std::path::PathBuf {
     }
     "tailscale".into()
 }
+fn tailscale_target_is_windows(status: &Value, address: &str) -> bool {
+    let address = address.trim_end_matches('.').to_ascii_lowercase();
+    let Some(peers) = status.get("Peer").and_then(Value::as_object) else {
+        return false;
+    };
+    let matches: Vec<_> = peers
+        .values()
+        .filter(|peer| {
+            let dns = peer["DNSName"]
+                .as_str()
+                .unwrap_or("")
+                .trim_end_matches('.')
+                .to_ascii_lowercase();
+            dns == address
+                || (!address.contains('.') && dns.split('.').next() == Some(address.as_str()))
+                || peer["TailscaleIPs"]
+                    .as_array()
+                    .is_some_and(|ips| ips.iter().any(|ip| ip.as_str() == Some(&address)))
+        })
+        .collect();
+    matches.len() == 1
+        && matches[0]["OS"]
+            .as_str()
+            .is_some_and(|os| os.eq_ignore_ascii_case("windows"))
+}
+
+fn check_tailscale_target(host: &Host) -> Result<(), String> {
+    if host.kind != "tailscale" {
+        return Ok(());
+    }
+    // Status is an optional local hint. Bound the probe and keep normal SSH errors if it is unavailable.
+    let mut command = std::process::Command::new(tailscale_executable());
+    command
+        .args(["status", "--json"])
+        .stdin(std::process::Stdio::null())
+        .stdout(std::process::Stdio::piped())
+        .stderr(std::process::Stdio::null());
+    #[cfg(windows)]
+    {
+        use std::os::windows::process::CommandExt;
+        command.creation_flags(0x08000000);
+    }
+    let Ok(mut child) = command.spawn() else {
+        return Ok(());
+    };
+    let stdout = child.stdout.take().unwrap();
+    let (tx, rx) = mpsc::channel();
+    std::thread::spawn(move || {
+        let mut bytes = Vec::new();
+        let result = stdout.take(4 * 1024 * 1024 + 1).read_to_end(&mut bytes);
+        let _ = tx.send((result, bytes));
+    });
+    let deadline = std::time::Instant::now() + Duration::from_secs(4);
+    let status = loop {
+        match child.try_wait() {
+            Ok(Some(status)) => break Some(status),
+            Ok(None) if std::time::Instant::now() < deadline => {
+                std::thread::sleep(Duration::from_millis(25))
+            }
+            _ => {
+                let _ = child.kill();
+                let _ = child.wait();
+                break None;
+            }
+        }
+    };
+    if status.is_some_and(|s| s.success()) {
+        if let Ok((Ok(_), bytes)) = rx.recv_timeout(Duration::from_millis(100)) {
+            if bytes.len() <= 4 * 1024 * 1024 {
+                if let Ok(value) = serde_json::from_slice(&bytes) {
+                    if tailscale_target_is_windows(&value, &host.address) {
+                        return Err("TAILSCALE_WINDOWS_TARGET: This Tailscale device runs Windows, which cannot serve Tailscale SSH. Connect to a WSL/Linux device with Tailscale SSH enabled, using its own tailnet name and Linux username. Ordinary SSH over Tailscale uses separate SSH credentials; DazeDev's remote host also needs Python 3 and tmux.".into());
+                    }
+                }
+            }
+        }
+    }
+    Ok(())
+}
 pub fn command(host: &Host, remote: &str) -> Result<CommandBuilder, String> {
     for s in [
         &host.address,
@@ -483,6 +562,7 @@ impl Transport {
         }
     }
     pub fn connect(&self, host: Host, sink: EventSink) -> Result<(), String> {
+        check_tailscale_target(&host)?;
         self.disconnect(&host.id);
         if host.kind == "powershell" {
             if !cfg!(windows) {
@@ -1113,6 +1193,28 @@ impl Drop for Transport {
 }
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn tailscale_windows_detection_requires_one_matching_peer() {
+        let peers = serde_json::json!({"Peer": {
+            "a": {"DNSName":"vm202.example.ts.net.","OS":"windows","TailscaleIPs":["100.64.0.2"]},
+            "b": {"DNSName":"vm202-wsl.example.ts.net.","OS":"linux","TailscaleIPs":["100.64.0.3"]}
+        }});
+        for address in [
+            "vm202.example.ts.net",
+            "VM202.EXAMPLE.TS.NET.",
+            "vm202",
+            "100.64.0.2",
+        ] {
+            assert!(super::tailscale_target_is_windows(&peers, address));
+        }
+        for address in ["vm202-wsl", "100.64.0.3", "unknown", "vm202.other.ts.net"] {
+            assert!(!super::tailscale_target_is_windows(&peers, address));
+        }
+        assert!(!super::tailscale_target_is_windows(
+            &serde_json::json!({}),
+            "vm202"
+        ));
+    }
     use super::*;
     #[cfg(unix)]
     #[test]

@@ -9,6 +9,8 @@ import com.adamchesters.dazedev.mobile.data.*
 import com.adamchesters.dazedev.mobile.host.*
 import com.adamchesters.dazedev.mobile.ssh.*
 import com.adamchesters.dazedev.mobile.tmux.*
+import com.adamchesters.dazedev.mobile.releases.*
+import com.adamchesters.dazedev.mobile.BuildConfig
 import java.io.File
 import java.util.UUID
 import java.util.concurrent.atomic.AtomicLong
@@ -25,6 +27,15 @@ data class UserMessage(val id: Long, val text: String)
 data class PendingTerminalConnection(val row:TerminalRow,val ownerId:String,val folderId:String?,val targetProfileId:String)
 data class HostSummary(val profile: ConnectionProfile, val phase: ConnectionPhase, val workspaceCount: Int, val fingerprint: String = "", val folders:List<WorkspaceFolder> = emptyList())
 data class DazeDevMobileUiState(
+    val localGroups:List<WorkspaceFolder> = emptyList(),
+    val localGroupId:String? = null,
+    val groupConnectPrompt:Boolean = false,
+    val groupConnectionHost:String? = null,
+    val selectedPaneId:String? = null,
+    val releaseHistory:List<ReleaseEntry> = emptyList(),
+    val releaseHistoryStatus:String = "",
+    val mobileUpdate:MobileUpdate? = null,
+    val checkingUpdates:Boolean = false,
     val profile: ConnectionProfile = ConnectionProfile(),
     val hosts: List<HostSummary> = emptyList(),
     val showHosts: Boolean = true,
@@ -59,6 +70,8 @@ data class DazeDevMobileUiState(
 
 class MainViewModel(application: Application) : AndroidViewModel(application) {
     private val store=ProfileStore(application)
+    private val localGroups=store.localWorkspaces()?.let(::SharedProfile)?:SharedProfile.empty()
+    private var groupConnectQueue=listOf<String>()
     private val ids=AtomicLong(1)
     private val _uiState=MutableStateFlow(DazeDevMobileUiState(profile=store.load()))
     val uiState: StateFlow<DazeDevMobileUiState> = _uiState.asStateFlow()
@@ -88,7 +101,39 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
             prompts.challenge.collect { challenge -> if(challenge==null)challenges.remove(profile.id)else challenges[profile.id]=challenge;publishChallenge() }
         }
     }
-    init {store.loadAll().forEach {hosts[it.id]=HostState(it)};publishHosts()}
+    init {
+        store.loadAll().forEach {hosts[it.id]=HostState(it)};publishHosts()
+        publishLocalGroups()
+        val bundled=application.assets.open("changelog.json").bufferedReader().use {it.readText()}
+        _uiState.update {it.copy(releaseHistory=mergeHistory(store.releaseHistory(),mergeHistory(bundled)))}
+        if(System.currentTimeMillis()-store.lastUpdateCheck()>24*60*60*1000L)checkUpdates(false)
+    }
+    fun checkUpdates(manual:Boolean=true) {
+        if(_uiState.value.checkingUpdates)return
+        _uiState.update {it.copy(checkingUpdates=true)}
+        viewModelScope.launch {
+            try {
+                store.checkedUpdates()
+                val update=withContext(Dispatchers.IO){PublicReleaseCatalog.updates(BuildConfig.VERSION_NAME)}
+                if(update!=null && (manual || update.version!=store.ignoredUpdate()))_uiState.update {it.copy(mobileUpdate=update)}
+                else if(manual)postMessage("No newer public Android release is available. Development APKs can be installed offline.")
+            } catch(e:Exception) {if(e is CancellationException)throw e;if(manual)postMessage(e.message?:"Public releases are unavailable.")}
+            finally {_uiState.update {it.copy(checkingUpdates=false)}}
+        }
+    }
+    fun dismissUpdate() {_uiState.value.mobileUpdate?.let {store.ignoreUpdate(it.version)};_uiState.update {it.copy(mobileUpdate=null)}}
+    fun refreshReleaseHistory() {
+        if(_uiState.value.releaseHistoryStatus=="Checking public release history…")return
+        _uiState.update {it.copy(releaseHistoryStatus="Checking public release history…")}
+        viewModelScope.launch {
+            try {
+                val json=withContext(Dispatchers.IO){PublicReleaseCatalog.history()}
+                val history=mergeHistory(json,_uiState.value.releaseHistory)
+                store.saveReleaseHistory(historyJson(history))
+                _uiState.update {it.copy(releaseHistory=history,releaseHistoryStatus="")}
+            } catch(e:Exception) {if(e is CancellationException)throw e;_uiState.update {it.copy(releaseHistoryStatus="Showing saved release history. Public history is currently unavailable.")}}
+        }
+    }
     private fun current(): HostState? = hosts[_uiState.value.profile.id]
     private fun publishHosts() { _uiState.update {it.copy(hosts=hosts.values.map {h->HostSummary(h.profile,h.phase,h.shared?.folders()?.size?:0,h.fingerprint,h.shared?.folders().orEmpty())})} }
     private fun publish(h: HostState) {
@@ -96,11 +141,51 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         if (_uiState.value.profile.id != h.profile.id) return
         _uiState.update {it.copy(profile=h.profile,connectionPhase=h.phase,folders=h.shared?.folders().orEmpty(),sessions=h.sessions,repositories=h.repositories,agents=h.agents,conflict=h.conflict,recoveryDraft=store.draft(h.profile.id)!=null,isRefreshing=h.refreshing,isCreating=h.creating,endingSessionName=h.ending)}
     }
-    fun showHosts() {closeTerminal();_uiState.update {it.copy(showHosts=true,selectedFolder=null,selectedSessionName=null,selectedSessionId=null,pendingTerminalConnection=null)}}
-    fun newHost() {closeTerminal();_uiState.update {it.copy(profile=ConnectionProfile(),showHosts=false,connectionPhase=ConnectionPhase.Disconnected,selectedFolder=null,selectedSessionName=null,pendingTerminalConnection=null)}}
+    private fun publishLocalGroups(){_uiState.update {it.copy(localGroups=localGroups.folders())}}
+    private fun saveLocalGroups(){store.saveLocalWorkspaces(localGroups.document);publishLocalGroups()}
+    fun createLocalGroup(name:String){val id=localGroups.createLocalWorkspace(name.trim());saveLocalGroups();selectLocalGroup(id)}
+    fun selectLocalGroup(id:String) {
+        closeTerminal();groupConnectQueue=emptyList()
+        _uiState.update {it.copy(showHosts=false,localGroupId=id,selectedSessionName=null,selectedSessionId=null,selectedPaneId=null,selectedFolder=null,groupConnectionHost=null,pendingTerminalConnection=null)}
+        val needs=_uiState.value.groupHosts()
+        _uiState.update {it.copy(groupConnectPrompt=needs.isNotEmpty())}
+    }
+    fun dismissGroupConnect(){_uiState.update {it.copy(groupConnectPrompt=false)}}
+    fun connectGroupHosts() {
+        groupConnectQueue=_uiState.value.groupHosts().mapNotNull {it.host?.profile?.id}.distinct()
+        _uiState.update {it.copy(groupConnectPrompt=false)}
+        nextGroupConnection()
+    }
+    private fun nextGroupConnection():Unit {
+        groupConnectQueue=groupConnectQueue.filter {hosts[it]?.phase!=ConnectionPhase.Connected}
+        val id=groupConnectQueue.firstOrNull()
+        if(id==null){_uiState.update {it.copy(groupConnectionHost=null)};return}
+        groupConnectQueue=groupConnectQueue.drop(1)
+        val host=hosts[id]?:return nextGroupConnection()
+        _uiState.update {it.copy(groupConnectionHost=id,profile=host.profile,connectionPhase=host.phase)}
+        if(host.profile.authMethod==AuthMethod.TailscaleSsh)connect(host.profile,"")
+    }
+    fun cloneToLocalGroup(sourceHost:String,folder:String,pane:String) {
+        try {localGroups.clonePane(_uiState.value.localGroupId?:return,hosts[sourceHost]?.shared?:error("Connect the source host first."),folder,pane);saveLocalGroups()}
+        catch(e:Exception){postMessage(e.message?:"Could not add this terminal view.")}
+    }
+    fun editLocalGroup(name:String?=null,remove:Boolean=false) {
+        localGroups.editWorkspace(_uiState.value.localGroupId?:return,name=name,remove=remove)
+        saveLocalGroups();if(remove)showHosts()
+    }
+    fun groupTerminalTabs(panes:List<String>)=editTabs {profile,id->profile.groupTabs(id,panes)}
+    fun ungroupTerminalTab(pane:String)=editTabs {profile,id->profile.ungroupTab(id,pane)}
+    private fun editTabs(edit:(SharedProfile,String)->Unit) {
+        val local=_uiState.value.localGroupId
+        if(local!=null){try {edit(localGroups,local);saveLocalGroups()}catch(e:Exception){postMessage(e.message?:"Could not group terminals.")};return}
+        val h=current()?:return;val folder=_uiState.value.selectedFolder?:return
+        viewModelScope.launch {try {val draft=SharedProfile(requireNotNull(h.shared).document);edit(draft,folder);save(h,draft)}catch(e:Exception){postMessage(e.message?:"Could not save terminal tabs. Draft retained.")}}
+    }
+    fun showHosts() {closeTerminal();groupConnectQueue=emptyList();_uiState.update {it.copy(showHosts=true,localGroupId=null,groupConnectPrompt=false,groupConnectionHost=null,selectedFolder=null,selectedSessionName=null,selectedSessionId=null,pendingTerminalConnection=null)}}
+    fun newHost() {closeTerminal();_uiState.update {it.copy(profile=ConnectionProfile(),localGroupId=null,showHosts=false,connectionPhase=ConnectionPhase.Disconnected,selectedFolder=null,selectedSessionName=null,pendingTerminalConnection=null)}}
     fun selectHost(id: String) {
         val h=hosts[id]?:return;closeTerminal()
-        _uiState.update {it.copy(profile=h.profile,showHosts=false,selectedFolder=null,selectedSessionName=null,selectedSessionId=null,pendingTerminalConnection=null)};publish(h)
+        _uiState.update {it.copy(profile=h.profile,localGroupId=null,showHosts=false,selectedFolder=null,selectedSessionName=null,selectedSessionId=null,pendingTerminalConnection=null)};publish(h)
     }
     fun selectFolder(id: String?) {_uiState.update {it.copy(selectedFolder=id)}}
     fun setPrivateKey(uri: Uri, displayName: String) {_uiState.update {it.copy(profile=it.profile.copy(privateKeyUri=uri.toString(),privateKeyName=displayName))}}
@@ -134,9 +219,14 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                     AgentCapability(agent.getString("id"),agent.optString("version"),efforts.keys.toList(),efforts,agent.getBoolean("modelFlag"),agent.getBoolean("effortFlag"))
                 }
                 refresh(h)
+                if(_uiState.value.groupConnectionHost==normalized.id)nextGroupConnection()
                 val selected=_uiState.value.pendingTerminalConnection
                 if(selected?.targetProfileId==normalized.id) {
                     _uiState.update {it.copy(pendingTerminalConnection=null)}
+                    hosts[selected.ownerId]?.let {owner->
+                        _uiState.update {it.copy(profile=owner.profile,selectedFolder=selected.folderId)}
+                        publish(owner)
+                    }
                     openSession(h,selected.row.sessionId,selected.row.stamp,selected.row.name)
                 }
             } catch(e:CancellationException){h.client.close();h.ssh.disconnectNow();throw e}
@@ -156,9 +246,10 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     }
     fun refreshSessions() {val h=current()?:return;if(h.refreshing)return;viewModelScope.launch {h.refreshing=true;publish(h);try {refresh(h)}catch(e:Exception){postMessage(e.message?:"Refresh failed.")}finally {h.refreshing=false;publish(h)}}}
     fun reloadProfile() {val h=current()?:return;viewModelScope.launch {try {val shared=SharedProfile(h.client.request("profile_load") as JSONObject);shared.rebindOwner(h.profile.id,h.fingerprint,HostReference.fromProfile(h.profile));h.shared=shared;h.conflict=false;publish(h);refresh(h)}catch(e:Exception){postMessage(e.message?:"Reload failed.")}}}
-    fun selectSession(name:String) {val h=current()?:return;val s=h.sessions.firstOrNull {it.name==name}?:return;openSession(h,s.id,s.stamp,s.name)}
+    fun selectSession(name:String) {val h=current()?:return;val s=h.sessions.firstOrNull {it.name==name}?:return;_uiState.update {it.copy(selectedPaneId=null)};openSession(h,s.id,s.stamp,s.name)}
     fun selectPane(row:TerminalRow) {
         if(row.hostKey.isBlank()) {postMessage("This terminal has no saved host identity. Open its host's session list and adopt it again.");return}
+        _uiState.update {it.copy(selectedPaneId=row.paneId)}
         val state=_uiState.value
         val target=state.destination(row)
         if(target.connected) {
@@ -174,6 +265,10 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         if(profile.authMethod==AuthMethod.TailscaleSsh && profile.host.isNotBlank() && profile.username.isNotBlank()) connect(profile,"")
     }
     fun cancelConnection() {
+        if(_uiState.value.groupConnectionHost!=null) {
+            hosts[_uiState.value.groupConnectionHost]?.let {h->h.connectJob?.cancel();h.client.close();h.ssh.disconnectNow();h.phase=ConnectionPhase.Disconnected;publish(h)}
+            groupConnectQueue=emptyList();_uiState.update {it.copy(groupConnectionHost=null)};return
+        }
         val pending=_uiState.value.pendingTerminalConnection
         if(pending==null) {disconnect();showHosts();return}
         hosts[pending.targetProfileId]?.let {h->h.connectJob?.cancel();h.client.close();h.ssh.disconnectNow();h.phase=ConnectionPhase.Disconnected}
