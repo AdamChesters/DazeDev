@@ -98,6 +98,25 @@ class SharedProfile(document: JSONObject) {
         val remaining=folder.tabGroups.map {it.copy(panes=it.panes.filterNot {id->id in selected})}.filter {it.panes.size>1}
         writeTabs(workspaceId,remaining+TerminalTabGroup(java.util.UUID.randomUUID().toString(),selected))
     }
+    fun removeLocalView(workspaceId:String,paneId:String) {
+        val folder=workspace(workspaceId)
+        require(folder.getString("hostId")==LOCAL_OWNER){"Choose a hostless workspace."}
+        val panes=folder.getJSONArray("panes")
+        val remaining=(0 until panes.length()).map {panes.getJSONObject(it)}.filterNot {it.getString("id")==paneId}
+        require(remaining.size<panes.length()){"Terminal view no longer exists."}
+        fun remove(node:JSONObject):JSONObject? = when(node.optString("kind")) {
+            "pane" -> node.takeUnless {it.optString("id")==paneId}
+            "split" -> {
+                val first=remove(node.getJSONObject("first"));val second=remove(node.getJSONObject("second"))
+                when {first==null->second;second==null->first;else->node.put("first",first).put("second",second)}
+            }
+            else -> node
+        }
+        ungroupTab(workspaceId,paneId)
+        folder.put("panes",JSONArray(remaining))
+        folder.put("layout",remove(folder.getJSONObject("layout"))?:JSONObject().put("kind","pane").put("id",""))
+        if(folder.optString("focused")==paneId)folder.put("focused",remaining.firstOrNull()?.getString("id").orEmpty())
+    }
     fun ungroupTab(workspaceId:String,paneId:String) {
         writeTabs(workspaceId,folders().first {it.id==workspaceId}.tabGroups.map {it.copy(panes=it.panes.filterNot {id->id==paneId})}.filter {it.panes.size>1})
     }

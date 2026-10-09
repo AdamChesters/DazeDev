@@ -34,4 +34,18 @@ class WorkspaceGroupsTest {
         assertTrue(restored.document.getJSONObject("future").getBoolean("preserved"))
         restored.ungroupTab(folder.id,panes[0]);assertTrue(restored.folders().single().tabGroups.isEmpty())
     }
+    @Test fun removingLocalViewsRetainsOriginalsAndClearsEmptyTabGroups() {
+        val source=source();val before=source.document.toString();val folder=source.folders().single()
+        val local=SharedProfile.empty();val group=local.createLocalWorkspace("Group")
+        repeat(2){local.clonePane(group,source,folder.id,folder.rows.single().paneId)}
+        val panes=local.folders().single().rows.map {it.paneId}
+        local.groupTabs(group,panes)
+        local.removeLocalView(group,panes[0])
+        assertEquals(listOf(panes[1]),local.folders().single().rows.map {it.paneId})
+        assertTrue(local.folders().single().tabGroups.isEmpty())
+        local.removeLocalView(group,panes[1])
+        assertTrue(SharedProfile(local.document).folders().single().rows.isEmpty())
+        assertEquals(before,source.document.toString())
+        assertThrows(IllegalArgumentException::class.java){source.removeLocalView(folder.id,folder.rows.single().paneId)}
+    }
 }

@@ -175,6 +175,10 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     }
     fun groupTerminalTabs(panes:List<String>)=editTabs {profile,id->profile.groupTabs(id,panes)}
     fun ungroupTerminalTab(pane:String)=editTabs {profile,id->profile.ungroupTab(id,pane)}
+    fun removeLocalTerminalView(pane:String) {
+        try {localGroups.removeLocalView(_uiState.value.localGroupId?:return,pane);saveLocalGroups()}
+        catch(e:Exception){postMessage(e.message?:"Could not remove this terminal view.")}
+    }
     private fun editTabs(edit:(SharedProfile,String)->Unit) {
         val local=_uiState.value.localGroupId
         if(local!=null){try {edit(localGroups,local);saveLocalGroups()}catch(e:Exception){postMessage(e.message?:"Could not group terminals.")};return}

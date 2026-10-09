@@ -1005,4 +1005,81 @@ mod tests {
             .is_err());
         fs::remove_dir_all(server.root).unwrap();
     }
+
+    #[cfg(windows)]
+    #[test]
+    fn powershell_submits_text_followed_by_a_separate_return() {
+        let (server, host) = fixture();
+        struct Cleanup<'a>(&'a Server);
+        impl Drop for Cleanup<'_> {
+            fn drop(&mut self) {
+                let sessions = self.0.sessions.lock().unwrap_or_else(|e| e.into_inner());
+                for session in sessions.values() {
+                    let _ = session.stop();
+                }
+                let _ = fs::remove_dir_all(&self.0.root);
+            }
+        }
+        let _cleanup = Cleanup(&server);
+        let info = server
+            .request(
+                &host,
+                "create",
+                &json!({"name":"separate-return","operation":"broadcast-regression","shell":"powershell","loadProfile":false}),
+            )
+            .unwrap();
+        let id = &info["id"];
+        let session = server.session(&host, &json!({"id":id})).unwrap();
+        let start = Instant::now();
+        loop {
+            let ready = session
+                .output
+                .lock()
+                .unwrap()
+                .parser
+                .screen()
+                .contents()
+                .lines()
+                .any(|line| line.trim_start().starts_with("PS ") && line.trim_end().ends_with('>'));
+            if ready {
+                break;
+            }
+            assert!(
+                start.elapsed() < Duration::from_secs(15),
+                "PowerShell prompt did not become ready"
+            );
+            std::thread::sleep(Duration::from_millis(25));
+        }
+        let marker = server.root.join("submitted.txt");
+        let mut expected = String::new();
+        for n in 0..3 {
+            let command = format!(
+                "[IO.File]::AppendAllText({}, 'submission-{n};')",
+                ps_quote(&marker.to_string_lossy())
+            );
+            // Match broadcast's separate, acknowledged text and Return writes.
+            for text in [command.as_str(), "\r"] {
+                server
+                    .request(
+                        &host,
+                        "input",
+                        &json!({"id":id,"data":STANDARD.encode(text)}),
+                    )
+                    .unwrap();
+            }
+            expected.push_str(&format!("submission-{n};"));
+            let start = Instant::now();
+            loop {
+                if fs::read_to_string(&marker).is_ok_and(|value| value == expected) {
+                    break;
+                }
+                assert!(
+                    start.elapsed() < Duration::from_secs(15),
+                    "Separate Return did not execute submission {n}"
+                );
+                std::thread::sleep(Duration::from_millis(25));
+            }
+        }
+        assert_eq!(fs::read_to_string(marker).unwrap(), expected);
+    }
 }

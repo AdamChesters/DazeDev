@@ -67,7 +67,7 @@ Screenshots show the app interface with sample hosts and terminal output.
 ## On Android
 
 - The home page separates hosts and hostless workspace groups. Hold a workspace's drag handle to reorder it, or use its menu. Host workspace order and tab grouping are saved to the host and appear on desktop after refresh.
-- Open a hostless group and choose **Add terminal views** to copy views from connected hosts. These groups stay on the phone. A group prompts for the hosts it needs, using each host's own authentication.
+- Open a hostless group and choose **Add terminal views** to copy views from connected hosts. Use a terminal's options to remove its view from the group; its original session stays open. These groups stay on the phone. A group prompts for the hosts it needs, using each host's own authentication.
 - In a workspace, choose **Group terminals as tabs**, select terminals and confirm. Switch the resulting tabs above the terminal.
 - Tap **Voice** to open a blank prompt and start listening. **End** stops for editing; **Enter** submits once and closes the prompt. Failed or uncertain delivery keeps the draft.
 - **Changelog** shows both products, with All, Desktop and Mobile filters. Release history works from bundled or saved notes when offline. Android update checks use only the public GitHub repository and offer an APK download; development APKs can still be installed offline. Desktop-only releases do not trigger Android update prompts, and mobile-only releases do not trigger desktop prompts.

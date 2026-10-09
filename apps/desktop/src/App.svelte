@@ -2842,6 +2842,11 @@
     if (mode === 'dictation' && voiceStatus === 'idle' && !device.listenOnboarded) {
       listenIntroTarget = target;
       modal = 'listen-intro';
+      if (desktop && detachedFocus) {
+        await getCurrentWindow().show();
+        await getCurrentWindow().unminimize();
+        await getCurrentWindow().setFocus();
+      }
       return;
     }
     if (voiceStatus !== 'idle' && voiceMode !== mode) return;

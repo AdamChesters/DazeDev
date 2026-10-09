@@ -3,6 +3,8 @@ package com.adamchesters.dazedev.mobile.ui
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
+import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.MoreVert
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
@@ -25,12 +27,19 @@ fun WorkspaceTerminals(state:DazeDevMobileUiState,folder:WorkspaceFolder?,viewMo
             if(folder?.rows.isNullOrEmpty())item {Text(if(state.localGroupId!=null)"This is a hostless workspace. Connect to a host and open its terminals, then use Add terminal views. On desktop, hold Ctrl and drag terminal windows into a hostless group. The originals stay in place." else "This workspace has no terminals.",color=MaterialTheme.colorScheme.onSurfaceVariant)}
             items(folder?.rows.orEmpty(),key={it.paneId}) {row->
                 val group=folder?.tabGroups?.firstOrNull {row.paneId in it.panes}
+                var menu by remember(row.paneId){mutableStateOf(false)}
                 Column {
                     Row(verticalAlignment=Alignment.CenterVertically) {
                         if(grouping)Checkbox(checked=row.paneId in selected,onCheckedChange={checked->selected=if(checked)selected+row.paneId else selected-row.paneId})
                         Box(Modifier.weight(1f)){TerminalHostCard(state,row,{if(grouping)selected=if(row.paneId in selected)selected-row.paneId else selected+row.paneId else viewModel.selectPane(row)},if(group==null)"" else "Tab group ${folder!!.tabGroups.indexOf(group)+1}")}
+                        if(!grouping && (group!=null || state.localGroupId!=null))Box {
+                            IconButton(onClick={menu=true}){Icon(Icons.Default.MoreVert,contentDescription="${row.name} options")}
+                            DropdownMenu(expanded=menu,onDismissRequest={menu=false}) {
+                                if(group!=null)DropdownMenuItem(text={Text("Move out of tab group")},onClick={menu=false;viewModel.ungroupTerminalTab(row.paneId)})
+                                if(state.localGroupId!=null)DropdownMenuItem(text={Text("Remove view from this group")},onClick={menu=false;viewModel.removeLocalTerminalView(row.paneId)})
+                            }
+                        }
                     }
-                    if(group!=null && !grouping)TextButton(onClick={viewModel.ungroupTerminalTab(row.paneId)}){Text("Move out of tab group")}
                 }
             }
         }
