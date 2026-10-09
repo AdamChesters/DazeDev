@@ -28,6 +28,10 @@ export function terminalTabs(workspace: Workspace, paneId: string) {
     workspace.panes.map((p) => p.id),
   ).find((group) => group.panes.includes(paneId));
 }
+export function tabSelections(workspace: Workspace, active: Record<string, string> = {}) {
+  const focused = terminalTabs(workspace, workspace.focused);
+  return focused ? { ...active, [focused.id]: workspace.focused } : active;
+}
 export function tabLayout(
   layout: Layout,
   groups: TerminalTabGroup[] = [],

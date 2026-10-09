@@ -46,8 +46,11 @@ export async function snapshotBroadcast(
       }
       if (terminal.context() !== context || terminals.get(input.id) !== terminal) return { input };
       const identity =
-        actual.attachment === 'tmux' && !actual.nestedSsh && actual.sessionId && actual.stamp
-          ? JSON.stringify([input.sourceHost, actual.sessionId, actual.stamp])
+        (actual.attachment === 'tmux' || actual.attachment === 'native') &&
+        !actual.nestedSsh &&
+        actual.sessionId &&
+        actual.stamp
+          ? JSON.stringify([input.sourceHost, actual.attachment, actual.sessionId, actual.stamp])
           : JSON.stringify([input.sourceHost, 'pane', input.id]);
       return { input, terminal, context, identity };
     }),

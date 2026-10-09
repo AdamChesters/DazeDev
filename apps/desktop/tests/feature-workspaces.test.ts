@@ -1,6 +1,6 @@
 import { expect, it, vi, afterEach } from 'vitest';
 import { HOSTLESS, workspaceHosts } from '../src/lib/workspace-groups';
-import { cleanTabGroups, tabLayout, retainTabPanes } from '../src/lib/terminal-tabs';
+import { cleanTabGroups, tabLayout, retainTabPanes, tabSelections } from '../src/lib/terminal-tabs';
 import { columns, ids } from '../src/lib/layout';
 import { ReviewHotkey } from '../src/lib/review-hotkey';
 import { mergeChangelog } from '../src/lib/changelog';
@@ -15,6 +15,18 @@ it('tabs keep all terminal identities when switching and restoring a saved layou
   expect(ids(retainTabPanes(switched, groups)).sort()).toEqual(['a', 'b', 'c']);
   expect(ids(layout)).toEqual(['a', 'b', 'c']);
   expect(cleanTabGroups(groups, ['b', 'c'])).toEqual([]);
+});
+it('search and dictation focus reveal a previously hidden tab', () => {
+  const workspace = {
+    panes: [{ id: 'a' }, { id: 'b' }, { id: 'c' }],
+    focused: 'b',
+    tabGroups: [{ id: 'tabs', panes: ['a', 'b'] }],
+  } as Workspace;
+  const active = { tabs: 'a' };
+  expect(
+    ids(tabLayout(columns(['a', 'b', 'c']), workspace.tabGroups, tabSelections(workspace, active))),
+  ).toEqual(['b', 'c']);
+  expect(active.tabs).toBe('a');
 });
 it('hostless groups deduplicate connections by verified host identity and report unknown hosts', () => {
   const hosts = [{ id: 'new-id', fingerprint: 'machine:user:socket', name: 'Dev' }] as Host[];

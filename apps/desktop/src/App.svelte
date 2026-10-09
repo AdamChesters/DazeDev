@@ -139,7 +139,13 @@
   import { terminalProjection, reconcileViewerLayout } from './lib/viewer-layout';
   import { HOSTLESS, workspaceHosts } from './lib/workspace-groups';
   import { ReviewHotkey } from './lib/review-hotkey';
-  import { cleanTabGroups, terminalTabs, tabLayout, retainTabPanes } from './lib/terminal-tabs';
+  import {
+    cleanTabGroups,
+    terminalTabs,
+    tabLayout,
+    retainTabPanes,
+    tabSelections,
+  } from './lib/terminal-tabs';
   import { call, on, rpc, desktop } from './lib/bridge';
   import { parseCommand, commandCatalogue, type Action } from './lib/commands';
   import { reviewCommand, consumeReview, type CommandReview } from './lib/command-review';
@@ -1673,7 +1679,7 @@
             w.tabGroups,
             w.panes.map((p) => p.id),
           ),
-          device.activeTerminalTabs,
+          tabSelections(w, device.activeTerminalTabs),
         ),
       ]),
     ),

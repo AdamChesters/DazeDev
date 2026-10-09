@@ -53,6 +53,20 @@ it('keeps unknown and nested SSH connected panes as independent recipients', asy
   expect(s.recipients).toHaveLength(2);
   expect(s.skipped).toHaveLength(0);
 });
+it('submits once to native session clones without merging unrelated attachments', async () => {
+  const inputs = [input('powershell'), input('clone'), input('tmux'), input('new-session')];
+  const terminals = new Map(inputs.map((i) => [i.id, terminal()]));
+  const native = { ...tmux, attachment: 'native' as const };
+  const snapshot = await snapshotBroadcast(inputs, terminals, async (i) =>
+    i.id === 'tmux' ? tmux : i.id === 'new-session' ? { ...native, stamp: '456' } : native,
+  );
+  expect(snapshot.recipients.map((r) => r.id)).toEqual(['powershell', 'tmux', 'new-session']);
+  expect(snapshot.mirrors).toBe(1);
+  await createBroadcastDelivery(snapshot, 'hello')(terminals);
+  expect(terminals.get('powershell')!.pasteBroadcast).toHaveBeenCalledTimes(1);
+  expect(terminals.get('clone')!.pasteBroadcast).not.toHaveBeenCalled();
+  expect(terminals.get('new-session')!.pasteBroadcast).toHaveBeenCalledTimes(1);
+});
 it('bounds unresponsive metadata probes', async () => {
   vi.useFakeTimers();
   try {
