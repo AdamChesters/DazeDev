@@ -28,6 +28,19 @@ it('search and dictation focus reveal a previously hidden tab', () => {
   ).toEqual(['b', 'c']);
   expect(active.tabs).toBe('a');
 });
+it('discarded tab groups do not consume panes and accepted group IDs stay unique', () => {
+  const groups = [
+    { id: 'singleton', panes: ['a', 'missing'] },
+    { id: '', panes: ['a', 'b'] },
+    { id: 'tabs', panes: ['a', 'a', 'b'], futureGroup: true },
+    { id: 'tabs', panes: ['c', 'd'] },
+    { id: 'other', panes: ['c', 'd'] },
+  ];
+  expect(cleanTabGroups(groups, ['a', 'b', 'c', 'd'])).toEqual([
+    { id: 'tabs', panes: ['a', 'b'], futureGroup: true },
+    { id: 'other', panes: ['c', 'd'] },
+  ]);
+});
 it('hostless groups deduplicate connections by verified host identity and report unknown hosts', () => {
   const hosts = [{ id: 'new-id', fingerprint: 'machine:user:socket', name: 'Dev' }] as Host[];
   const workspace = {
@@ -44,6 +57,19 @@ it('hostless groups deduplicate connections by verified host identity and report
   expect(result.panes[0].hostId).toBe('new-id');
   expect(workspace.panes[0].hostId).toBe('old-id');
   expect(workspaceHosts(workspace, hosts, { 'new-id': 'Connected' }).required).toEqual([]);
+});
+it('hostless groups reuse a connected alias of the same verified host', () => {
+  const hosts = [
+    { id: 'old', fingerprint: 'machine:user:socket', name: 'Old alias' },
+    { id: 'live', fingerprint: 'machine:user:socket', name: 'Live alias' },
+    { id: 'different', fingerprint: 'machine:other:socket', name: 'Other user' },
+  ] as Host[];
+  const workspace = { panes: [{ hostId: 'old', hostKey: 'machine:user:socket' }] } as Workspace;
+  const result = workspaceHosts(workspace, hosts, { live: 'Connected', different: 'Connected' });
+  expect(result.panes[0].hostId).toBe('live');
+  expect(result.required).toEqual([]);
+  expect(workspace.panes[0].hostId).toBe('old');
+  expect(workspaceHosts(workspace, hosts, {}).required.map((host) => host.id)).toEqual(['old']);
 });
 it('a review double-tap sends once without starting another recording', () => {
   vi.useFakeTimers();

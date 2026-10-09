@@ -8,9 +8,14 @@ export function workspaceHosts(
   const required = new Map<string, Host>();
   const missing = new Set<string>();
   const panes = workspace.panes.map((pane) => {
-    const host = hosts.find((h) =>
+    const matches = hosts.filter((h) =>
       pane.hostKey ? h.fingerprint === pane.hostKey : h.id === pane.hostId,
     );
+    const host =
+      matches.find((h) => connected[h.id] === 'Connected') ||
+      matches.find((h) => connected[h.id] === 'Connecting') ||
+      matches.find((h) => h.id === pane.hostId) ||
+      matches[0];
     if (!host)
       missing.add(pane.hostDetails?.name || pane.hostDetails?.address || 'Unconfigured host');
     else if (!['Connected', 'Connecting'].includes(connected[host.id])) required.set(host.id, host);

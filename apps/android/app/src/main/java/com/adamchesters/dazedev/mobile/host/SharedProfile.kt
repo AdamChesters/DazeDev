@@ -57,11 +57,16 @@ class SharedProfile(document: JSONObject) {
             order.addAll(records.map {it.getString("id")}.filterNot {it in order})
             val tabs=folder.optJSONArray("tabGroups")?:JSONArray()
             val used=mutableSetOf<String>()
+            val groupIds=mutableSetOf<String>()
             val groups=(0 until tabs.length()).mapNotNull {index->
                 val group=tabs.optJSONObject(index)?:return@mapNotNull null
+                val id=group.optString("id")
+                if(id.isBlank() || id in groupIds)return@mapNotNull null
                 val members=group.optJSONArray("panes")?:return@mapNotNull null
-                val valid=(0 until members.length()).map {members.optString(it)}.filter {it in byId && used.add(it)}
-                if(group.optString("id").isBlank() || valid.size<2)null else TerminalTabGroup(group.getString("id"),valid)
+                val valid=(0 until members.length()).map {members.optString(it)}.distinct().filter {it in byId && it !in used}
+                if(valid.size<2)return@mapNotNull null
+                groupIds.add(id);used.addAll(valid)
+                TerminalTabGroup(id,valid)
             }
             WorkspaceFolder(folder.getString("id"),folder.optString("name","Workspace"),order.distinct().mapNotNull { id ->
                 byId[id]?.let {p -> TerminalRow(id,p.optString("name","Terminal"),p.optString("sessionId"),p.optString("stamp"),p.optString("hostId"),p.optString("hostKey"),p.optString("directory"),p.optJSONObject("hostDetails")?.let(HostReference::fromJson))}

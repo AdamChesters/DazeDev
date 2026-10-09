@@ -1089,6 +1089,10 @@
         throw new Error(
           'Hostless workspaces need a persistent session. Open or create a managed terminal on its host first.',
         );
+      if (destination.hostId === HOSTLESS && (!status.stamp || !original.hostKey))
+        throw new Error(
+          'Reconnect the source host before cloning this view so its host and session identities can be verified.',
+        );
       if (attached && !status.sessionId)
         throw new Error(
           'The host helper needs reconnecting before this session can be duplicated.',

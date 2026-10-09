@@ -9,18 +9,23 @@ export function cleanTabGroups(
   panes: string[],
 ): TerminalTabGroup[] {
   const available = new Set(panes),
-    used = new Set<string>();
-  return (Array.isArray(groups) ? groups : [])
-    .filter((group) => group && typeof group.id === 'string' && Array.isArray(group.panes))
-    .map((group) => ({
-      ...group,
-      panes: group.panes.filter((id) => {
-        if (!available.has(id) || used.has(id)) return false;
-        used.add(id);
-        return true;
-      }),
-    }))
-    .filter((group) => group.panes.length > 1);
+    used = new Set<string>(),
+    groupIds = new Set<string>();
+  return (Array.isArray(groups) ? groups : []).flatMap((group) => {
+    if (
+      !group ||
+      typeof group.id !== 'string' ||
+      !group.id.trim() ||
+      groupIds.has(group.id) ||
+      !Array.isArray(group.panes)
+    )
+      return [];
+    const members = [...new Set(group.panes)].filter((id) => available.has(id) && !used.has(id));
+    if (members.length < 2) return [];
+    groupIds.add(group.id);
+    members.forEach((id) => used.add(id));
+    return [{ ...group, panes: members }];
+  });
 }
 export function terminalTabs(workspace: Workspace, paneId: string) {
   return cleanTabGroups(

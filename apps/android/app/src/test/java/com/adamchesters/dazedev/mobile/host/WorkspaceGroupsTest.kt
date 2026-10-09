@@ -48,4 +48,17 @@ class WorkspaceGroupsTest {
         assertEquals(before,source.document.toString())
         assertThrows(IllegalArgumentException::class.java){source.removeLocalView(folder.id,folder.rows.single().paneId)}
     }
+    @Test fun discardedGroupsDoNotReservePanesAndGroupIdsStayUnique() {
+        val profile=source();val folder=profile.folders().single()
+        repeat(3){i->profile.addSession("host","machine:user:socket",JSONObject().put("id","session-$i").put("stamp","stamp-$i").put("name","More"),"/dev",folder.id)}
+        val panes=profile.folders().single().rows.map {it.paneId}
+        fun group(id:String,members:List<String>)=JSONObject().put("id",id).put("panes",JSONArray(members))
+        profile.document.getJSONArray("workspaces").getJSONObject(0).put("tabGroups",JSONArray()
+            .put(group("singleton",listOf(panes[0],"missing")))
+            .put(group("",panes.take(2)))
+            .put(group("tabs",listOf(panes[0],panes[0],panes[1])))
+            .put(group("tabs",panes.drop(2)))
+            .put(group("other",panes.drop(2))))
+        assertEquals(listOf(TerminalTabGroup("tabs",panes.take(2)),TerminalTabGroup("other",panes.drop(2))),profile.folders().single().tabGroups)
+    }
 }
