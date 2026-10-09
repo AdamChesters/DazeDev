@@ -83,6 +83,7 @@ import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withTimeout
 import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.Job
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -107,13 +108,15 @@ fun TerminalScreen(
     var input by rememberSaveable(draftKey) { mutableStateOf(drafts.getString(draftKey,"").orEmpty()) }
     LaunchedEffect(input,draftKey){drafts.edit().putString(draftKey,input).apply()}
 
-    var voiceStatus by remember { mutableStateOf(VoiceInputStatus()) }
-    var voicePrefix by remember { mutableStateOf("") }
+    var voiceStatus by remember(draftKey) { mutableStateOf(VoiceInputStatus()) }
+    var voicePrefix by remember(draftKey) { mutableStateOf("") }
     var frozenTarget by rememberSaveable(draftKey){mutableStateOf(drafts.getString("target:$draftKey",null))}
     val scope=rememberCoroutineScope()
     val terminalController = remember(uiState.terminalEpoch) { TerminalController() }
     var submitting by remember(draftKey) { mutableStateOf(false) }
     var startingVoice by remember(draftKey) { mutableStateOf(false) }
+    var voiceStartRequest by remember(draftKey) { mutableStateOf(0L) }
+    var voiceStartJob by remember(draftKey) { mutableStateOf<Job?>(null) }
 
     var showKeys by remember(uiState.terminalEpoch) { mutableStateOf(false) }
     var voiceConsent by remember { mutableStateOf(false) }
@@ -133,7 +136,7 @@ fun TerminalScreen(
                     .filter(String::isNotBlank)
                     .joinToString(" ")
             },
-            onError = onMessage,
+            onError = ::reportDraft,
         )
     }
 
@@ -142,15 +145,17 @@ fun TerminalScreen(
         contract = ActivityResultContracts.RequestPermission(),
     ) { granted ->
         if (!granted) {
-            onMessage("Microphone permission is required for voice input.")
-        } else if (permissionController === voiceController && lifecycleOwner.lifecycle.currentState.isAtLeast(Lifecycle.State.STARTED)) {
+            reportDraft("Microphone permission is required for voice input.")
+        } else if (permissionController === voiceController && showDraft && lifecycleOwner.lifecycle.currentState.isAtLeast(Lifecycle.State.STARTED)) {
             voiceController.start()
         }
         permissionController = null
     }
 
-    suspend fun startVoice() {
-        frozenTarget = onPrepareTarget()
+    suspend fun startVoice(request: Long) {
+        val target = onPrepareTarget()
+        if (request != voiceStartRequest || !showDraft || !lifecycleOwner.lifecycle.currentState.isAtLeast(Lifecycle.State.STARTED)) return
+        frozenTarget = target
         drafts.edit().putString("target:$draftKey", frozenTarget).apply()
         voicePrefix = input.trim()
         if (ContextCompat.checkSelfPermission(context, Manifest.permission.RECORD_AUDIO) == PackageManager.PERMISSION_GRANTED) {
@@ -161,19 +166,33 @@ fun TerminalScreen(
         }
     }
 
-    fun toggleVoice() {
-        if (voiceStatus.isActive) { voiceController.stop(); return }
-        if (startingVoice || submitting) return
+    fun cancelVoiceStart() {
+        voiceStartRequest += 1
+        voiceStartJob?.cancel()
+        voiceStartJob = null
+        startingVoice = false
+        permissionController = null
+        voiceConsent = false
+    }
+
+    fun requestVoiceStart(downloadApproved: Boolean = false) {
+        if (voiceStatus.isActive || startingVoice || submitting) return
+        voiceStartRequest += 1
+        val request = voiceStartRequest
         startingVoice = true
-        scope.launch {
+        voiceStartJob = scope.launch {
             try {
                 if (!voiceController.isAvailable) voiceController.start()
-                else if (voiceController.hasPreparedModel()) startVoice()
-                else voiceConsent = true
+                else if (downloadApproved || voiceController.hasPreparedModel()) startVoice(request)
+                else if (request == voiceStartRequest && showDraft) voiceConsent = true
             } catch (e: CancellationException) { throw e }
-            catch (e: Exception) { onMessage(e.message ?: "Voice input could not start.") }
-            finally { startingVoice = false }
+            catch (e: Exception) { reportDraft(e.message ?: "Voice input could not start.") }
+            finally { if (request == voiceStartRequest) startingVoice = false }
         }
+    }
+
+    fun toggleVoice() {
+        if (voiceStatus.isActive) voiceController.stop() else requestVoiceStart()
     }
 
     fun enterDraft() {
@@ -187,7 +206,10 @@ fun TerminalScreen(
                     withTimeout(3_000) { while (voiceStatus.isActive) delay(25) }
                 }
                 val text = input
-                if (text.isBlank()) return@launch
+                if (text.isBlank()) {
+                    reportDraft("No text to enter. Speak again or type your prompt.")
+                    return@launch
+                }
                 val token = frozenTarget ?: onPrepareTarget()
                 if (!onValidateTarget(token)) {
                     reportDraft("The recording target changed or disconnected. Your draft is saved. Review before choosing the current terminal.")
@@ -198,6 +220,7 @@ fun TerminalScreen(
                     voicePrefix = ""
                     frozenTarget = null
                     drafts.edit().remove(draftKey).remove("target:$draftKey").apply()
+                    showDraft = false
                     reportDraft("Entered in the terminal.")
                 } else reportDraft("Draft was not entered. Wait for the terminal, or reduce it to 64 KiB. Your draft is saved.")
             } catch (e: CancellationException) { throw e }
@@ -208,11 +231,12 @@ fun TerminalScreen(
 
     DisposableEffect(voiceController, lifecycleOwner) {
         val observer = LifecycleEventObserver { _, event ->
-            if (event == Lifecycle.Event.ON_STOP) {voiceController.stop();terminalController.clear()}
+            if (event == Lifecycle.Event.ON_STOP) {cancelVoiceStart();voiceController.stop();terminalController.clear()}
         }
         lifecycleOwner.lifecycle.addObserver(observer)
         onDispose {
             lifecycleOwner.lifecycle.removeObserver(observer)
+            cancelVoiceStart()
             voiceController.destroy()
         }
     }
@@ -315,7 +339,7 @@ fun TerminalScreen(
                     clipboard.primaryClip?.getItemAt(0)?.coerceToText(context)?.toString()?.let {if(!terminalController.paste(it))onMessage("Clipboard was not pasted. Wait for the terminal, or choose text smaller than 64 KiB.")}
                 }){Text("Paste clipboard")}
             }
-            FilledTonalButton(onClick={showDraft=true}, modifier=Modifier.heightIn(min=56.dp)) {
+            FilledTonalButton(onClick={showDraft=true;draftMessage="";requestVoiceStart()}, modifier=Modifier.heightIn(min=56.dp)) {
                 Icon(Icons.Rounded.Mic, contentDescription=null)
                 Spacer(Modifier.size(8.dp))
                 Text("Voice")
@@ -323,7 +347,7 @@ fun TerminalScreen(
         }
 
         if (showDraft) ModalBottomSheet(
-            onDismissRequest={showDraft=false;voiceController.stop()},
+            onDismissRequest={showDraft=false;cancelVoiceStart();voiceController.stop()},
             sheetState=rememberModalBottomSheetState(skipPartiallyExpanded=true),
         ) {
             Column(
@@ -346,7 +370,7 @@ fun TerminalScreen(
                         if(progress==null) LinearProgressIndicator(Modifier.fillMaxWidth())
                         else LinearProgressIndicator(progress={progress},modifier=Modifier.fillMaxWidth())
                     }
-                    VoiceInputPhase.Listening -> Text("Listening. Pause freely, then tap stop or Enter.", color=MaterialTheme.colorScheme.primary)
+                    VoiceInputPhase.Listening -> Text("Listening. Tap End to edit, or Enter to send.", color=MaterialTheme.colorScheme.primary)
                     VoiceInputPhase.Stopping -> Text("Finishing your transcript…", color=MaterialTheme.colorScheme.primary)
                     VoiceInputPhase.Idle -> Unit
                 }
@@ -358,16 +382,16 @@ fun TerminalScreen(
                     minLines=3, maxLines=7,
                     readOnly=submitting || voiceStatus.phase==VoiceInputPhase.Stopping,
                     keyboardOptions=KeyboardOptions(imeAction=ImeAction.Send),
-                    keyboardActions=KeyboardActions(onSend={if(input.isNotBlank())enterDraft()}),
+                    keyboardActions=KeyboardActions(onSend={enterDraft()}),
                     modifier=Modifier.fillMaxWidth(),
                 )
                 if(draftMessage.isNotBlank()) Text(draftMessage,style=MaterialTheme.typography.bodyMedium,color=MaterialTheme.colorScheme.onSurface)
                 Row(Modifier.fillMaxWidth(), horizontalArrangement=Arrangement.spacedBy(12.dp), verticalAlignment=Alignment.CenterVertically) {
                     Column(Modifier.weight(1f)) {
-                        Text("Review before entering", style=MaterialTheme.typography.labelLarge)
-                        Text("Enter sends this prompt and presses Return.", style=MaterialTheme.typography.bodySmall, color=MaterialTheme.colorScheme.onSurfaceVariant)
+                        Text("End to edit, Enter to send", style=MaterialTheme.typography.labelLarge)
+                        Text("Enter finishes listening, sends the prompt and returns to the terminal.", style=MaterialTheme.typography.bodySmall, color=MaterialTheme.colorScheme.onSurfaceVariant)
                     }
-                    Button(onClick=::enterDraft, enabled=input.isNotBlank() && connected && terminalController.ready && !submitting && !startingVoice && !uiState.isSending, modifier=Modifier.heightIn(min=56.dp), contentPadding=PaddingValues(horizontal=16.dp)) {
+                    Button(onClick=::enterDraft, enabled=(input.isNotBlank() || voiceStatus.phase==VoiceInputPhase.Listening) && connected && terminalController.ready && !submitting && !startingVoice && !uiState.isSending, modifier=Modifier.heightIn(min=56.dp), contentPadding=PaddingValues(horizontal=16.dp)) {
                         if(submitting) CircularProgressIndicator(Modifier.size(20.dp), strokeWidth=2.dp, color=MaterialTheme.colorScheme.onPrimary)
                         else {Icon(Icons.AutoMirrored.Rounded.Send,contentDescription=null);Spacer(Modifier.size(8.dp));Text("Enter")}
                     }
@@ -379,9 +403,9 @@ fun TerminalScreen(
                             modifier=Modifier.size(64.dp),
                         ) {
                             if(startingVoice) CircularProgressIndicator(Modifier.size(24.dp),strokeWidth=2.dp,color=MaterialTheme.colorScheme.onPrimary)
-                            else Icon(if(voiceStatus.isActive)Icons.Rounded.Stop else Icons.Rounded.Mic, contentDescription=if(voiceStatus.isActive)"Stop listening" else "Start voice input", modifier=Modifier.size(30.dp))
+                            else Icon(if(voiceStatus.isActive)Icons.Rounded.Stop else Icons.Rounded.Mic, contentDescription=if(voiceStatus.isActive)"End listening" else "Start voice input", modifier=Modifier.size(30.dp))
                         }
-                        Text(if(voiceStatus.isActive)"Stop" else "Voice",style=MaterialTheme.typography.labelMedium,color=MaterialTheme.colorScheme.primary)
+                        Text(if(voiceStatus.isActive)"End" else "Voice",style=MaterialTheme.typography.labelMedium,color=MaterialTheme.colorScheme.primary)
                     }
                 }
                 Text("Moonshine Medium runs on this phone. Installed models work offline.",style=MaterialTheme.typography.bodySmall,color=MaterialTheme.colorScheme.onSurfaceVariant)
@@ -396,13 +420,7 @@ fun TerminalScreen(
         text={Text("Moonshine Medium needs a one-time download of about 269 MB. After that, voice works on this phone offline. Review your transcript, then tap Enter to submit it.")},
         confirmButton={TextButton(onClick={
             voiceConsent=false
-            startingVoice=true
-            scope.launch {
-                try {startVoice()}
-                catch(e:CancellationException){throw e}
-                catch(e:Exception){onMessage(e.message?:"Recording target unavailable.")}
-                finally {startingVoice=false}
-            }
+            requestVoiceStart(downloadApproved=true)
         }){Text("Download and listen")}},
         dismissButton={TextButton(onClick={voiceConsent=false}){Text("Cancel")}},
     )
