@@ -815,7 +815,7 @@
       text: () => (detached ? retainedOutput : outputText()),
     });
     void Promise.all([
-      onTerminalOutput(pane.id, (v) => {
+      onTerminalOutput(() => pane.id, (v) => {
         if (v.id === pane.id && v.generation === generation) {
           const bytes = Uint8Array.from(atob(v.data), (c) => c.charCodeAt(0));
           term.write(bytes, () => {

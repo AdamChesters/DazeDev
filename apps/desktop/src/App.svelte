@@ -2182,7 +2182,6 @@
   async function joined(id: string, attempt = hostAttempts.get(id)) {
     const currentAttempt = () => hostAttempts.get(id) === attempt && reconnectHosts.has(id);
     if (!currentAttempt()) return;
-    connections[id] = 'Connected';
     try {
       let profile: Profile;
       try {
@@ -2206,6 +2205,7 @@
             'This host has newer workspace changes. Your local recovery copy is preserved. Reload the host profile in settings to use the remote version.';
         }
       } else replaceProfile(id, profile);
+      connections[id] = 'Connected';
       for (const w of profiles[id].workspaces) {
         const focused = device.localFocus?.[w.id];
         if (focused && w.panes.some((p) => p.id === focused)) w.focused = focused;
