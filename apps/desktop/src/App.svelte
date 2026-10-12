@@ -131,6 +131,7 @@
     type Edge,
   } from './lib/layout';
   import {
+    createNativeTerminalPane,
     selectPanes,
     removePanes,
     insertPaneStack,
@@ -969,7 +970,7 @@
   }
   function addTerminal(edge: Edge, target = activePane, asTab = false) {
     if (!current) return;
-    const w = current;
+    let w = current;
     if (w.hostId === HOSTLESS) {
       notice =
         'Open a terminal in a host workspace, then hold Ctrl and drag its view into this group.';
@@ -980,7 +981,7 @@
       hostId: w.hostId,
       hostKey: device.hosts.find((h) => h.id === w.hostId)?.fingerprint,
     } as Pane;
-    const pane: Pane = {
+    let pane: Pane = {
       id: uid(),
       hostId: target.hostId,
       hostKey: target.hostKey,
@@ -994,32 +995,44 @@
       effort: '',
       operation: uid(),
     };
-    maximize = '';
-    paneMenu = null;
-    updateWorkspace({
-      ...w,
-      panes: [...w.panes, pane],
-      layout: ids(layoutFor(w)).filter(Boolean).length
-        ? insertAt(
-            layoutFor(w),
-            ids(layoutFor(w)).includes(target.id) ? target.id : ids(layoutFor(w))[0],
-            pane.id,
-            edge,
-          )
-        : { kind: 'pane', id: pane.id },
-      focused: pane.id,
-      tabGroups: asTab
-        ? [
-            ...(w.tabGroups || []).filter((group) => !group.panes.includes(target!.id)),
-            {
-              id: terminalTabs(w, target.id)?.id || uid(),
-              panes: [...(terminalTabs(w, target.id)?.panes || [target.id]), pane.id],
-            },
-          ]
-        : w.tabGroups,
-    });
-    const updated = profiles[w.hostId].workspaces.find((item) => item.id === w.id)!;
-    selectPane(pane.id, updated);
+    const insert = () => {
+      const owner = profiles[w.hostId]?.workspaces.find((item) => item.id === w.id);
+      if (!owner) return false;
+      w = owner;
+      maximize = '';
+      paneMenu = null;
+      updateWorkspace({
+        ...w,
+        panes: [...w.panes, pane],
+        layout: ids(layoutFor(w)).filter(Boolean).length
+          ? insertAt(
+              layoutFor(w),
+              ids(layoutFor(w)).includes(target.id) ? target.id : ids(layoutFor(w))[0],
+              pane.id,
+              edge,
+            )
+          : { kind: 'pane', id: pane.id },
+        focused: pane.id,
+        tabGroups: asTab
+          ? [
+              ...(w.tabGroups || []).filter((group) => !group.panes.includes(target!.id)),
+              {
+                id: terminalTabs(w, target.id)?.id || uid(),
+                panes: [...(terminalTabs(w, target.id)?.panes || [target.id]), pane.id],
+              },
+            ]
+          : w.tabGroups,
+      });
+      const updated = profiles[w.hostId].workspaces.find((item) => item.id === w.id)!;
+      selectPane(pane.id, updated);
+      return true;
+    };
+    if (nativePane(pane)) {
+      void task(async () => {
+        pane = await createNativeTerminalPane(pane, (args) => rpc<Session>(pane.hostId, 'create', args));
+        if (!insert()) await rpc(pane.hostId, 'destroy', { id: pane.sessionId, stamp: pane.stamp });
+      });
+    } else insert();
   }
   let dragCopy = $state(false);
   let dragHover = $state('');

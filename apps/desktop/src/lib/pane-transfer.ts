@@ -1,5 +1,5 @@
 import { columns, ids, remove } from './layout';
-import { uid, type Layout, type Workspace } from './types';
+import { uid, type Layout, type Workspace, type Pane, type Session } from './types';
 
 export function selectPanes(selected: string[], pane: string, additive: boolean): string[] {
   if (!additive) return [pane];
@@ -54,4 +54,18 @@ export function reorderWorkspaces(
   const result = workspaces.filter((w) => w.id !== source);
   result.splice(result.findIndex((w) => w.id === target) + Number(after), 0, from);
   return result;
+}
+
+// Native hosts need a persistent session before a new pane can attach.
+export async function createNativeTerminalPane(
+  pane: Pane,
+  create: (args: Record<string, unknown>) => Promise<Pick<Session, 'id' | 'stamp'>>,
+): Promise<Pane> {
+  const session = await create({
+    name: `shell-${pane.operation.slice(0, 8)}`,
+    operation: pane.operation,
+    agent: 'shell',
+    path: pane.repo,
+  });
+  return { ...pane, sessionId: session.id, stamp: session.stamp, shell: false };
 }
