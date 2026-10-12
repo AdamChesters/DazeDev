@@ -3,31 +3,34 @@ on:
   push:
     branches: [main, 'feat/**']
   workflow_dispatch:
+defaults:
+  run:
+    working-directory: apps/desktop
 permissions:
   contents: read
 jobs:
   checks:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-node@v4
-        with: { node-version: 22, cache: npm }
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
+        with: { node-version: 22, cache: npm, cache-dependency-path: apps/desktop/package-lock.json }
       - run: npm ci
       - run: npm run gate
       - run: sudo apt-get update && sudo apt-get install -y tmux
       - run: python3 -m unittest discover -s tests -p 'test_*.py' -v
-      - uses: dtolnay/rust-toolchain@stable
+      - uses: dtolnay/rust-toolchain@686976e191b89faba57d3206551f0f330d8cb249 # stable
       - run: cargo test --manifest-path src-tauri/Cargo.toml --no-default-features --locked
       - run: cargo run --manifest-path src-tauri/Cargo.toml --no-default-features --locked --example transport_smoke
   windows:
     runs-on: windows-2022
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-node@v4
-        with: { node-version: 22, cache: npm }
-      - uses: dtolnay/rust-toolchain@stable
-      - uses: Swatinem/rust-cache@v2
-        with: { workspaces: 'src-tauri -> target', key: portable-complete-v1 }
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
+        with: { node-version: 22, cache: npm, cache-dependency-path: apps/desktop/package-lock.json }
+      - uses: dtolnay/rust-toolchain@686976e191b89faba57d3206551f0f330d8cb249 # stable
+      - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2
+        with: { workspaces: 'apps/desktop/src-tauri -> target', key: portable-complete-v1 }
       - name: Install Vulkan build tools
         shell: pwsh
         run: |
@@ -65,9 +68,9 @@ jobs:
       - name: Verify portable startup and legacy migration
         shell: pwsh
         run: ./scripts/verify-portable.ps1
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
           name: DazeDev-Windows-Portable
-          path: artifacts/DazeDev_*_windows-x64.zip
+          path: apps/desktop/artifacts/DazeDev_*_windows-x64.zip
           if-no-files-found: error
           retention-days: 14

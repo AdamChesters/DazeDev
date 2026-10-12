@@ -1,0 +1,73 @@
+{
+  "schema": 1,
+  "revision": 7,
+  "preferences": {
+    "roots": [
+      "/tmp/fixture/dev"
+    ],
+    "guidance": "",
+    "identities": [],
+    "futurePreference": {
+      "mode": "keep"
+    }
+  },
+  "workspaces": [
+    {
+      "id": "workspace-a",
+      "name": "Feature",
+      "hostId": "desktop-a",
+      "panes": [
+        {
+          "id": "p1",
+          "hostId": "desktop-a",
+          "hostKey": "machine-a:user:socket-a",
+          "sessionId": "$1",
+          "stamp": "100:200:300",
+          "name": "Shell",
+          "futurePane": [
+            1,
+            2
+          ]
+        },
+        {
+          "id": "p2",
+          "hostId": "desktop-b",
+          "hostKey": "machine-b:user:socket-b",
+          "sessionId": "$1",
+          "stamp": "400:500:600",
+          "name": "Other host"
+        }
+      ],
+      "layout": {
+        "kind": "split",
+        "id": "split-a",
+        "axis": "row",
+        "ratio": 0.35,
+        "first": {
+          "kind": "pane",
+          "id": "p2"
+        },
+        "second": {
+          "kind": "pane",
+          "id": "p1"
+        }
+      },
+      "focused": "p1",
+      "futureWorkspace": true,
+      "tabGroups": [
+        {
+          "id": "tabs-a",
+          "panes": [
+            "p2",
+            "p1"
+          ],
+          "futureGroup": true
+        }
+      ]
+    }
+  ],
+  "discovery": {},
+  "futureTop": {
+    "keep": "yes"
+  }
+}

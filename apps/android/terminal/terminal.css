@@ -1,0 +1,69 @@
+:root {
+  color-scheme: dark;
+}
+* {
+  box-sizing: border-box;
+}
+html,
+body {
+  margin: 0;
+  height: 100%;
+  background: var(--background);
+  color: var(--foreground);
+}
+body {
+  display: flex;
+  flex-direction: column;
+}
+#terminal {
+  flex: none;
+  height: 100%;
+  min-height: 0;
+  padding: 4px;
+}
+#keys {
+  flex: none;
+  max-height: 40vh;
+  overflow: auto;
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(64px, 1fr));
+  gap: 8px;
+  padding: 8px;
+}
+#keys[hidden] {
+  display: none;
+}
+button {
+  min-height: 48px;
+  border: 1px solid #687b7e;
+  border-radius: 8px;
+  background: #202222;
+  color: #edede8;
+  font: 14px system-ui;
+  touch-action: none;
+}
+button[aria-pressed="true"] {
+  background: #004e5e;
+  border-color: var(--accent);
+}
+button:focus-visible {
+  outline: 2px solid var(--accent);
+}
+button:active {
+  background: #004e5e;
+}
+
+.selection-handle {
+  position: fixed;
+  width: 48px;
+  height: 48px;
+  padding: 0;
+  border-radius: 24px;
+  background: var(--accent);
+  color: var(--background);
+  z-index: 2;
+  touch-action: none;
+}
+.selection-handle[hidden] {
+  display: none;
+}

@@ -1,13 +1,36 @@
 node_modules/
 dist/
-src-tauri/target/
+**/src-tauri/target/
 .env
 *.log
 .DS_Store
 __pycache__/
 artifacts/
-src-tauri/runtime/
-src-tauri/gen/
-src-tauri/transcribe-libs/
+**/src-tauri/runtime/
+**/src-tauri/gen/
+**/src-tauri/transcribe-libs/
+**/src-tauri/icons/icon.icns
 
-src-tauri/icons/icon.icns
+# Android local outputs and machine configuration
+.gradle/
+.kotlin/
+**/build/
+local.properties
+*.apk
+*.aab
+*.jks
+*.keystore
+
+# Local secrets; intentionally tracked examples and notices remain allowed.
+.env.*
+!.env.example
+!.env.*.example
+*.pem
+*.key
+*.p12
+*.pfx
+id_rsa
+id_ed25519
+*.crt
+*.cer
+*.der
