@@ -37,10 +37,10 @@ I got tired of typing The Lord of the Rings into agents [(seriously, I proved it
 
 ## Coming soon
 
+- **Mobile:** an app with on-device voice input.
 - **More agents** in the easy-install and new session lists.
 - **DIY agent picker:** add your own agent (ASAP).
 - **Linux Mint:** a packaged desktop release.
-- **Mobile:** an app with on-device voice input.
 
 Frontier voice is a later research topic. Provider access, subscription eligibility,
 privacy, latency and cost need to be established before a feature is proposed.
