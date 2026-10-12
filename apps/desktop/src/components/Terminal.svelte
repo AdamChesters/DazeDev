@@ -155,6 +155,7 @@
   }
   let fitFrame = 0,
     lastSize = '';
+  let explicitPaste = false;
   let inputChain: Promise<void> = Promise.resolve();
   let reconnectTimer: ReturnType<typeof setTimeout> | undefined;
   const readiness = new ReadinessDeadline();
@@ -271,7 +272,8 @@
       throw new Error(
         'Dictation contains line breaks or control characters. Review and copy it before pasting.',
       );
-    term.paste(text);
+    explicitPaste = true;
+    try {term.paste(text);} finally {explicitPaste = false;}
     const afterPaste = context();
     try {
       await inputChain;
@@ -705,7 +707,7 @@
     root.addEventListener('paste', clipboardPaste, true);
     const input = term.onData((data) => {
       // The detached parser owns protocol replies while the primary view is inert.
-      if (floating) return;
+      if (floating && !explicitPaste) return;
       if (terminalInputChangesContext(data)) contextEpoch++;
       if (opened) void send(data).catch((e) => onstate(String(e)));
     });
