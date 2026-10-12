@@ -314,7 +314,7 @@ fun ConnectionScreen(
 
         Spacer(Modifier.height(18.dp))
         Text(
-            text = "Connect over a reachable LAN, VPN, or internet connection. DazeDev Mobile verifies SSH host keys and never saves passwords or passphrases.",
+            text = "Connect over a reachable LAN, VPN, or internet connection. DazeDev Mobile verifies SSH host keys and never saves passwords or passphrases. Keys stay in the selected document provider; its storage and sync policy and your key passphrase protect them.",
             style = MaterialTheme.typography.bodyMedium,
             color = MaterialTheme.colorScheme.onSurfaceVariant,
             modifier = Modifier

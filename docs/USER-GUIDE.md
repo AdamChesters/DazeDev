@@ -73,3 +73,5 @@ Screenshots show the app interface with sample hosts and terminal output.
 - **Changelog** shows both products, with All, Desktop and Mobile filters. Release history works from bundled or saved notes when offline. Android update checks use only the public GitHub repository and offer an APK download; development APKs can still be installed offline. Desktop-only releases do not trigger Android update prompts, and mobile-only releases do not trigger desktop prompts.
 
 [Update help](../apps/desktop/UPDATES.md) · [Build instructions](BUILDING.md) · [Credits](CREDITS.md)
+
+Portable settings are plaintext; the startup PIN is an app access gate, not encryption. DazeDev restricts its data folder to the current user. If the filesystem cannot enforce private permissions, existing settings are preserved; move the app and its data into a private user folder, or use `DAZEDEV_DATA_DIR` for a private storage location.

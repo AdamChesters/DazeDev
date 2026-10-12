@@ -65,8 +65,8 @@
   function release() {
     for (const controls of terminals.values()) controls.releaseSearch?.();
   }
-  function collect() {
-    revision++;
+  async function collect() {
+    const requestRevision = ++revision;
     clearTimeout(debounce);
     debounce = undefined;
     release();
@@ -81,9 +81,10 @@
       const result: SearchHit[] = [];
       for (const target of scopeTargets(targets, scope, origin)) {
         const matches =
-          terminals
+          (await terminals
             .get(target.paneId)
-            ?.findMatches?.({ query, matchCase, regex }, 1001 - result.length) || [];
+            ?.findMatches?.({ query, matchCase, regex }, 1001 - result.length)) || [];
+        if (disposed || requestRevision !== revision) return;
         result.push(...matches.map((match) => ({ ...target, ...match })));
         if (result.length > 1000) {
           limited = true;
@@ -91,8 +92,9 @@
         }
       }
       hits = result.slice(0, 1000);
-    } catch {
-      error = 'Invalid regular expression. Fix the pattern or turn Regular expression off.';
+    } catch (e) {
+      if (disposed || requestRevision !== revision) return;
+      error = e instanceof Error ? e.message : 'Search failed.';
     }
   }
   function edited() {
@@ -114,9 +116,9 @@
   }
   export async function step(direction = 1) {
     if (busy || disposed) return;
-    if (debounce) collect();
+    if (debounce) await collect();
     if (!hits.length) {
-      collect();
+      await collect();
       if (!hits.length) return;
     }
     const next =

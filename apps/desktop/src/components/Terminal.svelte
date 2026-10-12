@@ -5,6 +5,7 @@
   import { copySelectedTerminalText } from '../lib/terminal-copy';
   import { terminalNotification } from '../lib/terminal-alerts';
   import { onMount, tick } from 'svelte';
+  import { onTerminalOutput } from '../lib/terminal-output';
   import { diagnostic } from '../lib/diagnostics';
   import { Terminal } from '@xterm/xterm';
   import { FitAddon } from '@xterm/addon-fit';
@@ -703,10 +704,13 @@
     };
     root.addEventListener('paste', clipboardPaste, true);
     const input = term.onData((data) => {
+      // The detached parser owns protocol replies while the primary view is inert.
+      if (floating) return;
       if (terminalInputChangesContext(data)) contextEpoch++;
       if (opened) void send(data).catch((e) => onstate(String(e)));
     });
     const binary = term.onBinary((data) => {
+      if (floating) return;
       if (opened)
         void call('terminal_binary', { id: pane.id, data: btoa(data) }).catch((e) =>
           lost(String(e)),
@@ -794,7 +798,7 @@
       },
       search: showFind,
       findMatches: (options, limit) =>
-        opened && remoteReady && !dead ? liveSearch.collect(options, limit) : [],
+        opened && remoteReady && !dead ? liveSearch.collectAsync(options, limit) : Promise.resolve([]),
       revealMatch: (id) => opened && remoteReady && liveSearch.reveal(id),
       releaseSearch: () => liveSearch.release(),
       searchSelection: () => liveSearch.selection(),
@@ -809,7 +813,7 @@
       text: () => (detached ? retainedOutput : outputText()),
     });
     void Promise.all([
-      on<{ id: string; data: string; generation: number }>('terminal-output', (v) => {
+      onTerminalOutput(pane.id, (v) => {
         if (v.id === pane.id && v.generation === generation) {
           const bytes = Uint8Array.from(atob(v.data), (c) => c.charCodeAt(0));
           term.write(bytes, () => {

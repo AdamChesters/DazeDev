@@ -358,7 +358,7 @@ pub(super) fn request(
                     .ok_or("Invalid profile revision")?
                     + 1
             );
-            atomic(
+            atomic_private(
                 &profile,
                 &serde_json::to_vec_pretty(&v).map_err(|e| e.to_string())?,
             )?;
@@ -572,13 +572,23 @@ pub(super) fn request(
 }
 
 fn atomic(path: &Path, bytes: &[u8]) -> Result<(), String> {
+    atomic_with_privacy(path, bytes, false)
+}
+fn atomic_private(path: &Path, bytes: &[u8]) -> Result<(), String> {
+    atomic_with_privacy(path, bytes, true)
+}
+fn atomic_with_privacy(path: &Path, bytes: &[u8], private: bool) -> Result<(), String> {
     let temp = path.with_extension(format!("{}.tmp", uuid::Uuid::new_v4()));
     let result = (|| {
-        let mut f = fs::OpenOptions::new()
-            .write(true)
-            .create_new(true)
-            .open(&temp)
-            .map_err(|e| e.to_string())?;
+        let mut f = if private {
+            crate::private_storage::create(&temp)
+        } else {
+            fs::OpenOptions::new()
+                .write(true)
+                .create_new(true)
+                .open(&temp)
+        }
+        .map_err(|e| e.to_string())?;
         f.write_all(bytes)
             .and_then(|_| f.sync_all())
             .map_err(|e| e.to_string())?;

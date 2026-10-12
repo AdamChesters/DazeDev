@@ -2,7 +2,7 @@
 #[cfg(windows)]
 mod console;
 mod host;
-mod ipc;
+pub(crate) mod ipc;
 #[cfg(not(windows))]
 use portable_pty::ChildKiller;
 #[cfg(windows)]
@@ -508,7 +508,7 @@ impl Server {
     }
 }
 pub fn serve(root: &Path) -> Result<(), String> {
-    fs::create_dir_all(root).map_err(|e| e.to_string())?;
+    crate::private_storage::directory(root).map_err(|e| e.to_string())?;
     let lock = fs::OpenOptions::new()
         .create(true)
         .truncate(false)

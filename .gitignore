@@ -20,3 +20,17 @@ local.properties
 *.aab
 *.jks
 *.keystore
+
+# Local secrets; intentionally tracked examples and notices remain allowed.
+.env.*
+!.env.example
+!.env.*.example
+*.pem
+*.key
+*.p12
+*.pfx
+id_rsa
+id_ed25519
+*.crt
+*.cer
+*.der

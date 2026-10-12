@@ -6,6 +6,16 @@ import org.junit.Assert.*
 import org.junit.Test
 
 class WorkspaceGroupsTest {
+    @Test fun sixtySixClonesRemainReadableAfterReload() {
+        val source=source();val folder=source.folders().single()
+        val local=SharedProfile.empty();val group=local.createLocalWorkspace("Many")
+        repeat(100){local.clonePane(group,source,folder.id,folder.rows.single().paneId)}
+        assertEquals(100,SharedProfile(local.document).folders().single().rows.size)
+        val malformed=JSONObject(local.document.toString()).put("schema",99)
+        assertThrows(IllegalArgumentException::class.java){SharedProfile(malformed)}
+        assertEquals(100,local.folders().single().rows.size)
+    }
+
     private fun source():SharedProfile {
         val profile=SharedProfile.empty()
         profile.addSession("host","machine:user:socket",JSONObject().put("id","$1").put("stamp","stamp").put("name","Session"),"/dev")

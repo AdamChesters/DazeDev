@@ -84,6 +84,12 @@ class SharedProfile(document: JSONObject) {
             .put("panes",JSONArray()).put("layout",JSONObject().put("kind","pane").put("id","")).put("focused",""))
         return id
     }
+    private fun balancedLayout(ids:List<String>):JSONObject {
+        if(ids.size<=1)return JSONObject().put("kind","pane").put("id",ids.firstOrNull().orEmpty())
+        val middle=ids.size/2
+        return JSONObject().put("kind","split").put("id",java.util.UUID.randomUUID().toString()).put("axis","row").put("ratio",0.5)
+            .put("first",balancedLayout(ids.take(middle))).put("second",balancedLayout(ids.drop(middle)))
+    }
     fun clonePane(destination:String,source:SharedProfile,workspaceId:String,paneId:String) {
         val target=workspace(destination)
         require(target.getString("hostId")==LOCAL_OWNER){"Choose a hostless workspace."}
@@ -96,6 +102,8 @@ class SharedProfile(document: JSONObject) {
         val leaf=JSONObject().put("kind","pane").put("id",id)
         target.put("layout",if(panes.length()==0)leaf else JSONObject().put("kind","split").put("id",java.util.UUID.randomUUID().toString()).put("axis","row").put("ratio",0.5).put("first",target.getJSONObject("layout")).put("second",leaf))
         panes.put(copy)
+        target.put("layout",balancedLayout((0 until panes.length()).map {panes.getJSONObject(it).getString("id")}))
+        folders()
     }
     fun groupTabs(workspaceId:String,paneIds:List<String>) {
         val folder=folders().first {it.id==workspaceId};val selected=paneIds.distinct()

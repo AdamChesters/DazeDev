@@ -111,19 +111,20 @@ pub fn save(data: &Path, value: &Value) -> Result<(), String> {
     if bytes.len() > 2_000_000 {
         return Err("Dictionary is too large".into());
     }
-    fs::create_dir_all(data).map_err(|e| e.to_string())?;
+    crate::private_storage::directory(data).map_err(|e| e.to_string())?;
     let path = data.join("dictionary.json");
     regular(&path)?;
     regular(&data.join("dictionary.json.bak"))?;
     let temp = data.join(format!("dictionary.{}.tmp", uuid::Uuid::new_v4()));
     let result = (|| -> std::io::Result<()> {
-        let mut f = fs::File::create(&temp)?;
+        let mut f = crate::private_storage::create(&temp)?;
         f.write_all(&bytes)?;
         f.sync_all()?;
         drop(f);
         if read(&path).is_ok() {
             let backup = data.join(format!("dictionary-backup.{}.tmp", uuid::Uuid::new_v4()));
             fs::copy(&path, &backup)?;
+            crate::private_storage::protect(&backup)?;
             fs::rename(backup, data.join("dictionary.json.bak"))?;
         }
         fs::rename(&temp, &path)?;
@@ -172,17 +173,14 @@ fn identities(root: &Path) -> Result<Value, String> {
 fn remember(data: &Path, root: &Path, value: &Value) -> Result<(), String> {
     let mut all = identities(root)?;
     all[data.to_string_lossy().as_ref()] = fingerprint(value).into();
-    fs::create_dir_all(root).map_err(|e| e.to_string())?;
+    crate::private_storage::directory(root).map_err(|e| e.to_string())?;
     let path = identity_path(root);
     let staged = root.join(format!(
         "dictionary-identities.{}.tmp",
         uuid::Uuid::new_v4()
     ));
     let result = (|| -> std::io::Result<()> {
-        let mut f = fs::OpenOptions::new()
-            .write(true)
-            .create_new(true)
-            .open(&staged)?;
+        let mut f = crate::private_storage::create(&staged)?;
         f.write_all(&serde_json::to_vec(&all)?)?;
         f.sync_all()?;
         drop(f);

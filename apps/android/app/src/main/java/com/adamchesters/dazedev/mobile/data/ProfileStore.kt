@@ -4,7 +4,7 @@ import android.content.Context
 import org.json.JSONArray
 import org.json.JSONObject
 
-class ProfileStore(context: Context) {
+class ProfileStore(private val context: Context) {
     private val prefs = context.getSharedPreferences("dazedev_mobile_hosts", Context.MODE_PRIVATE)
     fun loadAll(): List<ConnectionProfile> = runCatching {
         val array = JSONArray(prefs.getString("hosts", "[]"))
@@ -26,10 +26,26 @@ class ProfileStore(context: Context) {
             .put("username",p.username).put("authMethod",p.authMethod.name).put("privateKeyUri",p.privateKeyUri)
             .put("privateKeyName",p.privateKeyName).put("workingDirectory",p.workingDirectory).put("socket",p.socket).put("fingerprint",p.fingerprint))
         prefs.edit().putString("hosts",a.toString()).apply()
+        val retained=hosts.mapNotNull {it.privateKeyUri}.toSet()
+        existing.mapNotNull {it.privateKeyUri}.filterNot {it in retained}.distinct().forEach {uri->
+            runCatching {context.contentResolver.releasePersistableUriPermission(android.net.Uri.parse(uri),android.content.Intent.FLAG_GRANT_READ_URI_PERMISSION)}
+        }
     }
     fun releaseHistory():String=prefs.getString("release-history","[]")?:"[]"
-    fun localWorkspaces():JSONObject?=prefs.getString("local-workspaces",null)?.let(::JSONObject)
-    fun saveLocalWorkspaces(value:JSONObject){prefs.edit().putString("local-workspaces",value.toString()).apply()}
+    fun localWorkspaces():JSONObject? {
+        for(key in listOf("local-workspaces","local-workspaces-last-good")) {
+            val raw=prefs.getString(key,null)?:continue
+            val parsed=runCatching {com.adamchesters.dazedev.mobile.host.SharedProfile(JSONObject(raw)).document}.getOrNull()
+            if(parsed!=null)return parsed
+        }
+        return null // Invalid originals remain stored for recovery.
+    }
+    fun saveLocalWorkspaces(value:JSONObject){
+        val validated=com.adamchesters.dazedev.mobile.host.SharedProfile(JSONObject(value.toString())).document
+        val editor=prefs.edit()
+        localWorkspaces()?.let {editor.putString("local-workspaces-last-good",it.toString())}
+        check(editor.putString("local-workspaces",validated.toString()).commit()) {"Could not save workspace; previous settings retained."}
+    }
     fun saveReleaseHistory(value:String){prefs.edit().putString("release-history",value).apply()}
     fun lastUpdateCheck():Long=prefs.getLong("last-update-check",0L)
     fun checkedUpdates(){prefs.edit().putLong("last-update-check",System.currentTimeMillis()).apply()}

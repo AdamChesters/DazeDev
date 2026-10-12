@@ -166,9 +166,12 @@ pub fn migrate(data: &Path, sources: &[PathBuf]) -> Result<usize, String> {
     Ok(moved)
 }
 pub fn prepare(root: &Path, old_app_data: &Path) -> Result<(PathBuf, fs::File), String> {
-    let data = root.join("data");
+    let data = std::env::var_os("DAZEDEV_DATA_DIR")
+        .map(PathBuf::from)
+        .unwrap_or_else(|| root.join("data"));
     fs::create_dir_all(&data)
         .map_err(|e| format!("DazeDev needs a writable portable folder: {e}"))?;
+    crate::private_storage::tree(&data).map_err(|e| format!("This filesystem cannot protect DazeDev data: {e}. Existing settings were preserved. Move the app and data to a private user folder, or set DAZEDEV_DATA_DIR to a private storage folder."))?;
     let lock = fs::OpenOptions::new()
         .create(true)
         .truncate(false)
@@ -220,6 +223,7 @@ pub fn prepare(root: &Path, old_app_data: &Path) -> Result<(PathBuf, fs::File), 
     let mut seen = std::collections::HashSet::new();
     sources.retain(|p| seen.insert(p.clone()));
     let moved = migrate(&data, &sources)?;
+    crate::private_storage::tree(&data).map_err(|e| e.to_string())?;
     if moved > 0 {
         let mut f = fs::OpenOptions::new()
             .create(true)
@@ -298,16 +302,17 @@ fn read_device(path: &Path) -> Result<serde_json::Value, String> {
     Ok(v)
 }
 pub fn save_device(data: &Path, value: &serde_json::Value) -> Result<(), String> {
-    fs::create_dir_all(data).map_err(|e| e.to_string())?;
+    crate::private_storage::directory(data).map_err(|e| e.to_string())?;
     let primary = data.join("device.json");
     let staged = data.join(format!("device.{}.tmp", uuid::Uuid::new_v4()));
     let result = (|| -> std::io::Result<()> {
-        let mut f = fs::File::create(&staged)?;
+        let mut f = crate::private_storage::create(&staged)?;
         f.write_all(&serde_json::to_vec_pretty(value)?)?;
         f.sync_all()?;
         drop(f);
         if primary.exists() && read_device(&primary).is_ok() {
             fs::copy(&primary, data.join("device.json.bak"))?;
+            crate::private_storage::protect(&data.join("device.json.bak"))?;
         }
         fs::rename(&staged, &primary)?;
         Ok(())

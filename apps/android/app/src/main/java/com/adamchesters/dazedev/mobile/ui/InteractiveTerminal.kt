@@ -63,7 +63,7 @@ fun InteractiveTerminal(stream:TerminalStream,controller:TerminalController,onMe
                 }
             }
             addJavascriptInterface(object {
-                @JavascriptInterface fun submit(text:String):Boolean = stream.send(text.toByteArray())
+                @JavascriptInterface fun submit(text:String):Boolean = controller.ready && stream.send(text.toByteArray())
                 @JavascriptInterface fun event(text:String) {
                     if(text.length>500_000){post {onMessage("Selection is too large. Choose a smaller region.")};return}
                     runCatching {
@@ -71,8 +71,8 @@ fun InteractiveTerminal(stream:TerminalStream,controller:TerminalController,onMe
                         when(event.getString("kind")) {
                             "ready"->{val size=event.getJSONObject("value");stream.resize(size.getInt("cols"),size.getInt("rows"));post {controller.ready=true};ready.complete(Unit)}
                             "resize"->{val size=event.getJSONObject("value");stream.resize(size.getInt("cols"),size.getInt("rows"))}
-                            "input"->{if(!stream.send(event.getString("value").toByteArray()))post {onMessage("Input was not sent. Reconnect the terminal.")}}
-                            "binary"->{val data=event.getString("value");if(!stream.send(ByteArray(data.length){data[it].code.toByte()}))post {onMessage("Input was not sent. Reconnect the terminal.")}}
+                            "input"->{if(!controller.ready || !stream.send(event.getString("value").toByteArray()))post {onMessage("Input was not sent. Reconnect the terminal.")}}
+                            "binary"->{val data=event.getString("value");if(!controller.ready || !stream.send(ByteArray(data.length){data[it].code.toByte()}))post {onMessage("Input was not sent. Reconnect the terminal.")}}
                             "ack"->acknowledgements.remove(event.getLong("value"))?.complete(Unit)
                             "copy"->{val selected=event.getString("value");if(selected.toByteArray().size>250_000)post {onMessage("Selection is too large for the clipboard. Choose a smaller region.")} else if(selected.isNotEmpty())post {runCatching {(context.getSystemService(Context.CLIPBOARD_SERVICE) as ClipboardManager).setPrimaryClip(ClipData.newPlainText("Terminal selection",selected))}.onFailure {onMessage("Could not copy this selection.")}}}
                         }
@@ -93,7 +93,12 @@ fun InteractiveTerminal(stream:TerminalStream,controller:TerminalController,onMe
                 withTimeout(10_000){ack.await()}
             }
             onMessage("Terminal disconnected. Refresh to reconnect; pending input is discarded.")
-        }catch(e:CancellationException){throw e}catch(e:Exception){stream.close();onMessage(e.message?:"Terminal stopped.")}
+        }catch(e:TimeoutCancellationException){
+            controller.ready=false;stream.close()
+            acknowledgements.values.forEach {it.cancel()};acknowledgements.clear()
+            onMessage("Terminal renderer timed out. Reconnect before sending input.")
+        }catch(e:CancellationException){throw e}catch(e:Exception){controller.ready=false;stream.close();onMessage(e.message?:"Terminal stopped.")}
+        finally {controller.ready=false;stream.close()}
     }
     LaunchedEffect(web,fontScale){withTimeout(15_000){ready.await()};controller.call("font",fontScale.toString())}
     LaunchedEffect(web,viewport){

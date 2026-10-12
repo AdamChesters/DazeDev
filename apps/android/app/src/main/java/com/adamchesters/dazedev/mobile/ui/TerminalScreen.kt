@@ -107,7 +107,24 @@ fun TerminalScreen(
     val draftKey="${uiState.selectedTargetHost}:${uiState.selectedSessionId}:${uiState.selectedStamp}"
     val drafts=remember {context.getSharedPreferences("terminal_drafts",android.content.Context.MODE_PRIVATE)}
     var input by rememberSaveable(draftKey) { mutableStateOf(drafts.getString(draftKey,"").orEmpty()) }
-    LaunchedEffect(input,draftKey){drafts.edit().putString(draftKey,input).apply()}
+    LaunchedEffect(input,draftKey){
+        delay(250)
+        val edit=drafts.edit()
+        if(input.isBlank())edit.remove(draftKey) else edit.putString(draftKey,input).putLong("saved:$draftKey",System.currentTimeMillis())
+        edit.apply()
+    }
+    LaunchedEffect(draftKey){
+        val cutoff=System.currentTimeMillis()-7L*24*60*60*1000
+        val edit=drafts.edit()
+        drafts.all.keys.filter {it.startsWith("original:")}.forEach {key->
+            val old=key.removePrefix("original:")
+            if(!drafts.contains("saved:$old"))edit.putLong("saved:$old",System.currentTimeMillis())
+        }
+        drafts.all.filter {it.key.startsWith("saved:") && it.key!="saved:$draftKey" && (it.value as? Long ?: Long.MAX_VALUE)<cutoff}.forEach {(key,_)->
+            val old=key.removePrefix("saved:");edit.remove(old).remove("original:$old").remove("target:$old").remove(key)
+        }
+        edit.apply()
+    }
 
     var voiceStatus by remember(draftKey) { mutableStateOf(VoiceInputStatus()) }
     var voicePrefix by remember(draftKey) { mutableStateOf("") }
@@ -132,7 +149,7 @@ fun TerminalScreen(
             context = context.applicationContext,
             onStatusChanged = { voiceStatus = it },
             onTranscript = { transcript, _ ->
-                drafts.edit().putString("original:$draftKey",transcript).apply()
+                drafts.edit().putString("original:$draftKey",transcript).putLong("saved:$draftKey",System.currentTimeMillis()).apply()
                 input = listOf(voicePrefix, transcript)
                     .filter(String::isNotBlank)
                     .joinToString(" ")
@@ -232,7 +249,7 @@ fun TerminalScreen(
 
     DisposableEffect(voiceController, lifecycleOwner) {
         val observer = LifecycleEventObserver { _, event ->
-            if (event == Lifecycle.Event.ON_STOP) {cancelVoiceStart();voiceController.stop();terminalController.clear()}
+            if (event == Lifecycle.Event.ON_STOP) {cancelVoiceStart();voiceController.cancelCapture();terminalController.clear()}
         }
         lifecycleOwner.lifecycle.addObserver(observer)
         onDispose {
@@ -339,6 +356,8 @@ fun TerminalScreen(
                 TextButton(onClick=onSettings){Text("Settings")}
                 TextButton(onClick={scope.launch {try {frozenTarget=onPrepareTarget();drafts.edit().putString("target:$draftKey",frozenTarget).apply();onMessage("Draft now targets the current terminal.")}catch(e:Exception){onMessage("Current target is unavailable.")}}}){Text("Choose target")}
                 TextButton(onClick={input=drafts.getString("original:$draftKey",input).orEmpty();showDraft=true}){Text("Restore transcript")}
+                TextButton(onClick={cancelVoiceStart();voiceController.cancelCapture();voiceController.clearTranscript();input="";voicePrefix="";frozenTarget=null;drafts.edit().remove(draftKey).remove("original:$draftKey").remove("target:$draftKey").remove("saved:$draftKey").apply()}){Text("Clear draft and transcript")}
+                Text("Drafts and original transcripts stay on this device. Clear removes both; inactive entries expire after 7 days.")
                 TextButton(onClick={terminalController.call("selectAll")}){Text("Select all")}
                 TextButton(onClick={terminalController.call("clearSelection")}){Text("Clear selection")}
                 TextButton(onClick={terminalController.call("bottom")}){Text("Latest output")}

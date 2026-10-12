@@ -52,7 +52,7 @@ interface LogicalLine {
   first: number;
   last: number;
 }
-function logicalLine(buffer: IBuffer, first: number): LogicalLine {
+function logicalLine(buffer: IBuffer, first: number, withPoints = false): LogicalLine {
   let text = '';
   const points: Point[] = [];
   let row = first;
@@ -60,6 +60,14 @@ function logicalLine(buffer: IBuffer, first: number): LogicalLine {
     const line = buffer.getLine(row);
     if (!line) break;
     const wrapped = !!buffer.getLine(row + 1)?.isWrapped;
+    if (!withPoints) {
+      let rowText = line.translateToString(!wrapped);
+      if (wrapped && rowText.endsWith(' ') && !line.getCell(line.length - 1)?.getChars() && buffer.getLine(row + 1)?.getCell(0)?.getWidth() === 2) rowText = rowText.slice(0, -1);
+      text += rowText;
+      if (!wrapped) break;
+      row++;
+      continue;
+    }
     const end = wrapped ? line.length : line.translateToString(true).length;
     let translated = 0;
     for (let col = 0; col < line.length; col++) {
@@ -77,7 +85,7 @@ function logicalLine(buffer: IBuffer, first: number): LogicalLine {
         continue;
       const chars = cell.getChars() || ' ';
       if (!wrapped && translated >= end) break;
-      for (let index = 0; index < chars.length; index++) points.push({ row, col });
+      if (withPoints) for (let index = 0; index < chars.length; index++) points.push({ row, col });
       text += chars;
       translated += chars.length;
     }
@@ -100,8 +108,50 @@ export class LiveBufferSearch {
       end: number;
     }
   >();
+  private revision = 0;
+  private cancelWorker?: () => void;
   constructor(private terminal: Terminal) {}
+  async collectAsync(options: SearchOptions, limit = 1000): Promise<BufferMatch[]> {
+    this.release();
+    const revision = this.revision;
+    if (!options.query) return [];
+    searchPattern(options);
+    const buffer = this.terminal.buffer.active;
+    const lines: { text: string; first: number }[] = [];
+    for (let row = 0; row < buffer.length; row++) {
+      const line = logicalLine(buffer, row);
+      lines.push({text: line.text, first: line.first});
+      row = line.last;
+      if (lines.length % 500 === 0) {
+        await new Promise(resolve => setTimeout(resolve, 0));
+        if (revision !== this.revision) return [];
+      }
+    }
+    const worker = new Worker(new URL('./terminal-search.worker.ts', import.meta.url), {type: 'module'});
+    const found = await new Promise<{line: number; start: number; end: number}[]>((resolve, reject) => {
+      const finish = (error?: Error, result: {line: number; start: number; end: number}[] = []) => {
+        clearTimeout(timer); worker.terminate(); this.cancelWorker = undefined;
+        if (error) reject(error); else resolve(result);
+      };
+      const timer = setTimeout(() => finish(new Error('Search timed out. Simplify the pattern or turn Regular expression off.')), 500);
+      this.cancelWorker = () => finish(undefined, []);
+      worker.onerror = () => finish(new Error('Search failed. Try a simpler pattern.'));
+      worker.onmessage = event => event.data.error ? finish(new Error(event.data.error)) : finish(undefined, event.data.matches);
+      worker.postMessage({lines: lines.map(line => line.text), options, limit});
+    });
+    if (revision !== this.revision || buffer !== this.terminal.buffer.active) return [];
+    return found.map(hit => {
+      const line = lines[hit.line];
+      const id = crypto.randomUUID();
+      const marker = buffer.type === 'normal' ? this.terminal.registerMarker(line.first - buffer.baseY - buffer.cursorY) : undefined;
+      this.matches.set(id, {buffer, marker, first: line.first, text: line.text, start: hit.start, end: hit.end});
+      const from = Math.max(0, hit.start - 60);
+      return {id, from: hit.start - from, to: hit.end - from, text: line.text.slice(from, hit.end + 120)};
+    });
+  }
   release() {
+    this.revision++;
+    this.cancelWorker?.();
     for (const match of this.matches.values()) match.marker?.dispose();
     this.matches.clear();
   }
@@ -149,7 +199,7 @@ export class LiveBufferSearch {
     if (!match || match.buffer !== this.terminal.buffer.active || match.marker?.isDisposed)
       return false;
     const row = match.marker?.line ?? match.first;
-    const line = logicalLine(match.buffer, row);
+    const line = logicalLine(match.buffer, row, true);
     if (line.text !== match.text) return false;
     const start = line.points[match.start],
       last = line.points[match.end - 1];

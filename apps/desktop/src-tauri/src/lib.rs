@@ -6,6 +6,8 @@ pub mod voice;
 #[cfg(feature = "desktop")]
 pub use desktop::run;
 
+pub mod local_http;
+pub mod private_storage;
 pub mod storage;
 
 pub mod feedback;

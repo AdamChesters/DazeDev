@@ -30,7 +30,7 @@ class HostClient(private val ssh: SshConnection, private val scope: CoroutineSco
         val loader = "import base64,sys;print('DAZED:'+sys.argv[1]+':bootstrap',flush=True);exec(compile(base64.b64decode(sys.stdin.buffer.readline().strip(),validate=True),'<dazedev-host>','exec'))"
         val cmd = "export DAZED_TMUX_SOCKET=${ShellQuoter.quote(socket)}; exec python3 -u -c ${ShellQuoter.quote(loader)} $nonce"
         val active = ssh.openStream(cmd)
-        val input = active.inputStream
+        val input = java.io.BufferedInputStream(active.inputStream, 65536)
         val output = active.outputStream
         active.setErrStream(object : java.io.OutputStream() { override fun write(value: Int) {} })
         channel = active

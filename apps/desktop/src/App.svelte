@@ -5429,7 +5429,7 @@
                 : sessionStep < 2
                   ? 'Next'
                   : form.agent !== 'shell' && !selectedAgent?.path
-                    ? 'Install and start session'
+                    ? 'Trust upstream installer and start session'
                     : 'Create session & join'}</button
             >
           </div>

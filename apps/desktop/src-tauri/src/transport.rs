@@ -811,7 +811,7 @@ impl Transport {
             ))
             .map_err(|_| "Host operation timed out; refresh before retrying".to_string());
         c.pending.lock().unwrap().remove(&request);
-        if r.is_err() {
+        if r.is_err() && method == "ping" {
             *c.ready.lock().unwrap() = false;
             let _ = c.pty.killer.lock().unwrap().kill();
         }

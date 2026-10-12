@@ -109,7 +109,7 @@ impl Write for Stream {
     }
 }
 #[cfg(windows)]
-fn sid() -> Result<String, String> {
+pub(crate) fn sid() -> Result<String, String> {
     use windows_sys::Win32::{
         Foundation::{CloseHandle, LocalFree},
         Security::{

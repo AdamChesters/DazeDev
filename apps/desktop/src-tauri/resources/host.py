@@ -22,7 +22,7 @@ except (OSError, AttributeError):
     distro = {}
 print('Host: ' + distro.get('PRETTY_NAME', platform.system()) + ' / ' + platform.machine(), flush=True)
 if not shutil.which(agent):
-    print('Installing ' + agent + ' for this user...', flush=True)
+    print('Installing ' + agent + ' for this user. This runs the upstream publisher\'s current installer; trust that publisher and review its output.', flush=True)
     if platform.system() != 'Linux':
         raise RuntimeError('One-click installation currently supports Linux and WSL hosts.')
     if agent == 'codex':
@@ -63,7 +63,12 @@ if not shutil.which(agent):
 if not shutil.which(agent): raise RuntimeError(agent + ' was not found after installation. Review the installer output above.')
 print(agent + ' ready. Complete authentication in its interface.', flush=True)
 """
+_operation_deadline = threading.local()
 def run(args, timeout=20, env=None, cwd=None, check=True):
+    deadline = getattr(_operation_deadline, 'end', None)
+    if deadline is not None:
+        timeout = min(timeout, deadline - time.monotonic())
+        if timeout <= 0: raise TimeoutError('Host discovery deadline exceeded')
     p = subprocess.run(args, capture_output=True, text=True, timeout=timeout, env=env, cwd=cwd)
     if check and p.returncode: raise RuntimeError((p.stderr or p.stdout or 'Command failed')[-3000:].strip())
     return p.stdout.strip()
@@ -82,7 +87,7 @@ def read_doc():
 def load_profile():
     d = read_doc(); return d['machines'].get(profile_key(), empty())
 def save_profile(profile, expected):
-    folder = config_dir(); folder.mkdir(mode=0o700, parents=True, exist_ok=True)
+    folder = config_dir(); folder.mkdir(mode=0o700, parents=True, exist_ok=True); os.chmod(folder,0o700)
     with open(folder/'host.lock', 'a') as lock:
         os.chmod(folder/'host.lock', 0o600); fcntl.flock(lock, fcntl.LOCK_EX)
         doc = read_doc(); old = doc['machines'].get(profile_key(), empty())
@@ -139,7 +144,7 @@ def repos(roots, warnings=None):
     warnings=warnings if warnings is not None else []
     def warn(message):
         if message not in warnings: warnings.append(message)
-    found=[];seen=set();deadline=time.monotonic()+20
+    found=[];seen=set();deadline=min(time.monotonic()+20,getattr(_operation_deadline,'end',float('inf')))
     for root in roots:
         root=P(root).expanduser()
         if not root.is_dir():
@@ -839,7 +844,9 @@ def send_reply(prefix, reply):
     with _reply_lock:
         for frame in reply_frames(prefix,reply): print(frame,flush=True)
 def handle_request(prefix, request):
-    try: reply={'id':request['id'],'result':dispatch(request['method'],request.get('args',{}))}
+    try:
+        _operation_deadline.end = time.monotonic() + (30 if request['method'] in ('inventory','capabilities','repos','github_repos') else 240)
+        reply={'id':request['id'],'result':dispatch(request['method'],request.get('args',{}))}
     except Exception as e: reply={'id':request.get('id','unknown'),'error':str(e)}
     send_reply(prefix,reply)
 def main():
@@ -857,7 +864,7 @@ def main():
     # Each lane is bounded. Mutations remain ordered; long discovery/clone jobs
     # cannot starve ping, session lists or profile operations.
     slots=threading.BoundedSemaphore(8)
-    with concurrent.futures.ThreadPoolExecutor(max_workers=1) as slow:
+    with concurrent.futures.ThreadPoolExecutor(max_workers=2) as reads, concurrent.futures.ThreadPoolExecutor(max_workers=1) as mutations:
         def finish(request):
             try: handle_request(prefix,request)
             finally: slots.release()
@@ -865,9 +872,10 @@ def main():
             request={}
             try:
                 request=json.loads(base64.b64decode(line.strip()))
-                if request['method'] in ('inventory','github_repos','clone','worktree'):
+                if request['method'] not in ('ping','browser_prepare','browser_result'):
                     if not slots.acquire(blocking=False): raise RuntimeError('Host task queue is full; wait for current operations.')
-                    slow.submit(finish,request)
+                    lane = reads if request['method'] in ('inventory','capabilities','repos','github_repos','sessions','profile','profile_load','file_read','file_list','tmux_settings','tmux_windows') else mutations
+                    lane.submit(finish,request)
                 else: handle_request(prefix,request)
             except Exception as e: send_reply(prefix,{'id':request.get('id','unknown'),'error':str(e)})
 if __name__=='__main__':

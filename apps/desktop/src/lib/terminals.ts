@@ -26,7 +26,7 @@ export interface TerminalControls {
   copy(): Promise<void>;
   selectAll(): void;
   search(): void;
-  findMatches?(options: SearchOptions, limit?: number): BufferMatch[];
+  findMatches?(options: SearchOptions, limit?: number): Promise<BufferMatch[]>;
   revealMatch?(id: string): boolean;
   releaseSearch?(): void;
   searchSelection?():

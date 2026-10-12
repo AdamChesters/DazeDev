@@ -2,7 +2,7 @@
 const TAU = Math.PI * 2;
 const wrap = (n: number) => ((n % 1) + 1) % 1;
 export const energyCount = (width: number, height: number) =>
-  Math.max(24, Math.min(240, Math.ceil((2 * (width + height)) / 12)));
+  Math.max(24, Math.min(80, Math.ceil((2 * (width + height)) / 24)));
 export const makeEnergyMotes = (count: number) =>
   Array.from({ length: count }, (_, i) => ({
     seed: i * 2.399963,

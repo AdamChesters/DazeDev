@@ -355,7 +355,7 @@
         copySelectedTerminalText(
           event,
           terminal.getSelection(),
-          (text) => navigator.clipboard.writeText(text),
+          (text) => text.length <= 1048576 ? navigator.clipboard.writeText(text) : Promise.reject(new Error('Selection is too large for the clipboard.')),
           (message) => (notice = message),
         )
       )
@@ -516,9 +516,9 @@
       terminal.loadAddon(
         new ClipboardAddon(undefined, {
           readText: async () =>
-            viewState?.settings.clipboard === 'read-write' ? navigator.clipboard.readText() : '',
+            viewState?.settings.clipboard === 'read-write' ? navigator.clipboard.readText().then((text) => text.length <= 1048576 ? text : '') : '',
           writeText: async (_selection, text) => {
-            if (viewState?.settings.clipboard !== 'off') await navigator.clipboard.writeText(text);
+            if (viewState?.settings.clipboard !== 'off' && text.length <= 1048576) await navigator.clipboard.writeText(text);
           },
         }),
       );

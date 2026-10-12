@@ -1,3 +1,5 @@
+import { Worker as NodeWorker } from 'node:worker_threads';
+import { buildSync } from 'esbuild';
 import { describe, expect, it, vi } from 'vitest';
 import type { Terminal } from '@xterm/xterm';
 import {
@@ -150,5 +152,32 @@ describe('live terminal search', () => {
     expect(scopeTargets(targets, 'workspace', targets[0]).map((t) => t.paneId)).toEqual(['a', 'b']);
     expect(scopeTargets(targets, 'host', targets[0]).map((t) => t.paneId)).toEqual(['a', 'c']);
     expect(scopeTargets(targets, 'global', targets[0])).toHaveLength(3);
+  });
+});
+
+describe('bounded worker search', () => {
+  it('terminates a pathological expression and accepts a subsequent search', async () => {
+    const code = buildSync({entryPoints: ['src/lib/terminal-search.worker.ts'],bundle: true,write: false,format: 'iife'}).outputFiles[0].text;
+    let terminated = 0;
+    class BrowserWorker {
+      onmessage?: (event: {data: unknown}) => void;
+      onerror?: () => void;
+      private worker = new NodeWorker(`const {parentPort}=require('node:worker_threads');const self={postMessage: data=>parentPort.postMessage(data)};${code};parentPort.on('message',data=>self.onmessage({data}));`, {eval: true});
+      constructor() {this.worker.on('message',data=>this.onmessage?.({data}));this.worker.on('error',()=>this.onerror?.());}
+      postMessage(value: unknown) {this.worker.postMessage(value);}
+      terminate() {terminated++;void this.worker.terminate();}
+    }
+    vi.stubGlobal('Worker', BrowserWorker);
+    try {
+      const f=fixture(['a'.repeat(32)+'!']);
+      const search=new LiveBufferSearch(f.term);
+      await expect(search.collectAsync({...options,query:'(a+)+$',regex:true})).rejects.toThrow('timed out');
+      const matches=await search.collectAsync({...options,query:'!'});
+      expect(matches).toHaveLength(1);expect(search.reveal(matches[0].id)).toBe(true);
+      expect(terminated).toBe(2);
+      search.release();
+      const pending=search.collectAsync({...options,query:'(a+)+$',regex:true});
+      search.release();await expect(pending).resolves.toEqual([]);
+    } finally {vi.unstubAllGlobals();}
   });
 });

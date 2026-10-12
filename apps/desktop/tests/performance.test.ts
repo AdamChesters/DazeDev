@@ -40,10 +40,10 @@ describe('session names', () => {
 });
 describe('compositor motion', () => {
   it('scales density with border distance while bounding compositor layers', () => {
-    expect(energyCount(140, 22)).toBe(27);
-    expect(energyCount(280, 44)).toBe(54);
-    expect(energyCount(900, 500)).toBe(234);
-    expect(energyCount(8000, 4000)).toBe(240);
+    expect(energyCount(140, 22)).toBe(24);
+    expect(energyCount(280, 44)).toBe(27);
+    expect(energyCount(900, 500)).toBe(80);
+    expect(energyCount(8000, 4000)).toBe(80);
   });
   it('uses rounded continuous paths at status, sidebar and terminal sizes', () => {
     expect(energyMotes).toHaveLength(60);

@@ -184,9 +184,9 @@ class HostTests(unittest.TestCase):
   repo=pathlib.Path(self.temp.name)/'repo';repo.mkdir();subprocess.run(['git','init','-q',str(repo)],check=True)
   (repo/'ongoing.txt').write_text('do not overwrite')
   found=host.repos([self.temp.name]);self.assertEqual(len(found),1);self.assertTrue(found[0]['dirty']);self.assertEqual((repo/'ongoing.txt').read_text(),'do not overwrite')
- def test_slow_inventory_does_not_block_control_lane(self):
-  code="import importlib.util,time; s=importlib.util.spec_from_file_location('host',"+repr(str(ROOT/'src-tauri/resources/host.py'))+"); h=importlib.util.module_from_spec(s);s.loader.exec_module(h); original=h.dispatch; h.dispatch=lambda m,a: (time.sleep(.5) or {}) if m=='inventory' else original(m,a);h.main()"
-  lines=''.join(base64.b64encode(json.dumps({'id':i,'method':m,'args':{}}).encode()).decode()+'\n' for i,m in [('slow','inventory'),('fast','ping')])
+ def test_slow_capabilities_does_not_block_control_lane(self):
+  code="import importlib.util,time; s=importlib.util.spec_from_file_location('host',"+repr(str(ROOT/'src-tauri/resources/host.py'))+"); h=importlib.util.module_from_spec(s);s.loader.exec_module(h); original=h.dispatch; h.dispatch=lambda m,a: (time.sleep(.5) or {}) if m=='capabilities' else original(m,a);h.main()"
+  lines=''.join(base64.b64encode(json.dumps({'id':i,'method':m,'args':{}}).encode()).decode()+'\n' for i,m in [('slow','capabilities'),('fast','ping')])
   result=subprocess.run(['python3','-c',code,'fixture'],input=lines,text=True,capture_output=True,timeout=5,check=True)
   replies=[];chunks=[]
   for line in result.stdout.splitlines():

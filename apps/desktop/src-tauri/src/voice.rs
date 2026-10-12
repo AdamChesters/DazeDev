@@ -271,11 +271,10 @@ impl Cleanup {
             "4096",
             "--n-gpu-layers",
             "0",
-            "--api-key",
-            &key,
             "--no-webui",
             "--log-disable",
         ]);
+        cmd.env("LLAMA_API_KEY", &key);
         cmd.stdout(Stdio::null()).stderr(Stdio::null());
         #[cfg(windows)]
         {
@@ -289,10 +288,7 @@ impl Cleanup {
             url: format!("http://127.0.0.1:{port}"),
             key,
         };
-        let client = reqwest::blocking::Client::builder()
-            .timeout(Duration::from_millis(500))
-            .build()
-            .unwrap();
+        let client = crate::local_http::client(Duration::from_millis(500))?;
         let start = Instant::now();
         while start.elapsed() < Duration::from_secs(120) {
             if service
@@ -321,10 +317,7 @@ impl Cleanup {
         Err("Cleanup model load timed out".into())
     }
     fn clean(&self, text: &str, progress: impl Fn(usize, usize, usize)) -> Result<String, String> {
-        let client = reqwest::blocking::Client::builder()
-            .timeout(Duration::from_secs(90))
-            .build()
-            .map_err(|e| e.to_string())?;
+        let client = crate::local_http::client(Duration::from_secs(90))?;
         let mut out = Vec::new();
         let mut chunks = Vec::new();
         let mut current = String::new();
