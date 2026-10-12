@@ -1109,7 +1109,9 @@ impl Transport {
         }
     }
     pub fn binary(&self, id: &str, bytes: &[u8]) -> Result<(), String> {
-        if let Some(v) = self.native_views.lock().unwrap().get(id).cloned() {
+        // Never retain the registry guard across IPC: renderer ACK runs synchronously.
+        let native = self.native_views.lock().unwrap().get(id).cloned();
+        if let Some(v) = native {
             return v
                 .request("input", json!({"data":STANDARD.encode(bytes)}))
                 .map(|_| ());
@@ -1137,7 +1139,8 @@ impl Transport {
         write(&p, data.as_bytes())
     }
     pub fn resize(&self, id: &str, cols: u16, rows: u16) -> Result<(), String> {
-        if let Some(v) = self.native_views.lock().unwrap().get(id).cloned() {
+        let native = self.native_views.lock().unwrap().get(id).cloned();
+        if let Some(v) = native {
             return v
                 .request("resize", json!({"cols":cols,"rows":rows}))
                 .map(|_| ());
@@ -1163,7 +1166,8 @@ impl Transport {
         r
     }
     pub fn close(&self, id: &str) {
-        if let Some(v) = self.native_views.lock().unwrap().remove(id) {
+        let native = self.native_views.lock().unwrap().remove(id);
+        if let Some(v) = native {
             v.active.store(false, Ordering::Release);
             let _ = v.request("view_detach", json!({}));
             return;
@@ -1216,6 +1220,67 @@ mod tests {
         ));
     }
     use super::*;
+    #[cfg(unix)]
+    #[test]
+    fn native_view_io_never_holds_registry_needed_by_renderer_ack() {
+        use std::os::unix::net::UnixListener;
+        for method in ["input", "resize", "view_detach"] {
+            let root =
+                std::env::temp_dir().join(format!("daze-view-lock-{}", uuid::Uuid::new_v4()));
+            std::fs::create_dir(&root).unwrap();
+            let listener = UnixListener::bind(root.join("sessions.sock")).unwrap();
+            let (entered, ready) = mpsc::channel();
+            let (release, wait) = mpsc::channel();
+            let broker = std::thread::spawn(move || {
+                let (mut pipe, _) = listener.accept().unwrap();
+                pipe.set_read_timeout(Some(Duration::from_secs(5))).unwrap();
+                let request = crate::local_sessions::ipc::receive(&mut pipe).unwrap();
+                assert_eq!(request["method"], method);
+                entered.send(()).unwrap();
+                wait.recv_timeout(Duration::from_secs(5)).unwrap();
+                crate::local_sessions::ipc::send(&mut pipe, &json!({"result":null})).unwrap();
+                pipe.read_exact(&mut [0]).unwrap();
+            });
+            let transport = Arc::new(Transport::default());
+            transport.native_views.lock().unwrap().insert(
+                "pane".into(),
+                Arc::new(NativeView {
+                    client: crate::local_sessions::Client {
+                        root: root.clone(),
+                        host: "host".into(),
+                        shell: "powershell".into(),
+                    },
+                    session: "session".into(),
+                    stamp: None,
+                    viewer: "view".into(),
+                    active: AtomicBool::new(true),
+                    pending: AtomicUsize::new(1),
+                }),
+            );
+            let worker = transport.clone();
+            let io = std::thread::spawn(move || match method {
+                "input" => worker.binary("pane", b"dummy"),
+                "resize" => worker.resize("pane", 80, 24),
+                _ => {
+                    worker.close("pane");
+                    Ok(())
+                }
+            });
+            ready.recv_timeout(Duration::from_secs(5)).unwrap();
+            let registry_available = transport.native_views.try_lock().is_ok();
+            // Release even on regression failure so no blocked worker is leaked.
+            release.send(()).unwrap();
+            io.join().unwrap().unwrap();
+            broker.join().unwrap();
+            transport.ack("pane", 1);
+            transport.native_views.lock().unwrap().clear();
+            std::fs::remove_dir_all(root).unwrap();
+            assert!(
+                registry_available,
+                "{method} held the renderer ACK registry during IPC"
+            );
+        }
+    }
     #[cfg(unix)]
     #[test]
     fn native_end_continues_after_missing_session_but_preserves_real_errors() {
