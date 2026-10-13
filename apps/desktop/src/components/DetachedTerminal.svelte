@@ -49,7 +49,7 @@
     document.title = title;
     if (desktop && lastWindowTitle !== title) {
       lastWindowTitle = title;
-      void getCurrentWindow().setTitle(title).catch(() => {});
+      void getCurrentWindow().setTitle(title).catch(() => { lastWindowTitle = ''; });
     }
   });
   let image = $state<ViewedImage | null>(null);
