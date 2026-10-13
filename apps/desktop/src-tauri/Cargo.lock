@@ -753,7 +753,7 @@ dependencies = [
 
 [[package]]
 name = "dazedev"
-version = "0.3.7-alpha.0"
+version = "0.3.8-alpha.0"
 dependencies = [
  "base64 0.22.1",
  "dirs",

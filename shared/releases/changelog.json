@@ -1,6 +1,13 @@
 [
   {
     "platform": "desktop",
+    "version": "0.3.8-alpha.0",
+    "date": "2026-10-13",
+    "channel": "development",
+    "notes": "Upload focus hotfix\n\n• Return keyboard focus to the originating terminal when closing Upload, after pasting a path or cancelling.\n• Keep the next keystroke in the terminal instead of reopening the upload dialog."
+  },
+  {
+    "platform": "desktop",
     "version": "0.3.7-alpha.0",
     "date": "2026-10-13",
     "channel": "development",

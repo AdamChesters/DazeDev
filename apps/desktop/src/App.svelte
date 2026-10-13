@@ -534,6 +534,7 @@
       paneMenu = null;
       return;
     }
+    terminalReturnFocus = p.id;
     filesTarget = p;
     filesContext = terminals.get(p.id)?.context() || '';
     filesLocked = false;
