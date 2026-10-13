@@ -19,7 +19,8 @@
   import { ImageAddon } from '@xterm/addon-image';
   import { ClipboardAddon } from '@xterm/addon-clipboard';
   import { LigaturesAddon } from '@xterm/addon-ligatures';
-  import { call, on, rpc, openExternal } from '../lib/bridge';
+  import { call, on, rpc, openExternal, desktop } from '../lib/bridge';
+  import { terminalPresentation } from '../lib/pane-status';
   import { readClipboardContent, uploadClipboardFiles } from '../lib/clipboard-upload';
   import {
     TerminalStream,
@@ -38,6 +39,19 @@
   let fit: FitAddon;
   let searcher: SearchAddon;
   let viewState = $state<WindowTerminalState | null>(null);
+  const presentation = $derived(viewState
+    ? terminalPresentation(viewState.pane, viewState.metadata)
+    : { name: 'Terminal', type: 'shell', model: '' });
+  let lastWindowTitle = '';
+  $effect(() => {
+    if (!viewState) return;
+    const title = `${viewState.workspaceName} / ${presentation.name} - DazeDev`;
+    document.title = title;
+    if (desktop && lastWindowTitle !== title) {
+      lastWindowTitle = title;
+      void getCurrentWindow().setTitle(title).catch(() => { lastWindowTitle = ''; });
+    }
+  });
   let image = $state<ViewedImage | null>(null);
   let viewedDocument = $state<DocumentText | null>(null);
   async function viewImage(path: string) {
@@ -589,12 +603,12 @@
     </div>{/if}
   <header style:background-color={colors?.background} style:color={colors?.foreground}>
     <span class="title pane-title"
-      ><span class="terminal-name" title={viewState?.pane.name || 'Terminal'}
-        >{viewState?.pane.name || 'Terminal'}</span
+      ><span class="terminal-name" title={presentation.name}
+        >{presentation.name}</span
       ><span
         class="terminal-type"
-        title={`${viewState?.pane.agent || 'shell'}${viewState?.pane.model ? ' / ' + viewState.pane.model : ''}`}
-        >{viewState?.pane.agent || 'shell'}</span
+        title={`${presentation.type}${presentation.model ? ' / ' + presentation.model : ''}`}
+        >{presentation.type}</span
       ></span
     >
     <button onclick={() => void action('host')} title="Connection options for this terminal’s host"

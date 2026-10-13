@@ -469,7 +469,7 @@
     async function pollStatus() {
       const current = generation;
       try {
-        if (opened && remoteReady && connected && visible) {
+        if (opened && remoteReady && connected && (visible || floating)) {
           const value = await rpc<PaneStatus>(pane.hostId, 'terminal_status', { pid: remotePid });
           if (!disposed && current === generation) onmetadata(value);
         } else if (!opened || !connected) onmetadata(unknownStatus);

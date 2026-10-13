@@ -641,14 +641,19 @@ def terminal_status(a):
             if current in seen: continue
             seen.add(current);pending.extend(children.get(current,[]))
         return seen
-    seen=descend(pid); attached=False; session_id=None; stamp=None
+    seen=descend(pid); attached=False; session_id=None; stamp=None; session_name=None; agent=None
     if shutil.which('tmux'):
         for line in tmux('list-clients','-F','#{client_pid}\t#{session_id}\t#{pane_pid}',check=False,timeout=3).splitlines():
             fields=line.split('\t')
             if len(fields)==3 and fields[0].isdigit() and int(fields[0]) in seen:
                 attached=True; session_id=fields[1]
                 stamp=tmux('display-message','-p','-t',session_id,'#{pid}:#{start_time}:#{session_created}',check=False,timeout=3).strip() or None
-                if fields[2].isdigit(): seen.update(descend(int(fields[2])))
+                session_name=tmux('display-message','-p','-t',session_id,'#{session_name}',check=False,timeout=3).strip() or None
+                if fields[2].isdigit():
+                    pane_processes=descend(int(fields[2]));seen.update(pane_processes)
+                    # Only executable names from this pane determine its agent label.
+                    agents={rows[p] for p in pane_processes if rows.get(p) in AGENTS}
+                    agent=next(iter(agents)) if len(agents)==1 else 'shell'
     nested=any(rows.get(p) in ('ssh','mosh','mosh-client') for p in seen)
     if nested: return dict(unknown,nestedSsh=True)
     if not attached and any(rows.get(p, '').startswith('tmux') for p in seen): return unknown
@@ -661,7 +666,7 @@ def terminal_status(a):
         if len(leaves)==1:
             try: directory=os.readlink('/proc/%d/cwd' % leaves[0])
             except OSError: pass
-    return {'attachment':'tmux' if attached else 'plain','nestedSsh':False,'hostname':socket.gethostname(),'sessionId':session_id,'stamp':stamp,'directory':directory}
+    return {'attachment':'tmux' if attached else 'plain','nestedSsh':False,'hostname':socket.gethostname(),'sessionId':session_id,'stamp':stamp,'sessionName':session_name,'agent':agent,'directory':directory}
 
 # Values stay allowlisted: tmux formats and configuration files may execute commands.
 TMUX_SETTINGS = {

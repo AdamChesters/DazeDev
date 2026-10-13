@@ -64,10 +64,28 @@ class HostTests(unittest.TestCase):
   def tmux(*args,**kwargs):
    if args[0]=='list-clients': return '101\t$9\t200'
    self.assertEqual(args[0:4],('display-message','-p','-t','$9'))
+   if args[-1]=='#{session_name}': return 'manual-session'
    return '99:88:77'
   with patch.object(host,'run',return_value=f'100 1 {uid} sh\n101 100 {uid} tmux\n200 1 {uid} bash\n'),patch.object(host,'tmux',side_effect=tmux),patch.object(host.shutil,'which',return_value='/bin/tmux'):
    status=host.terminal_status({'pid':100})
    self.assertEqual((status['attachment'],status['sessionId'],status['stamp']),('tmux','$9','99:88:77'))
+   self.assertEqual(status['sessionName'],'manual-session')
+   self.assertEqual(status['agent'],'shell')
+ def test_manual_tmux_status_labels_only_known_same_user_pane_agents(self):
+  uid=os.getuid()
+  snapshot=f'100 1 {uid} sh\n101 100 {uid} tmux\n200 1 {uid} bash\n201 200 {uid} codex\n202 200 {uid+1} claude\n'
+  def tmux(*args,**kwargs):
+   if args[0]=='list-clients': return '101\t$9\t200'
+   return 'manual-codex' if args[-1]=='#{session_name}' else '99:88:77'
+  with patch.object(host,'run',return_value=snapshot),patch.object(host,'tmux',side_effect=tmux),patch.object(host.shutil,'which',return_value='/bin/tmux'):
+   status=host.terminal_status({'pid':100})
+   self.assertEqual((status['attachment'],status['sessionName'],status['agent']),('tmux','manual-codex','codex'))
+   with patch.object(host,'run',return_value=snapshot.replace(f'201 200 {uid} codex',f'201 200 {uid} unfamiliar-command')):
+    self.assertEqual(host.terminal_status({'pid':100})['agent'],'shell')
+   with patch.object(host,'run',return_value=snapshot+f'203 200 {uid} ssh\n'):
+    status=host.terminal_status({'pid':100})
+    self.assertEqual(status['attachment'],'unknown');self.assertTrue(status['nestedSsh'])
+    self.assertNotIn('sessionName',status);self.assertNotIn('agent',status)
  def test_plain_terminal_clone_reads_deepest_shell_directory(self):
   uid=os.getuid()
   with patch.object(host,'run',return_value=f'100 1 {uid} sh\n101 100 {uid} bash\n'),patch.object(host.shutil,'which',return_value=None),patch.object(host.os,'readlink',return_value="/tmp/space and ' quote") as readlink:
