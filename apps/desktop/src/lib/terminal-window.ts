@@ -1,5 +1,6 @@
 import type { Host, Pane } from './types';
 import type { TerminalSettings } from './terminals';
+import type { PaneStatus } from './pane-status';
 
 export interface TerminalSnapshot {
   sequence: number;
@@ -25,6 +26,7 @@ export interface WindowTerminalState {
   dictation: string;
   status: string;
   ready: boolean;
+  metadata?: PaneStatus;
 }
 export interface TerminalOutput {
   sequence: number;

@@ -27,7 +27,7 @@
   import FilesDialog from './components/FilesDialog.svelte';
   import ViewerWindow from './components/ViewerWindow.svelte';
   import Licenses from './components/Licenses.svelte';
-  import { hostLabel, unknownStatus, type PaneStatus } from './lib/pane-status';
+  import { hostLabel, terminalPresentation, unknownStatus, type PaneStatus } from './lib/pane-status';
   import { diagnostic, exportDiagnostics } from './lib/diagnostics';
   import { onMount, tick } from 'svelte';
   import { sessionNameError } from './lib/session-name';
@@ -265,6 +265,7 @@
       },
       status: terminalState[pane.id] || '',
       ready: !!terminals.get(pane.id)?.context(),
+      metadata: paneStatus[pane.id],
     };
   }
   function publishTerminal(paneId: string, value: unknown) {
@@ -292,7 +293,7 @@
       await call('terminal_window_open', {
         paneId: pane.id,
         workspaceId: owner.id,
-        title: `${owner.name} / ${pane.name} - DazeDev`,
+        title: `${owner.name} / ${terminalPresentation(pane, paneStatus[pane.id]).name} - DazeDev`,
         x: x ?? null,
         y: y ?? null,
         dragging,
@@ -3973,7 +3974,7 @@
             {#each current.panes.filter((p) => detachedPanes.has(p.id)) as pane}
               <button
                 onclick={() => void call('terminal_window_focus', { paneId: pane.id }).catch(fail)}
-                >Show {pane.name}</button
+                >Show {terminalPresentation(pane, paneStatus[pane.id]).name}</button
               >
               <button
                 onclick={() => void dockTerminal(pane.id).catch(fail)}
@@ -4016,6 +4017,7 @@
           {/each}
           {#each workspaces.flatMap((w) => w.panes.map((p) => ({ w, p }))) as { w, p } (p.id)}
             {@const boxes = workspaceBoxes[w.id]}
+            {@const presentation = terminalPresentation(p, paneStatus[p.id])}
 
             {@const id = p.id}
             {@const tabs = terminalTabs(w, p.id)}
@@ -4108,10 +4110,10 @@
                   }}
                 >
                   <div class="pane-title">
-                    <span class="terminal-name" title={p.name}>{p.name}</span>
+                    <span class="terminal-name" title={presentation.name}>{presentation.name}</span>
                     <span
                       class="terminal-type"
-                      title={`${p.agent}${p.model ? ' / ' + p.model : ''}`}>{p.agent}</span
+                      title={`${presentation.type}${presentation.model ? ' / ' + presentation.model : ''}`}>{presentation.type}</span
                     >
                   </div>
                   {#if p.hostId !== w.hostId}
@@ -4247,7 +4249,7 @@
                                 )
                                 ?.focus(),
                             );
-                          }}>{tab.name}</button
+                          }}>{terminalPresentation(tab, paneStatus[tab.id]).name}</button
                         >{/if}
                     {/each}
                     {#if w.hostId !== HOSTLESS}<button
