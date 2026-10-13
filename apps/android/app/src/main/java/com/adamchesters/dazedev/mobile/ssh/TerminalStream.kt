@@ -11,6 +11,7 @@ import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.selects.select
 import java.util.concurrent.atomic.AtomicBoolean
 import java.util.concurrent.atomic.AtomicInteger
+import org.json.JSONObject
 
 class TerminalStream(private val ssh: SshConnection, parent: CoroutineScope) {
     private val scope = CoroutineScope(parent.coroutineContext + SupervisorJob(parent.coroutineContext[Job]))
@@ -28,10 +29,20 @@ class TerminalStream(private val ssh: SshConnection, parent: CoroutineScope) {
     private val pendingBottom = AtomicBoolean(false)
     private val failures = Channel<String>(Channel.CONFLATED)
     val scrollFailures = failures.receiveAsFlow()
-    suspend fun attach(socket: String, id: String, stamp: String, cols: Int, rows: Int) {
+    suspend fun attach(socket: String, id: String, stamp: String, cols: Int, rows: Int, browser: JSONObject? = null) {
         require(Regex("\\$[0-9]+").matches(id) && stamp.isNotBlank()) { "Refresh this session before attaching." }
         val script = "import subprocess,sys,os; a=['tmux']+(['-L',sys.argv[1]] if sys.argv[1] else []); s=subprocess.check_output(a+['display-message','-p','-t',sys.argv[2],'#{pid}:#{start_time}:#{session_created}'],text=True).strip(); assert s==sys.argv[3], 'Session changed; refresh before reconnecting'; os.execvp('tmux',a+['attach-session','-t',sys.argv[2]])"
-        val command = "exec python3 -c ${ShellQuoter.quote(script)} ${ShellQuoter.quote(socket)} ${ShellQuoter.quote(id)} ${ShellQuoter.quote(stamp)}"
+        val attachCommand = "exec python3 -c ${ShellQuoter.quote(script)} ${ShellQuoter.quote(socket)} ${ShellQuoter.quote(id)} ${ShellQuoter.quote(stamp)}"
+        val command = if(browser==null) attachCommand else {
+            val executable=browser.getString("command")
+            val endpoint=browser.getString("endpoint")
+            require(executable.startsWith("/") && executable.endsWith("/xdg-open") && executable.none {it.code<32}) {"Invalid browser bridge command."}
+            require(Regex("[a-f0-9]{32}").matches(endpoint)) {"Invalid browser bridge endpoint."}
+            val directory=executable.substringBeforeLast('/')
+            "export BROWSER=${ShellQuoter.quote(executable)}; export PATH=${ShellQuoter.quote(directory)}:\"\$PATH\"; " +
+                "export DAZEDEV_BROWSER_TTY=\"\$(tty)\" DAZEDEV_BROWSER_PID=\"\$\$\"; " +
+                "\"\$BROWSER\" --dazedev-register ${ShellQuoter.quote(endpoint)} \"\$\$\" \"\$DAZEDEV_BROWSER_TTY\" || printf '%s\\n' 'Browser forwarding is unavailable. Tap terminal links to open them.' >&2; $attachCommand"
+        }
         val channel=ssh.openStream(command,true,cols.coerceIn(2,500),rows.coerceIn(2,300))
         val input=channel.inputStream;val output=channel.outputStream
         active=channel

@@ -84,7 +84,10 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     private inner class HostState(var profile: ConnectionProfile) {
         val prompts=HostKeyPromptCoordinator()
         val ssh=SshConnection(File(getApplication<Application>().filesDir,"ssh/${profile.id}/known_hosts"),prompts)
-        val client=HostClient(ssh,viewModelScope)
+        val client=HostClient(ssh,viewModelScope) { url ->
+            if(!foreground) "Return to DazeDev before opening a browser link."
+            else BrowserLauncher.open(getApplication<Application>(),url).also {error->if(error!=null)postMessage(error)}
+        }
         var phase=ConnectionPhase.Disconnected
         var shared: SharedProfile?=null
         var fingerprint=profile.fingerprint
@@ -205,7 +208,8 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                 if(normalized.authMethod==AuthMethod.PrivateKey)key=readPrivateKey(requireNotNull(normalized.privateKeyUri))
                 h.ssh.connect(normalized,secret,key)
                 val source=withContext(Dispatchers.IO){getApplication<Application>().assets.open("host.py").use {it.readBytes()}}
-                val ready=h.client.start(source,normalized.socket)
+                val browserSource=withContext(Dispatchers.IO){getApplication<Application>().assets.open("browser.py").use {it.readBytes()}}
+                val ready=h.client.start(source,normalized.socket,browserSource)
                 h.fingerprint="${ready.getString("machine")}:${ready.getString("user")}:${normalized.socket}"
                 val pending=_uiState.value.pendingTerminalConnection
                 if(pending?.targetProfileId==normalized.id) require(pending.row.hostKey==h.fingerprint) {
@@ -293,7 +297,10 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
             try {
                 h.client.request("session_context",JSONObject().put("id",id).put("stamp",stamp),15_000)
                 if(generation!=attachmentGeneration)return@launch
-                stream=TerminalStream(h.ssh,viewModelScope);stream.attach(h.profile.socket,id,stamp,80,24)
+                val browser=try {h.client.request("browser_prepare") as JSONObject}
+                    catch(e:CancellationException){throw e}
+                    catch(_:Exception){postMessage("Browser forwarding is unavailable. You can still use this terminal and tap its web links.");null}
+                stream=TerminalStream(h.ssh,viewModelScope);stream.attach(h.profile.socket,id,stamp,80,24,browser)
                 if(generation!=attachmentGeneration){stream.close();return@launch}
                 _uiState.update {it.copy(terminal=stream)}
             }catch(e:CancellationException){stream?.close();throw e}
