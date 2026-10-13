@@ -1,5 +1,12 @@
 [
   {
+    "platform": "mobile",
+    "version": "0.1.0-alpha.5",
+    "date": "2026-10-13",
+    "channel": "development",
+    "notes": "Terminal scrollback hotfix\n\n• Drag down in a terminal to read earlier output, then drag up to return.\n• Scroll attached tmux history without sending keys to the running app.\n• Keep long-press text selection and return to live output with Latest."
+  },
+  {
     "platform": "desktop",
     "version": "0.3.5-alpha.0",
     "date": "2026-10-12",

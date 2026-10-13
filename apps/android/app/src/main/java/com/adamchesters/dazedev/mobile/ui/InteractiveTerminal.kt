@@ -73,6 +73,8 @@ fun InteractiveTerminal(stream:TerminalStream,controller:TerminalController,onMe
                             "resize"->{val size=event.getJSONObject("value");stream.resize(size.getInt("cols"),size.getInt("rows"))}
                             "input"->{if(!controller.ready || !stream.send(event.getString("value").toByteArray()))post {onMessage("Input was not sent. Reconnect the terminal.")}}
                             "binary"->{val data=event.getString("value");if(!controller.ready || !stream.send(ByteArray(data.length){data[it].code.toByte()}))post {onMessage("Input was not sent. Reconnect the terminal.")}}
+                            "scroll"->{if(!stream.scrollHistory(event.getInt("value")))post {onMessage("Reconnect the terminal before scrolling.")}}
+                            "scrollBottom"->{if(!stream.scrollToBottom())post {onMessage("Reconnect the terminal before scrolling.")}}
                             "ack"->acknowledgements.remove(event.getLong("value"))?.complete(Unit)
                             "copy"->{val selected=event.getString("value");if(selected.toByteArray().size>250_000)post {onMessage("Selection is too large for the clipboard. Choose a smaller region.")} else if(selected.isNotEmpty())post {runCatching {(context.getSystemService(Context.CLIPBOARD_SERVICE) as ClipboardManager).setPrimaryClip(ClipData.newPlainText("Terminal selection",selected))}.onFailure {onMessage("Could not copy this selection.")}}}
                         }
@@ -100,6 +102,7 @@ fun InteractiveTerminal(stream:TerminalStream,controller:TerminalController,onMe
         }catch(e:CancellationException){throw e}catch(e:Exception){controller.ready=false;stream.close();onMessage(e.message?:"Terminal stopped.")}
         finally {controller.ready=false;stream.close()}
     }
+    LaunchedEffect(stream) {stream.scrollFailures.collect {onMessage(it)}}
     LaunchedEffect(web,fontScale){withTimeout(15_000){ready.await()};controller.call("font",fontScale.toString())}
     LaunchedEffect(web,viewport){
         withTimeout(15_000){ready.await()}
