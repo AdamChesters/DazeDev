@@ -21,6 +21,9 @@ body {
   min-height: 0;
   padding: 4px;
 }
+.xterm-screen {
+  touch-action: none;
+}
 #keys {
   flex: none;
   max-height: 40vh;

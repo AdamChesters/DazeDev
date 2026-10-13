@@ -3,6 +3,7 @@ import { FitAddon } from "@xterm/addon-fit";
 import { Unicode11Addon } from "@xterm/addon-unicode11";
 import "@xterm/xterm/css/xterm.css";
 import "./terminal.css";
+import { installTouchScroll } from "./touch-scroll.js";
 const term = new Terminal({
   cursorBlink: false,
   scrollback: 5000,
@@ -297,6 +298,7 @@ window.daze = {
     layout();
   },
   dispose: () => {
+    disposeTouchScroll();
     stopRepeat();
     term.dispose();
   },
@@ -312,10 +314,8 @@ requestAnimationFrame(() => {
 });
 
 const screen = document.querySelector(".xterm-screen");
-let selectionTimer,
-  selectionStart = null,
-  selectionEnd = null,
-  touchStart = null;
+let selectionStart = null,
+  selectionEnd = null;
 const handles = ["start", "end"].map((name) => {
   const button = document.createElement("button");
   button.className = "selection-handle";
@@ -389,26 +389,18 @@ for (const [i, handle] of handles.entries()) {
     selectRange();
   };
 }
-screen.addEventListener("pointerdown", (event) => {
-  if (event.pointerType !== "touch") return;
-  touchStart = { x: event.clientX, y: event.clientY };
-  selectionTimer = setTimeout(() => {
+const disposeTouchScroll = installTouchScroll(screen, {
+  lineHeight: () => screen.getBoundingClientRect().height / term.rows,
+  scroll: (lines) => {
+    window.daze.clearSelection();
+    if (term.buffer.active.type === "alternate") bridge("scroll", lines);
+    else term.scrollLines(lines);
+  },
+  select: (event) => {
     selectionStart = selectionEnd = cell(event);
     selectRange();
-  }, 500);
+  },
 });
-screen.addEventListener("pointermove", (event) => {
-  if (
-    touchStart &&
-    Math.hypot(event.clientX - touchStart.x, event.clientY - touchStart.y) > 8
-  )
-    clearTimeout(selectionTimer);
-});
-for (const name of ["pointerup", "pointercancel"])
-  screen.addEventListener(name, () => {
-    clearTimeout(selectionTimer);
-    touchStart = null;
-  });
 screen.addEventListener("contextmenu", (event) => {
   event.preventDefault();
 });
@@ -431,4 +423,7 @@ window.daze.clearSelection = () => {
   term.clearSelection();
   handles.forEach((handle) => (handle.hidden = true));
 };
-window.daze.bottom = () => term.scrollToBottom();
+window.daze.bottom = () => {
+  if (term.buffer.active.type === "alternate") bridge("scrollBottom", null);
+  term.scrollToBottom();
+};

@@ -1,6 +1,7 @@
 package com.adamchesters.dazedev.mobile.ssh
 
 import com.adamchesters.dazedev.mobile.tmux.ShellQuoter
+import com.adamchesters.dazedev.mobile.tmux.TerminalScrollCommands
 import com.jcraft.jsch.ChannelExec
 import kotlinx.coroutines.*
 import kotlinx.coroutines.channels.Channel
@@ -9,6 +10,7 @@ import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.selects.select
 import java.util.concurrent.atomic.AtomicBoolean
+import java.util.concurrent.atomic.AtomicInteger
 
 class TerminalStream(private val ssh: SshConnection, parent: CoroutineScope) {
     private val scope = CoroutineScope(parent.coroutineContext + SupervisorJob(parent.coroutineContext[Job]))
@@ -21,6 +23,11 @@ class TerminalStream(private val ssh: SshConnection, parent: CoroutineScope) {
     private val _connected=MutableStateFlow(false)
     val state = _connected.asStateFlow()
     val connected get() = _connected.value
+    private val scrollWake = Channel<Unit>(Channel.CONFLATED)
+    private val pendingScroll = AtomicInteger(0)
+    private val pendingBottom = AtomicBoolean(false)
+    private val failures = Channel<String>(Channel.CONFLATED)
+    val scrollFailures = failures.receiveAsFlow()
     suspend fun attach(socket: String, id: String, stamp: String, cols: Int, rows: Int) {
         require(Regex("\\$[0-9]+").matches(id) && stamp.isNotBlank()) { "Refresh this session before attaching." }
         val script = "import subprocess,sys,os; a=['tmux']+(['-L',sys.argv[1]] if sys.argv[1] else []); s=subprocess.check_output(a+['display-message','-p','-t',sys.argv[2],'#{pid}:#{start_time}:#{session_created}'],text=True).strip(); assert s==sys.argv[3], 'Session changed; refresh before reconnecting'; os.execvp('tmux',a+['attach-session','-t',sys.argv[2]])"
@@ -32,6 +39,21 @@ class TerminalStream(private val ssh: SshConnection, parent: CoroutineScope) {
         catch(e:Exception) {close();channel.disconnect();active=null;scope.cancel();throw e}
         if(closing.get()){channel.disconnect();active=null;scope.cancel();return}
         _connected.value=true
+        scope.launch {
+            for (ignored in scrollWake) {
+                val bottom=pendingBottom.getAndSet(false)
+                val lines=pendingScroll.getAndSet(0)
+                if(!connected || closing.get())break
+                if(!bottom && lines==0)continue
+                try {
+                    if(bottom)ssh.execute(TerminalScrollCommands.command(socket,id,stamp,0,true),15_000)
+                        .requireSuccess("Returning to live terminal output")
+                    if(lines!=0)ssh.execute(TerminalScrollCommands.command(socket,id,stamp,lines),15_000)
+                        .requireSuccess("Scrolling terminal history")
+                } catch(e:CancellationException) {throw e}
+                catch(e:Exception) {failures.trySend(e.message?:"Could not scroll terminal history. Reconnect to retry.")}
+            }
+        }
         // One owner completes each packet before resize or disconnect can run.
         scope.launch(Dispatchers.IO) {
             try {
@@ -59,9 +81,21 @@ class TerminalStream(private val ssh: SshConnection, parent: CoroutineScope) {
     }
     fun send(bytes: ByteArray): Boolean = connected && !closing.get() && bytes.size in 1..65_536 && outgoing.trySend(bytes.copyOf()).isSuccess
     fun resize(cols: Int, rows: Int) {if(connected && !closing.get())sizes.trySend(cols.coerceIn(2,500) to rows.coerceIn(2,300))}
+    fun scrollHistory(lines: Int): Boolean {
+        if(!connected || closing.get())return false
+        if(lines==0)return true
+        pendingScroll.updateAndGet { (it.toLong()+lines.toLong()).coerceIn(-5000L,5000L).toInt() }
+        return scrollWake.trySend(Unit).isSuccess
+    }
+    fun scrollToBottom(): Boolean {
+        if(!connected || closing.get())return false
+        pendingScroll.set(0);pendingBottom.set(true)
+        return scrollWake.trySend(Unit).isSuccess
+    }
     fun close() {
         if(closing.compareAndSet(false,true)) {
             _connected.value=false;outgoing.cancel();sizes.cancel();incoming.close()
+            scrollWake.cancel();failures.close()
         }
     }
 }
