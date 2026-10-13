@@ -21,6 +21,7 @@
   import { LigaturesAddon } from '@xterm/addon-ligatures';
   import { call, on, rpc, openExternal, desktop } from '../lib/bridge';
   import { terminalPresentation } from '../lib/pane-status';
+  import { deadPaneTarget } from '../lib/terminal-recovery';
   import { readClipboardContent, uploadClipboardFiles } from '../lib/clipboard-upload';
   import {
     TerminalStream,
@@ -39,6 +40,16 @@
   let fit: FitAddon;
   let searcher: SearchAddon;
   let viewState = $state<WindowTerminalState | null>(null);
+  let recoveryBusy = $state(false);
+  let recoveryError = $state('');
+  const endedTarget = $derived(viewState?.metadata ? deadPaneTarget(viewState.metadata) : null);
+  async function recover() {
+    if (recoveryBusy) return;
+    recoveryBusy = true; recoveryError = '';
+    try { await request('recover'); }
+    catch (error) { recoveryError = String(error); }
+    finally { recoveryBusy = false; }
+  }
   const presentation = $derived(viewState
     ? terminalPresentation(viewState.pane, viewState.metadata)
     : { name: 'Terminal', type: 'shell', model: '' });
@@ -622,6 +633,13 @@
     >
     <button onclick={() => void action('dock')}>Return to workspace</button>
   </header>
+  {#if endedTarget}<div class="ended-banner" aria-label="Session ended">
+      <p role="status">Session ended. Open a new terminal here to continue.</p>
+      {#if recoveryError}<p role="alert">{recoveryError}</p>{/if}
+      <button disabled={recoveryBusy} onclick={() => void recover()}
+        >{recoveryBusy ? 'Opening terminal…' : 'Open terminal'}</button>
+      <button disabled={recoveryBusy} onclick={() => void action('close')}>Close view</button>
+    </div>{/if}
   {#if menu}<nav aria-label="Terminal actions">
       <button onclick={() => void action('repo')}>Repo</button>
       <button onclick={() => void action('tmux')}
@@ -748,6 +766,9 @@
 {/if}
 
 <style>
+  .ended-banner { padding: 8px; border-bottom: 1px solid #bd8882; }
+  .ended-banner p { margin: 0 0 6px; }
+  .ended-banner button { margin-right: 6px; }
   .scoped-search-navigation {
     position: fixed;
     z-index: 90;

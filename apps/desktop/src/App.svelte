@@ -351,6 +351,9 @@
         terminal.resume?.();
         const host = device.hosts.find((h) => h.id === pane.hostId);
         if (host) await reconnectHost(host);
+      } else if (action === 'recover') {
+        if (!terminal.recover) throw new Error('Terminal recovery is unavailable. Return to the workspace and retry.');
+        await terminal.recover();
       } else if (action === 'focus') {
         owner.focused = paneId;
         (device.localFocus ||= {})[owner.id] = paneId;
@@ -4337,6 +4340,7 @@
                       (!maximize || maximize === p.id)}
                     connected={connections[p.hostId] === 'Connected'}
                     ondisconnect={() => void checkConnections(p.hostId)}
+                    oncloseview={() => closePane(p)}
                     onreconnect={async () => {
                       const host = device.hosts.find((h) => h.id === p.hostId);
                       if (host) await reconnectHost(host);

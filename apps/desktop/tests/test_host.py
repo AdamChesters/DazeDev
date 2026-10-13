@@ -1,5 +1,5 @@
 from unittest.mock import patch
-import base64, importlib.util, os, pathlib, subprocess, tempfile, unittest, uuid, time, json
+import base64, importlib.util, os, pathlib, subprocess, tempfile, unittest, uuid, time, json, pty, signal
 ROOT=pathlib.Path(__file__).resolve().parents[1]
 spec=importlib.util.spec_from_file_location('host',ROOT/'src-tauri/resources/host.py');host=importlib.util.module_from_spec(spec);spec.loader.exec_module(host)
 class HostTests(unittest.TestCase):
@@ -10,6 +10,73 @@ class HostTests(unittest.TestCase):
   if self.old is None:os.environ.pop('XDG_CONFIG_HOME',None)
   else:os.environ['XDG_CONFIG_HOME']=self.old
   self.temp.cleanup()
+ def test_ctrl_c_agent_returns_to_shell_in_tmux(self):
+  root=pathlib.Path(self.temp.name);agent=root/'fixture-agent'
+  agent.write_text('#!/usr/bin/python3\nimport sys,time\nif "--help" in sys.argv: sys.exit(0)\nprint("FIXTURE_AGENT_READY",flush=True)\nwhile True: time.sleep(0.1)\n');agent.chmod(0o700)
+  with patch.object(host,'agent_path',return_value=str(agent)):
+   session=host.create_session({'name':'exit-fixture','path':str(root),'operation':uuid.uuid4().hex,'agent':'codex'})
+  host.tmux('set-window-option','-t',session['id'],'remain-on-exit','on')
+  deadline=time.monotonic()+3
+  while time.monotonic()<deadline:
+   if 'FIXTURE_AGENT_READY' in host.tmux('capture-pane','-p','-t',session['id']):break
+   time.sleep(.05)
+  else:self.fail('Agent did not start')
+  host.tmux('send-keys','-t',session['id'],'C-c')
+  time.sleep(.3)
+  self.assertEqual(host.tmux('display-message','-p','-t',session['id'],'#{pane_dead}'),'0','Agent Ctrl-C must leave a live shell, not a dead pane')
+  host.tmux('send-keys','-t',session['id'],'echo RECOVERED_SHELL_READY','Enter')
+  deadline=time.monotonic()+3
+  while time.monotonic()<deadline:
+   if 'RECOVERED_SHELL_READY' in [line.strip() for line in host.tmux('capture-pane','-p','-t',session['id']).splitlines()]:break
+   time.sleep(.05)
+  else:self.fail('Fallback shell did not accept input')
+ def dead_fixture(self):
+  host.tmux('new-session','-d','-s','dead-fixture','-c',self.temp.name,'sleep 86400')
+  session=host.sessions()[0]
+  pane=host.tmux('display-message','-p','-t',session['id'],'#{pane_id}')
+  host.tmux('set-window-option','-t',session['id'],'remain-on-exit','on')
+  host.tmux('respawn-pane','-k','-t',pane,'exit 7')
+  deadline=time.monotonic()+2
+  while time.monotonic()<deadline:
+   if host.tmux('display-message','-p','-t',pane,'#{pane_dead}')=='1':return dict(id=session['id'],stamp=session['stamp'],paneId=pane)
+   time.sleep(.02)
+  self.fail('Dead fixture did not exit')
+ def test_dead_pane_recovery_returns_shell_without_restarting_agent(self):
+  args=self.dead_fixture();host.terminal_recover(args)
+  self.assertEqual(host.tmux('display-message','-p','-t',args['paneId'],'#{pane_dead}'),'0')
+  host.tmux('send-keys','-t',args['paneId'],'echo RECOVERED_DEAD_PANE','Enter')
+  deadline=time.monotonic()+2
+  while time.monotonic()<deadline:
+   if 'RECOVERED_DEAD_PANE' in [line.strip() for line in host.tmux('capture-pane','-p','-t',args['paneId']).splitlines()]:break
+   time.sleep(.02)
+  else:self.fail('Recovered pane did not execute shell command')
+  with self.assertRaisesRegex(RuntimeError,'not dead|already running'):host.terminal_recover(args)
+ def test_dead_pane_recovery_refuses_stale_stamp_and_wrong_session(self):
+  args=self.dead_fixture()
+  with self.assertRaisesRegex(RuntimeError,'changed'):host.terminal_recover(dict(args,stamp='old-server-stamp'))
+  host.tmux('new-session','-d','-s','other-session','sleep 86400');other=next(x for x in host.sessions() if x['name']=='other-session')
+  with self.assertRaisesRegex(RuntimeError,'different session'):host.terminal_recover(dict(args,id=other['id'],stamp=other['stamp']))
+  self.assertEqual(host.tmux('display-message','-p','-t',args['paneId'],'#{pane_dead}'),'1')
+  with self.assertRaises(ValueError):host.terminal_recover(dict(args,paneId=';kill-server'))
+ def test_real_attached_dead_pane_metadata_and_recovery(self):
+  args=self.dead_fixture();child,master=pty.fork()
+  if child==0:
+   os.environ['TERM']='xterm-256color';os.execvp('tmux',['tmux','-L',host.SOCKET,'attach-session','-t',args['id']])
+  try:
+   deadline=time.monotonic()+3;status={}
+   while time.monotonic()<deadline:
+    status=host.terminal_status({'pid':os.getpid()})
+    if status.get('paneDead'):break
+    time.sleep(.05)
+   self.assertTrue(status.get('paneDead'),'Reconnect must detect an already-dead pane')
+   self.assertEqual(status['paneId'],args['paneId']);self.assertEqual(status['sessionId'],args['id']);self.assertEqual(status['stamp'],args['stamp'])
+   host.terminal_recover(dict(id=status['sessionId'],stamp=status['stamp'],paneId=status['paneId']))
+   self.assertFalse(host.terminal_status({'pid':os.getpid()})['paneDead'])
+  finally:
+   os.close(master)
+   try:os.kill(child,signal.SIGTERM)
+   except ProcessLookupError:pass
+   os.waitpid(child,0)
  def test_upload_preserves_bytes_and_refuses_overwrite(self):
   root=pathlib.Path(self.temp.name);data=bytes(range(256))*200
   item=host.upload_begin({'directory':str(root),'name':"quoted ' sample.bin",'size':len(data)})
