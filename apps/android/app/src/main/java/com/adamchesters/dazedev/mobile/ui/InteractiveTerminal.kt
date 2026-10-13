@@ -75,6 +75,7 @@ fun InteractiveTerminal(stream:TerminalStream,controller:TerminalController,onMe
                             "binary"->{val data=event.getString("value");if(!controller.ready || !stream.send(ByteArray(data.length){data[it].code.toByte()}))post {onMessage("Input was not sent. Reconnect the terminal.")}}
                             "scroll"->{if(!stream.scrollHistory(event.getInt("value")))post {onMessage("Reconnect the terminal before scrolling.")}}
                             "scrollBottom"->{if(!stream.scrollToBottom())post {onMessage("Reconnect the terminal before scrolling.")}}
+                            "openUrl"->post {BrowserLauncher.open(context,event.getString("value"))?.let(onMessage)}
                             "ack"->acknowledgements.remove(event.getLong("value"))?.complete(Unit)
                             "copy"->{val selected=event.getString("value");if(selected.toByteArray().size>250_000)post {onMessage("Selection is too large for the clipboard. Choose a smaller region.")} else if(selected.isNotEmpty())post {runCatching {(context.getSystemService(Context.CLIPBOARD_SERVICE) as ClipboardManager).setPrimaryClip(ClipData.newPlainText("Terminal selection",selected))}.onFailure {onMessage("Could not copy this selection.")}}}
                         }

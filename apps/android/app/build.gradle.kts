@@ -14,8 +14,8 @@ android {
         applicationId = "com.adamchesters.dazedev.mobile"
         minSdk = 28
         targetSdk = 36
-        versionCode = 6
-        versionName = "0.1.0-alpha.5"
+        versionCode = 7
+        versionName = "0.1.0-alpha.6"
 
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
     }
@@ -91,6 +91,7 @@ dependencies {
 
 val sharedHostAssets = tasks.register<Copy>("stageSharedHost") {
     from(rootProject.file("../desktop/src-tauri/resources/host.py"))
+    from(rootProject.file("../desktop/src-tauri/resources/browser.py"))
     into(layout.buildDirectory.dir("generated/dazedev/assets"))
 }
 android.sourceSets.getByName("main").assets.srcDir(layout.buildDirectory.dir("generated/dazedev/assets"))

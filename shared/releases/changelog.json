@@ -1,6 +1,13 @@
 [
   {
     "platform": "mobile",
+    "version": "0.1.0-alpha.6",
+    "date": "2026-10-13",
+    "channel": "development",
+    "notes": "Browser opening hotfix\n\n• Open web links from terminal output in the phone browser.\n• Forward browser requests from newly started remote agents and shells to Android.\n• Keep the mobile terminal scrollback fix from alpha.5.\n\nExisting agents started without browser forwarding need a restart to inherit it. Localhost callback forwarding remains unavailable."
+  },
+  {
+    "platform": "mobile",
     "version": "0.1.0-alpha.5",
     "date": "2026-10-13",
     "channel": "development",

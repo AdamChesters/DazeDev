@@ -117,7 +117,7 @@ fun HostWorkspaceScreen(state:DazeDevMobileUiState,padding:PaddingValues,viewMod
             TextButton(onClick={history=true}){Text("Changelog")}
             TextButton(onClick={
                 val assets=context.assets
-                val paths=listOf("moonshine-license.txt","xterm-license.txt","addon-fit-license.txt","addon-unicode11-license.txt") + assets.list("licenses").orEmpty().map {"licenses/$it"}
+                val paths=listOf("moonshine-license.txt","xterm-license.txt","addon-fit-license.txt","addon-unicode11-license.txt","addon-web-links-license.txt") + assets.list("licenses").orEmpty().map {"licenses/$it"}
                 notices=paths.joinToString("\n\n") {path->assets.open(path).bufferedReader().use {it.readText()}}
             }){Text("Licenses and credits")}
         }

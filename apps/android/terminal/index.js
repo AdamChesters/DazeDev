@@ -1,6 +1,7 @@
 import { Terminal } from "@xterm/xterm";
 import { FitAddon } from "@xterm/addon-fit";
 import { Unicode11Addon } from "@xterm/addon-unicode11";
+import { WebLinksAddon } from "@xterm/addon-web-links";
 import "@xterm/xterm/css/xterm.css";
 import "./terminal.css";
 import { installTouchScroll } from "./touch-scroll.js";
@@ -25,6 +26,7 @@ term.unicode.activeVersion = "11";
 term.open(document.getElementById("terminal"));
 const bridge = (kind, value) =>
   window.DazeBridge.event(JSON.stringify({ kind, value }));
+term.loadAddon(new WebLinksAddon((_event, url) => bridge("openUrl", url)));
 const mods = { Control: 0, Alt: 0, Shift: 0 };
 let ready = false,
   repeat = null,
