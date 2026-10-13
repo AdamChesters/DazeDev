@@ -324,8 +324,9 @@ def create_session(a):
         browser = BROWSER.environment()['command']
         BROWSER.launch(op)
         command = 'export BROWSER='+shlex.quote(browser)+'; export PATH='+shlex.quote(str(P(browser).parent))+':"$PATH"; export DAZEDEV_BROWSER_ENDPOINT='+shlex.quote(BROWSER.endpoint)+' DAZEDEV_BROWSER_LAUNCH='+shlex.quote(op)+'; '+command
-    # A completed agent returns to a shell; exiting that shell ends this tmux pane.
-    if agent != 'shell': command += '; exec "${SHELL:-/bin/sh}" -l'
+    # Ctrl-C reaches both the agent and its noninteractive launcher. Catch it
+    # in the launcher so the child exits normally into a usable login shell.
+    if agent != 'shell': command = 'trap : INT; '+command+'; exec "${SHELL:-/bin/sh}" -l'
     # Create a held shell, configure it, then start the agent without typing into its input.
     sid=tmux('new-session','-d','-P','-F','#{session_id}','-s',name,'-c',str(path),'sleep 86400')
     tmux('set-option','-t',sid,'@dazed-operation',op)
@@ -641,15 +642,18 @@ def terminal_status(a):
             if current in seen: continue
             seen.add(current);pending.extend(children.get(current,[]))
         return seen
-    seen=descend(pid); attached=False; session_id=None; stamp=None; session_name=None; agent=None
+    seen=descend(pid); attached=False; session_id=None; stamp=None; session_name=None; agent=None; pane_id=None; pane_dead=False
     if shutil.which('tmux'):
-        for line in tmux('list-clients','-F','#{client_pid}\t#{session_id}\t#{pane_pid}',check=False,timeout=3).splitlines():
+        for line in tmux('list-clients','-F','#{client_pid}\t#{session_id}\t#{pane_pid}\t#{pane_id}\t#{pane_dead}',check=False,timeout=3).splitlines():
             fields=line.split('\t')
-            if len(fields)==3 and fields[0].isdigit() and int(fields[0]) in seen:
+            if len(fields) in (3,5) and fields[0].isdigit() and int(fields[0]) in seen:
                 attached=True; session_id=fields[1]
+                if len(fields)==5:
+                    pane_id=fields[3] if re.fullmatch(r'%\d+',fields[3]) else None
+                    pane_dead=fields[4]=='1'
                 stamp=tmux('display-message','-p','-t',session_id,'#{pid}:#{start_time}:#{session_created}',check=False,timeout=3).strip() or None
                 session_name=tmux('display-message','-p','-t',session_id,'#{session_name}',check=False,timeout=3).strip() or None
-                if fields[2].isdigit():
+                if not pane_dead and fields[2].isdigit():
                     pane_processes=descend(int(fields[2]));seen.update(pane_processes)
                     # Only executable names from this pane determine its agent label.
                     agents={rows[p] for p in pane_processes if rows.get(p) in AGENTS}
@@ -666,7 +670,23 @@ def terminal_status(a):
         if len(leaves)==1:
             try: directory=os.readlink('/proc/%d/cwd' % leaves[0])
             except OSError: pass
-    return {'attachment':'tmux' if attached else 'plain','nestedSsh':False,'hostname':socket.gethostname(),'sessionId':session_id,'stamp':stamp,'sessionName':session_name,'agent':agent,'directory':directory}
+    return {'attachment':'tmux' if attached else 'plain','nestedSsh':False,'hostname':socket.gethostname(),'sessionId':session_id,'stamp':stamp,'sessionName':session_name,'agent':agent,'directory':directory,'paneId':pane_id,'paneDead':pane_dead}
+
+
+def terminal_recover(a):
+    sid=session_id(a['id'],a.get('stamp'))
+    pane=a.get('paneId','')
+    if not re.fullmatch(r'%\d+',str(pane)): raise ValueError('Invalid pane ID')
+    fields=tmux('display-message','-p','-t',pane,'#{session_id}\t#{pane_dead}').split('\t')
+    if len(fields)!=2 or fields[0]!=sid: raise RuntimeError('Pane belongs to a different session; refresh before recovery')
+    if fields[1]!='1': raise RuntimeError('Pane is not dead; its running process was left untouched')
+    directory=P(tmux('display-message','-p','-t',pane,'#{pane_current_path}',check=False) or tmux('display-message','-p','-t',pane,'#{pane_start_path}',check=False) or str(P.home())).expanduser()
+    if not directory.is_dir(): directory=P.home()
+    shell=os.environ.get('SHELL') or '/bin/sh'
+    if not shutil.which(shell): shell='/bin/sh'
+    # No -k: tmux itself refuses a live pane if it changed after our check.
+    tmux('respawn-pane','-t',pane,'-c',str(directory),'exec '+shlex.quote(shell)+' -l')
+    return {'sessionId':sid,'paneId':pane,'paneDead':False}
 
 # Values stay allowlisted: tmux formats and configuration files may execute commands.
 TMUX_SETTINGS = {
@@ -794,6 +814,7 @@ def dispatch(method,a):
     if method == 'browser_result':
         return BROWSER.complete(a) if BROWSER else False
     file_methods = {"upload_preflight":upload_preflight,"upload_begin":upload_begin,"upload_chunk":upload_chunk,"upload_finish":upload_finish,"upload_abort":upload_abort,"documents":documents,"file_read":file_read,"image_read":image_read,"document_read":document_read,"document_save":document_save,"terminal_status":terminal_status}
+    if method=='terminal_recover': return terminal_recover(a)
     if method=='tmux_settings_read': return tmux_settings_read(a)
     if method=='tmux_window_select': return tmux_window_select(a)
     if method=='tmux_settings_apply': return tmux_settings_apply(a)

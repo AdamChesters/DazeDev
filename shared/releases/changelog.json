@@ -1,5 +1,19 @@
 [
   {
+    "platform": "desktop",
+    "version": "0.3.7-alpha.0",
+    "date": "2026-10-13",
+    "channel": "development",
+    "notes": "Session exit and recovery\n\n• Return to a usable terminal when Ctrl+C ends an agent.\n• Show Open terminal and Close view when a tmux pane has ended, including after reconnecting.\n• Recover only the ended pane without restarting the agent or stopping live sessions.\n• Show the verified terminal type after an agent exits."
+  },
+  {
+    "platform": "desktop",
+    "version": "0.3.6-alpha.0",
+    "date": "2026-10-13",
+    "channel": "development",
+    "notes": "Terminal title hotfix\n\n• Update a plain SSH shell’s terminal name and session type when it enters tmux.\n• Follow tmux session renames and switches in main and detached windows.\n• Restore the shell label when leaving tmux."
+  },
+  {
     "platform": "mobile",
     "version": "0.1.0-alpha.6",
     "date": "2026-10-13",

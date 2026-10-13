@@ -32,6 +32,7 @@
   } from '../lib/terminals';
   import '@xterm/xterm/css/xterm.css';
   import { unknownStatus, type PaneStatus } from '../lib/pane-status';
+  import { deadPaneTarget, recoverDeadPane } from '../lib/terminal-recovery';
   import { call, on, desktop, rpc } from '../lib/bridge';
   import type { Pane, Host } from '../lib/types';
   let {
@@ -57,6 +58,7 @@
     floating = false,
     onoutput = () => {},
     onterminalfocus = () => false,
+    oncloseview = () => {},
   }: {
     onfile?: (path: string) => void;
     onsearch?: () => void;
@@ -64,6 +66,7 @@
     floating?: boolean;
     onoutput?: (value: { sequence: number; generation: number; data: string }) => void;
     onterminalfocus?: () => boolean;
+    oncloseview?: () => void;
     theme: 'blue' | 'charcoal' | 'green';
     pane: Pane;
     host: Host | undefined;
@@ -97,6 +100,48 @@
   let opened = false;
   let detached = $state(false);
   let reconnecting = $state(false);
+  let observedStatus = $state<PaneStatus>(unknownStatus);
+  let recoveryBusy = $state(false);
+  let recoveryError = $state('');
+  let recoveryPending: Promise<void> | undefined;
+  let recoveryEpoch = 0;
+  const endedTarget = $derived(deadPaneTarget(observedStatus));
+  function metadata(value: PaneStatus) {
+    const wasEnded = observedStatus.paneDead;
+    observedStatus = value;
+    onmetadata(value);
+    if (value.paneDead && !recoveryBusy) onstate('Session ended');
+    else if (wasEnded && !value.paneDead && value.attachment !== 'unknown') {
+      recoveryError = '';
+      onstate(pane.shell ? 'Shell' : 'Attached');
+    }
+  }
+  function recover(): Promise<void> {
+    if (recoveryPending) return recoveryPending;
+    const target = observedStatus;
+    const current = generation;
+    recoveryBusy = true; recoveryError = ''; recoveryEpoch++;
+    onstate('Opening terminal…');
+    recoveryPending = (async () => {
+      try {
+        await recoverDeadPane(target, (args) => rpc(pane.hostId, 'terminal_recover', args));
+        if (dead || current !== generation) return;
+        const value = await rpc<PaneStatus>(pane.hostId, 'terminal_status', { pid: remotePid });
+        if (dead || current !== generation) return;
+        if (value.paneDead) throw Error('The terminal is still ended. Try Open terminal again.');
+        if (value.paneDead !== false || value.sessionId !== target.sessionId || value.paneId !== target.paneId)
+          throw Error('Session changed. Wait for current terminal status before opening it.');
+        metadata(value);
+      } catch (error) {
+        if (!dead && current === generation) {
+          recoveryError = String(error);
+          onstate('Could not open terminal. ' + recoveryError);
+        }
+        throw error;
+      } finally { recoveryBusy = false; recoveryPending = undefined; }
+    })();
+    return recoveryPending;
+  }
   let retainedOutput = $state('');
   let retainedView = $state<HTMLDivElement>();
   function outputText() {
@@ -183,7 +228,7 @@
     detached = true;
     reconnecting = false;
     onstate(reason);
-    onmetadata(unknownStatus);
+    metadata(unknownStatus);
     ondisconnect();
     clearTimeout(reconnectTimer);
     if (!suspended && retries < 3)
@@ -468,13 +513,15 @@
     let statusTimer: ReturnType<typeof setTimeout>;
     async function pollStatus() {
       const current = generation;
+      const epoch = recoveryEpoch;
       try {
         if (opened && remoteReady && connected && (visible || floating)) {
           const value = await rpc<PaneStatus>(pane.hostId, 'terminal_status', { pid: remotePid });
-          if (!disposed && current === generation) onmetadata(value);
-        } else if (!opened || !connected) onmetadata(unknownStatus);
+          if (!disposed && current === generation && epoch === recoveryEpoch &&
+              !(observedStatus.paneDead && value.attachment === 'unknown')) metadata(value);
+        } else if (!opened || !connected) metadata(unknownStatus);
       } catch {
-        if (!disposed && current === generation) onmetadata(unknownStatus);
+        if (!disposed && current === generation && epoch === recoveryEpoch && !recoveryBusy && !observedStatus.paneDead) metadata(unknownStatus);
       } finally {
         if (!disposed) statusTimer = setTimeout(pollStatus, 2500);
       }
@@ -723,6 +770,7 @@
     const searchOutput = term.onWriteParsed(() => notifySearchUpdate(pane.id));
     disposers.push(() => searchOutput.dispose());
     terminals.set(pane.id, {
+      recover,
       focus: () => {
         if (!onterminalfocus()) term.focus();
       },
@@ -934,6 +982,13 @@
       }
     }}
   ></div>
+  {#if endedTarget && !detached}<div class="ended-banner" aria-label="Session ended">
+      <p role="status">Session ended. Open a new terminal here to continue.</p>
+      {#if recoveryError}<p role="alert">{recoveryError}</p>{/if}
+      <button disabled={recoveryBusy} onclick={() => void recover().catch(() => {})}
+        >{recoveryBusy ? 'Opening terminal…' : 'Open terminal'}</button>
+      <button disabled={recoveryBusy} onclick={oncloseview}>Close view</button>
+    </div>{/if}
   {#if detached}
     <div
       class="retained-output"
@@ -1037,6 +1092,19 @@
     text-overflow: ellipsis;
     z-index: 3;
   }
+  .ended-banner {
+    position: absolute;
+    bottom: 0;
+    left: 0;
+    right: 0;
+    padding: 8px;
+    background: var(--surface, #20252a);
+    color: var(--text, #eceeef);
+    border-top: 1px solid #bd8882;
+    z-index: 4;
+  }
+  .ended-banner p { margin: 0 0 6px; }
+  .ended-banner button { margin-right: 6px; }
   .disconnect-banner:disabled {
     opacity: 1;
     cursor: wait;

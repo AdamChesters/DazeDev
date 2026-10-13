@@ -15,6 +15,7 @@ export interface TerminalControls {
   }>;
   disconnect?(): Promise<void>;
   resume?(): void;
+  recover?(): Promise<void>;
   pasteClipboard?(): Promise<void>;
   paste(text: string, enter?: boolean, expectedContext?: string): Promise<void>;
   pasteBroadcast?(text: string, expectedContext: string): Promise<void>;

@@ -1,4 +1,6 @@
 export interface PaneStatus {
+  paneId?: string;
+  paneDead?: boolean;
   directory?: string;
   sessionId?: string;
   stamp?: string;
@@ -19,7 +21,7 @@ export function hostLabel(connection: string, status?: PaneStatus): string {
 }
 
 export function terminalPresentation(
-  pane: { name: string; agent: string; model: string; shell?: boolean },
+  pane: { name: string; agent: string; model: string; shell?: boolean; sessionId?: string },
   status?: PaneStatus,
 ) {
   if (pane.shell && status?.attachment === 'tmux' && !status.nestedSsh) {
@@ -29,6 +31,10 @@ export function terminalPresentation(
       type: agent && ['codex', 'claude', 'gemini', 'opencode'].includes(agent) ? agent : 'tmux',
       model: '',
     };
+  }
+  if (!pane.shell && pane.sessionId && status?.attachment === 'tmux' && !status.nestedSsh &&
+      status.sessionId === pane.sessionId && status.paneDead === false && status.agent === 'shell') {
+    return { name: pane.name, type: 'tmux', model: '' };
   }
   return { name: pane.name, type: pane.agent, model: pane.model };
 }
