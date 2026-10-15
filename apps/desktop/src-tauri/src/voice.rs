@@ -240,6 +240,26 @@ fn stop_child(child: &SharedChild) {
         let _ = process.wait();
     }
 }
+/// A cleanup failure. `keep` is true when the runtime answered normally and can
+/// serve the next dictation, so it stays loaded.
+struct CleanupError {
+    message: String,
+    keep: bool,
+}
+impl CleanupError {
+    fn reload(message: impl ToString) -> Self {
+        Self {
+            message: message.to_string(),
+            keep: false,
+        }
+    }
+    fn keep(message: &str) -> Self {
+        Self {
+            message: message.into(),
+            keep: true,
+        }
+    }
+}
 impl Cleanup {
     fn start(exe: &Path, model: &Path, child_slot: SharedChild) -> Result<Self, String> {
         if !exe.exists() {
@@ -316,8 +336,13 @@ impl Cleanup {
         }
         Err("Cleanup model load timed out".into())
     }
-    fn clean(&self, text: &str, progress: impl Fn(usize, usize, usize)) -> Result<String, String> {
-        let client = crate::local_http::client(Duration::from_secs(90))?;
+    fn clean(
+        &self,
+        text: &str,
+        progress: impl Fn(usize, usize, usize),
+    ) -> Result<String, CleanupError> {
+        let client =
+            crate::local_http::client(Duration::from_secs(90)).map_err(CleanupError::reload)?;
         let mut out = Vec::new();
         let mut chunks = Vec::new();
         let mut current = String::new();
@@ -339,25 +364,25 @@ impl Cleanup {
             progress(index + 1, total, 0);
             let response = client.post(format!("{}/v1/chat/completions", self.url))
                 .bearer_auth(&self.key).json(&json!({"messages":[{"role":"system","content":crate::transcript::CLEANUP_SYSTEM},{"role":"user","content":format!("{}\n{chunk}", crate::transcript::CLEANUP_CONTROL)}],"temperature":0,"max_tokens":1600,"stream":true,"chat_template_kwargs":{"enable_thinking":false}}))
-                .send().and_then(|r| r.error_for_status()).map_err(|e| e.to_string())?;
+                .send().and_then(|r| r.error_for_status()).map_err(CleanupError::reload)?;
             let mut text = String::new();
             let mut complete = false;
             let mut last_progress = Instant::now();
             for line in BufReader::new(response).lines() {
-                let line = line.map_err(|e| e.to_string())?;
+                let line = line.map_err(CleanupError::reload)?;
                 let Some(data) = line.strip_prefix("data: ") else {
                     continue;
                 };
                 if data == "[DONE]" {
                     break;
                 }
-                let value: Value = serde_json::from_str(data).map_err(|e| e.to_string())?;
+                let value: Value = serde_json::from_str(data).map_err(CleanupError::reload)?;
                 if value.get("error").is_some() {
-                    return Err("Cleanup runtime reported an error".into());
+                    return Err(CleanupError::keep("the tidy-up model reported an error."));
                 }
                 let choice = &value["choices"][0];
                 if choice["finish_reason"] == "length" {
-                    return Err("Cleanup was truncated; original retained".into());
+                    return Err(CleanupError::keep("the tidy-up was cut short."));
                 }
                 if choice["finish_reason"] == "stop" {
                     complete = true;
@@ -371,11 +396,13 @@ impl Cleanup {
                 }
             }
             if !complete || text.trim().is_empty() {
-                return Err("Incomplete cleanup response; original retained".into());
+                return Err(CleanupError::keep("the tidy-up reply was incomplete."));
             }
             progress(index + 1, total, text.split_whitespace().count());
             if !crate::transcript::preserves_literals(&chunk, &text) {
-                return Err("Tidy-up changed a technical literal or negation; original retained for review.".into());
+                return Err(CleanupError::keep(
+                    "the tidy-up changed a number, name or \"not\".",
+                ));
             }
             out.push(text.trim().to_string());
         }
@@ -885,21 +912,25 @@ fn worker(
                     );
                     let result = (|| {
                         if cached_cleanup.is_none() {
-                            cached_cleanup = Some(Cleanup::start(
-                                &cleanup_exe,
-                                &model_path(&dir, "s1-mini")?,
-                                child.clone(),
-                            )?);
+                            cached_cleanup = Some(
+                                Cleanup::start(
+                                    &cleanup_exe,
+                                    &model_path(&dir, "s1-mini").map_err(CleanupError::reload)?,
+                                    child.clone(),
+                                )
+                                .map_err(CleanupError::reload)?,
+                            );
                             load_ms = cleanup_started.elapsed().as_millis();
                         }
                         cached_cleanup.as_ref().unwrap().clean(&committed, |part, total, words| {
                             sink("voice-phase", json!({"recording":recording_id,"phase":"cleanup","part":part,"total":total,"words":words}));
                         })
                     })();
-                    if result.is_err() || !retain_cleanup {
+                    // A rejected tidy-up is not a runtime fault; keep the model ready.
+                    if !retain_cleanup || result.as_ref().is_err_and(|e| !e.keep) {
                         cached_cleanup = None;
                     }
-                    result
+                    result.map_err(|e| e.message)
                 } else {
                     Ok(committed.clone())
                 };
@@ -920,12 +951,14 @@ fn worker(
                     Err(e) => emit_voice(
                         &sink,
                         &recording_id,
-                        json!({"text":committed,"raw":committed,"final":true,"error":format!("Cleanup failed; original preserved: {e}")}),
+                        json!({"text":committed,"raw":committed,"final":true,"error":format!("Tidy-up failed: {e} Your original words are kept.")}),
                     ),
                 }
             }
             Message::Cancel => {
-                cached_cleanup = None;
+                if !retain_cleanup {
+                    cached_cleanup = None;
+                }
                 enabled = false;
                 busy.store(false, Ordering::Release);
                 carry.clear();

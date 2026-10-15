@@ -1,6 +1,13 @@
 [
   {
     "platform": "desktop",
+    "version": "0.3.9-alpha.0",
+    "date": "2026-10-15",
+    "channel": "development",
+    "notes": "Dictation recovery\n\n• Stop rejecting tidy-ups that remove repeated words, apply spoken corrections such as “no wait, make that five”, or reformat numbers such as 40,000 or $12.\n• Load the transcription and tidy-up models when DazeDev starts, and keep them loaded after a failed tidy-up.\n• Show unsent dictation in a red banner with Send anyway, Copy and Discard.\n• Let the dictation hotkey start a new recording while text is held."
+  },
+  {
+    "platform": "desktop",
     "version": "0.3.8-alpha.0",
     "date": "2026-10-13",
     "channel": "development",

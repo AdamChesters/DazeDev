@@ -1386,21 +1386,47 @@ button.primary:hover:not(:disabled) {
   width: 100%;
   accent-color: var(--accent);
 }
-.transcript-review {
-  display: block;
-  width: 100%;
-  height: min(55vh, 560px);
-  min-height: 140px;
-  resize: vertical;
-  margin-bottom: 12px;
-  padding: 12px;
-  background: #0b0d12;
-  color: #e5e7eb;
-  font-family: var(--font-mono, monospace);
+.held-dictation {
+  flex-shrink: 0;
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  padding: 10px 16px;
+  background: #ff5b4f;
+  color: #1c0503;
   font-size: 14px;
-  line-height: 1.5;
-  white-space: pre-wrap;
-  overflow-wrap: anywhere;
+}
+.held-dictation p {
+  flex: 1;
+  min-width: 0;
+  margin: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.held-preview {
+  margin-left: 6px;
+  opacity: 0.8;
+}
+.held-actions {
+  display: flex;
+  flex-shrink: 0;
+  gap: 8px;
+}
+.held-actions button {
+  padding: 6px 12px;
+  border: 1px solid #1c0503;
+  border-radius: 6px;
+  background: transparent;
+  color: #1c0503;
+  font-weight: 600;
+}
+.held-actions .held-send {
+  background: #1c0503;
+  color: #fff3f2;
+}
+.held-actions button:disabled {
+  opacity: 0.5;
 }
 .recording-highlight {
   border-color: #39bdd7;

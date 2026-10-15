@@ -214,6 +214,11 @@
     githubRepos = $state<{ full_name: string; description: string }[]>([]),
     branch = $state(''),
     destination = $state('');
+  // Dictation that could not be tidied or delivered. It stays here until the
+  // user sends, copies or discards it; new recordings are never blocked by it.
+  let heldDictation = $state<{ text: string; raw: string; target: string; error: string } | null>(
+    null,
+  );
   let dictation = $state(''),
     raw = $state(''),
     voiceStatus = $state('idle'),
@@ -768,7 +773,8 @@
   async function configureVoiceCache() {
     if (!desktop || voiceStatus !== 'idle') return;
     if (voiceCacheTask) return voiceCacheTask;
-    const retain = device.voice.keepLoaded ?? null;
+    // Preload by default so the first dictation does not wait for model loads.
+    const retain = device.voice.keepLoaded ?? true;
     const installed = (id: string) => models.some((m) => m.id === id && m.installed);
     if (retain && (!installed(device.voice.model) || !installed('silero'))) return;
     const options = {
@@ -1484,52 +1490,29 @@
         }),
       });
     if (recentDictation?.target === p.id)
+      items.push({
+        id: 'copy-last',
+        label: 'Copy last dictation',
+        run: close(() => {
+          void navigator.clipboard.writeText(recentDictation!.text).catch(fail);
+        }),
+      });
+    if (heldDictation?.target === p.id)
       items.push(
         {
-          id: 'copy-last',
-          label: 'Copy last dictation',
-          run: close(() => {
-            void navigator.clipboard.writeText(recentDictation!.text).catch(fail);
-          }),
+          id: 'send-held',
+          label: 'Send held dictation',
+          run: close(() => void task(sendHeldDictation)),
         },
         {
-          id: 'copy-original',
-          label: 'Copy original dictation',
-          run: close(() => {
-            void navigator.clipboard.writeText(recentDictation!.raw).catch(fail);
-          }),
-        },
-      );
-    if (dictation && voiceStatus === 'idle')
-      items.push(
-        {
-          id: 'review-undelivered',
-          label: 'Review undelivered dictation',
-          run: close(() => {
-            modal = 'transcript';
-          }),
+          id: 'copy-held',
+          label: 'Copy held dictation',
+          run: close(copyHeldDictation),
         },
         {
-          id: 'copy-undelivered',
-          label: 'Copy undelivered dictation',
-          run: close(() => {
-            void navigator.clipboard.writeText(dictation).catch(fail);
-          }),
-        },
-        {
-          id: 'copy-original-undelivered',
-          label: 'Copy original undelivered dictation',
-          run: close(() => {
-            void navigator.clipboard.writeText(raw).catch(fail);
-          }),
-        },
-        {
-          id: 'discard-undelivered',
-          label: 'Discard undelivered dictation',
-          run: close(() => {
-            dictation = '';
-            raw = '';
-          }),
+          id: 'discard-held',
+          label: 'Discard held dictation',
+          run: close(() => (heldDictation = null)),
         },
       );
     items.push({ id: 'transfer', label: 'Move or duplicate to workspace', kind: 'transfer' });
@@ -2858,6 +2841,37 @@
     dictation = '';
     raw = '';
   }
+  function holdDictation(e: unknown) {
+    const message = e instanceof Error ? e.message : String(e);
+    if (dictation.trim())
+      heldDictation = {
+        text: dictation,
+        raw: raw || dictation,
+        target: voiceTarget,
+        error: message,
+      };
+    else error = message;
+    dictation = '';
+    raw = '';
+  }
+  async function sendHeldDictation() {
+    const held = heldDictation;
+    if (!held || voiceStatus !== 'idle') return;
+    heldDictation = null;
+    voiceMode = 'dictation';
+    voiceTarget = held.target;
+    finishWithoutSubmit = false;
+    dictation = held.text;
+    raw = held.raw;
+    try {
+      await submitText();
+    } catch (e) {
+      holdDictation(e);
+    }
+  }
+  function copyHeldDictation() {
+    if (heldDictation) void navigator.clipboard.writeText(heldDictation.text).catch(fail);
+  }
   async function record(mode: CaptureMode, target = activePane?.id || '') {
     if (!appHasFocus()) return;
     reviewHotkey.cancel();
@@ -2886,10 +2900,6 @@
     }
     if (voiceStatus !== 'idle' || switchingVoice || filesLocked) return;
     if (mode === 'dictation' && !target) throw new Error('Select a terminal first.');
-    if (dictation.trim())
-      throw new Error(
-        'Right-click a terminal title bar to review or discard undelivered dictation before recording again.',
-      );
     voiceMode = mode;
     finishWithoutSubmit = false;
     voiceTarget = mode === 'dictation' ? target : '';
@@ -3156,8 +3166,8 @@
   }
   async function installUpdate() {
     if (!availableUpdate || updateBusy) return;
-    if (voiceStatus !== 'idle' || dictation.trim())
-      throw new Error('Finish dictation and copy or discard retained text before updating.');
+    if (voiceStatus !== 'idle' || dictation.trim() || heldDictation)
+      throw new Error('Finish dictation and send, copy or discard held text before updating.');
     updateBusy = true;
     updateState = 'installing';
     updateProgress = 0;
@@ -3166,7 +3176,7 @@
       await call('update_download', { version: availableUpdate.version });
       clearTimeout(deviceTimer);
       await call('device_save', { value: { ...$state.snapshot(device), recovery } });
-      if (voiceStatus !== 'idle' || dictation.trim())
+      if (voiceStatus !== 'idle' || dictation.trim() || heldDictation)
         throw new Error(
           'Finish dictation before restarting to install. The downloaded update is retained.',
         );
@@ -3352,8 +3362,9 @@
                 recordingTail.cancel();
                 recordingId = '';
                 voiceStatus = 'idle';
-                error = v.error;
-                if (voiceMode !== 'dictation') {
+                if (voiceMode === 'dictation') holdDictation(v.error);
+                else {
+                  error = v.error;
                   dictation = '';
                   raw = '';
                 }
@@ -3378,6 +3389,8 @@
                   void task(async () => {
                     try {
                       await submitText();
+                    } catch (e) {
+                      holdDictation(e);
                     } finally {
                       if (recordingId === v.recording) voiceStatus = 'idle';
                     }
@@ -3761,6 +3774,24 @@
       >
     </div>
   </header>
+  {#if heldDictation}
+    <section class="held-dictation" role="alert" aria-label="Dictation not sent">
+      <p>
+        <strong>Dictation not sent.</strong>
+        {heldDictation.error}
+        <span class="held-preview">“{heldDictation.text}”</span>
+      </p>
+      <div class="held-actions">
+        <button
+          class="held-send"
+          disabled={voiceStatus !== 'idle'}
+          onclick={() => void task(sendHeldDictation)}>Send anyway</button
+        ><button onclick={copyHeldDictation}>Copy</button><button
+          onclick={() => (heldDictation = null)}>Discard</button
+        >
+      </div>
+    </section>
+  {/if}
   <div class="body">
     {#if device.sidebar}<aside class="sidebar" style:width={`${device.sidebarWidth || 238}px`}>
         <button
@@ -4560,7 +4591,6 @@
         'repos',
         'pane-repo',
         'new-session',
-        'transcript',
         'documents',
         'upload',
       ].includes(modal)}
@@ -4756,33 +4786,6 @@
           onsubmit={() => void sendFeedback()}
           onclose={() => (modal = '')}
         />
-      {:else if modal === 'transcript'}
-        <p class="hint">
-          Check the terminal before pasting again; some text may already have arrived.
-        </p>
-        <textarea
-          class="transcript-review"
-          aria-label="Full transcription"
-          readonly
-          value={dictation}
-          spellcheck="false"></textarea>
-        <div class="form-row">
-          <button onclick={() => void navigator.clipboard.writeText(dictation).catch(fail)}
-            >Copy dictation</button
-          >
-          <button onclick={() => void navigator.clipboard.writeText(raw).catch(fail)}
-            >Copy original</button
-          >
-          <button
-            class="danger"
-            onclick={() => {
-              dictation = '';
-              raw = '';
-              modal = '';
-            }}>Discard</button
-          >
-          <button onclick={() => (modal = '')}>Close</button>
-        </div>
       {:else if modal === 'repo-collision'}
         <p>
           Another agent is using this working copy. Concurrent edits can conflict. Separate
@@ -5884,21 +5887,13 @@
                   /> S1-mini tidy-up</label
                 ><label
                   >Voice model memory<select
-                    value={device.voice.keepLoaded === undefined
-                      ? 'legacy'
-                      : device.voice.keepLoaded
-                        ? 'ready'
-                        : 'release'}
+                    value={device.voice.keepLoaded === false ? 'release' : 'ready'}
                     disabled={voiceStatus !== 'idle' || switchingVoice || voiceCacheLoading}
                     onchange={(e) => {
-                      device.voice.keepLoaded =
-                        e.currentTarget.value === 'legacy'
-                          ? undefined
-                          : e.currentTarget.value === 'ready';
+                      device.voice.keepLoaded = e.currentTarget.value === 'ready';
                       void changeVoiceModel();
                     }}
                   >
-                    <option value="legacy">Load on first recording (current behavior)</option>
                     <option value="ready">Preload and keep all voice models ready</option>
                     <option value="release">Release models after each recording</option>
                   </select></label
