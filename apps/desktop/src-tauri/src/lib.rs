@@ -32,3 +32,5 @@ pub mod pin;
 pub mod browser;
 
 pub mod local_sessions;
+
+pub mod sync;

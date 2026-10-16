@@ -1,3 +1,4 @@
+use crate::sync::LockExt;
 use crate::{
     transport::{EventSink, Host, Transport},
     voice::{self, Voice},
@@ -292,7 +293,7 @@ async fn model_download(
 ) -> Result<(), String> {
     let cancelled = Arc::new(std::sync::atomic::AtomicBool::new(false));
     {
-        let mut downloads = state.downloads.lock().unwrap();
+        let mut downloads = state.downloads.locked();
         if downloads.contains_key(&id) {
             return Err("This model is already downloading".into());
         }
@@ -305,12 +306,12 @@ async fn model_download(
     })
     .await
     .map_err(|e| e.to_string());
-    state.downloads.lock().unwrap().remove(&id);
+    state.downloads.locked().remove(&id);
     result?
 }
 #[tauri::command]
 fn model_cancel(id: String, state: State<'_, AppState>) {
-    if let Some(flag) = state.downloads.lock().unwrap().get(&id) {
+    if let Some(flag) = state.downloads.locked().get(&id) {
         flag.store(true, std::sync::atomic::Ordering::Release);
     }
 }
@@ -428,7 +429,7 @@ async fn update_check(
         tauri::async_runtime::spawn_blocking(|| crate::updates::check(env!("CARGO_PKG_VERSION")))
             .await
             .map_err(|e| e.to_string())??;
-    *state.update_release.lock().unwrap() = release.clone();
+    *state.update_release.locked() = release.clone();
     Ok(release)
 }
 #[tauri::command]
@@ -460,7 +461,7 @@ async fn update_download(
         })
         .await
         .map_err(|e| e.to_string())??;
-        *state.update_stage.lock().unwrap() = Some(stage);
+        *state.update_stage.locked() = Some(stage);
         Ok(())
     }
     .await;
@@ -469,7 +470,7 @@ async fn update_download(
 }
 #[tauri::command]
 fn update_install(state: State<'_, AppState>, app: tauri::AppHandle) -> Result<(), String> {
-    if !state.downloads.lock().unwrap().is_empty() {
+    if !state.downloads.locked().is_empty() {
         return Err("Wait for voice model downloads to finish before updating".into());
     }
     let stage = state

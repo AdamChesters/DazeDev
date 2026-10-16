@@ -1,5 +1,6 @@
 //! One offline worker shared by all panes; audio and finalization use one FIFO.
 use crate::audio_queue::{AudioBudget, AudioFrame};
+use crate::sync::LockExt;
 use crate::transport::EventSink;
 use ort::{session::Session as OrtSession, value::Tensor};
 use serde::{Deserialize, Serialize};
@@ -69,7 +70,8 @@ pub fn download_cancellable(
         .find(|m| m.id == id)
         .ok_or("Unknown model")?;
     fs::create_dir_all(dir).map_err(|e| e.to_string())?;
-    if crate::platform::available_space(dir).map_err(|e| e.to_string())? < m.size + 64 * 1024 * 1024 {
+    if crate::platform::available_space(dir).map_err(|e| e.to_string())? < m.size + 64 * 1024 * 1024
+    {
         return Err("Not enough free space for this model and its download staging file.".into());
     }
     let tmp = dir.join(format!("{}.{}.part", m.file, uuid::Uuid::new_v4()));
@@ -235,7 +237,7 @@ impl Drop for Cleanup {
     }
 }
 fn stop_child(child: &SharedChild) {
-    if let Some(mut process) = child.lock().unwrap().take() {
+    if let Some(mut process) = child.locked().take() {
         let _ = process.kill();
         let _ = process.wait();
     }
@@ -302,7 +304,7 @@ impl Cleanup {
             cmd.creation_flags(0x08000000);
         }
         let child = cmd.spawn().map_err(|e| e.to_string())?;
-        *child_slot.lock().unwrap() = Some(child);
+        *child_slot.locked() = Some(child);
         let service = Self {
             child: child_slot,
             url: format!("http://127.0.0.1:{port}"),
@@ -585,7 +587,7 @@ impl Voice {
         let _ = self.tx.send(Message::Shutdown);
         // Native backend globals must outlive the inference thread and model destructors.
         // In particular libc++ tears its mutexes down at process exit on macOS.
-        let worker = self.worker.lock().unwrap().take();
+        let worker = self.worker.locked().take();
         if let Some(worker) = worker {
             let _ = worker.join();
         }
@@ -981,7 +983,7 @@ fn worker(
                 let mut profile = hardware_profile();
                 profile["loadedModel"] = json!(loaded);
                 profile["pendingSamples"] = json!(budget.pending());
-                profile["cleanupRunning"] = json!(child.lock().unwrap().is_some());
+                profile["cleanupRunning"] = json!(child.locked().is_some());
                 let _ = ack.send(profile);
             }
             Message::Shutdown => break,

@@ -7,6 +7,7 @@ pub(crate) mod ipc;
 use portable_pty::ChildKiller;
 #[cfg(windows)]
 mod job;
+use crate::sync::LockExt;
 use base64::{engine::general_purpose::STANDARD, Engine};
 use portable_pty::{native_pty_system, CommandBuilder, MasterPty, PtySize};
 use serde_json::{json, Value};
@@ -71,7 +72,7 @@ struct Session {
 }
 impl Session {
     fn descriptor(&self) -> Value {
-        let mut v = self.info.lock().unwrap().clone();
+        let mut v = self.info.locked().clone();
         v["running"] = json!(self.alive.load(Ordering::Acquire));
         v["attached"] = json!(self
             .viewers
@@ -161,7 +162,7 @@ impl Server {
             .get(id)
             .cloned()
             .ok_or(SESSION_UNAVAILABLE)?;
-        let info = s.info.lock().unwrap();
+        let info = s.info.locked();
         if info["hostId"] != host {
             return Err("Session belongs to another local host".into());
         }
@@ -179,7 +180,7 @@ impl Server {
             .lock()
             .unwrap()
             .values()
-            .filter(|s| s.info.lock().unwrap()["hostId"] == host)
+            .filter(|s| s.info.locked()["hostId"] == host)
             .map(|s| s.descriptor())
             .collect::<Vec<_>>())
     }
@@ -189,9 +190,9 @@ impl Server {
             return Err("Use up to 80 letters, numbers, underscores or hyphens".into());
         }
         let operation = required(a, "operation")?;
-        let mut sessions = self.sessions.lock().unwrap();
+        let mut sessions = self.sessions.locked();
         if let Some(s) = sessions.values().find(|s| {
-            let i = s.info.lock().unwrap();
+            let i = s.info.locked();
             i["hostId"] == host && i["operation"] == operation
         }) {
             return Ok(s.descriptor());
@@ -202,7 +203,7 @@ impl Server {
             );
         }
         if sessions.values().any(|s| {
-            let i = s.info.lock().unwrap();
+            let i = s.info.locked();
             i["hostId"] == host && i["name"] == name
         }) {
             return Err("A session with that name already exists".into());
@@ -308,12 +309,12 @@ impl Server {
                     break;
                 }
                 let (bytes, count) = queries.filter(&bytes[..n]);
-                let mut o = reading.output.lock().unwrap();
+                let mut o = reading.output.locked();
                 o.parser.process(&bytes);
                 if count > 0 {
                     let (row, column) = o.parser.screen().cursor_position();
                     let reply = format!("\x1b[{};{}R", row + 1, column + 1);
-                    let mut writer = reading.writer.lock().unwrap();
+                    let mut writer = reading.writer.locked();
                     for _ in 0..count {
                         let _ = writer.write_all(reply.as_bytes());
                     }
@@ -353,16 +354,16 @@ impl Server {
                 if !valid_name(n) {
                     return Err("Invalid session name".into());
                 }
-                let sessions = self.sessions.lock().unwrap();
+                let sessions = self.sessions.locked();
                 if sessions.values().any(|s| {
-                    let info = s.info.lock().unwrap();
+                    let info = s.info.locked();
                     info["hostId"] == host && info["name"] == n && info["id"] != a["id"]
                 }) {
                     return Err("A session with that name already exists".into());
                 }
                 drop(sessions);
                 let s = self.session(host, a)?;
-                s.info.lock().unwrap()["name"] = json!(n);
+                s.info.locked()["name"] = json!(n);
                 Ok(self.list(host))
             }
             "destroy" => {
@@ -374,10 +375,10 @@ impl Server {
                     Err(error) => return Err(error),
                 };
                 s.stop()?;
-                self.sessions.lock().unwrap().remove(required(a, "id")?);
+                self.sessions.locked().remove(required(a, "id")?);
                 Ok(self.list(host))
             }
-            "session_agent" => Ok(self.session(host, a)?.info.lock().unwrap()["agent"].clone()),
+            "session_agent" => Ok(self.session(host, a)?.info.locked()["agent"].clone()),
             "keep" => {
                 let s = self.session(host, a)?;
                 s.keep.store(true, Ordering::Release);
@@ -387,11 +388,11 @@ impl Server {
                 let s = self.session(host, a)?;
                 {
                     let viewer = required(a, "viewer")?;
-                    let mut views = s.viewers.lock().unwrap();
+                    let mut views = s.viewers.locked();
                     views.remove(viewer);
                     views.remove(&format!("ack:{viewer}"));
                 }
-                if !s.keep.load(Ordering::Acquire) && s.viewers.lock().unwrap().is_empty() {
+                if !s.keep.load(Ordering::Acquire) && s.viewers.locked().is_empty() {
                     s.stop()?
                 }
                 Ok(Value::Null)
@@ -400,13 +401,13 @@ impl Server {
                 let s = self.session(host, a)?;
                 let viewer = required(a, "viewer")?;
                 {
-                    let mut views = s.viewers.lock().unwrap();
+                    let mut views = s.viewers.locked();
                     if views.len() >= 32 && !views.contains_key(viewer) {
                         return Err("Too many attached views".into());
                     }
                     views.insert(viewer.into(), Instant::now());
                 }
-                let o = s.output.lock().unwrap();
+                let o = s.output.locked();
                 let since = a["since"].as_u64();
                 let reset = since.is_none()
                     || since.is_some_and(|n| {
@@ -422,7 +423,7 @@ impl Server {
                         .collect()
                 };
                 Ok(
-                    json!({"data":STANDARD.encode(bytes),"seq":o.seq,"reset":reset,"running":s.alive.load(Ordering::Acquire),"pid":s.info.lock().unwrap()["pid"]}),
+                    json!({"data":STANDARD.encode(bytes),"seq":o.seq,"reset":reset,"running":s.alive.load(Ordering::Acquire),"pid":s.info.locked()["pid"]}),
                 )
             }
             "view_attach_ack" => {
@@ -454,7 +455,7 @@ impl Server {
                 if bytes.len() > 65536 {
                     return Err("Input too large".into());
                 }
-                let mut w = s.writer.lock().unwrap();
+                let mut w = s.writer.locked();
                 w.write_all(&bytes)
                     .and_then(|_| w.flush())
                     .map_err(|e| e.to_string())?;
@@ -484,7 +485,7 @@ impl Server {
             }
             "session_context" => {
                 let s = self.session(host, a)?;
-                let i = s.info.lock().unwrap();
+                let i = s.info.locked();
                 Ok(json!(format!(
                     "{}:native:native:{}:powershell:0",
                     i["id"].as_str().unwrap_or(""),
@@ -493,9 +494,9 @@ impl Server {
             }
             "terminal_status" => {
                 let pid = a["pid"].as_u64();
-                let sessions = self.sessions.lock().unwrap();
+                let sessions = self.sessions.locked();
                 let s = sessions.values().find(|s| {
-                    let i = s.info.lock().unwrap();
+                    let i = s.info.locked();
                     i["hostId"] == host && i["pid"].as_u64() == pid
                 });
                 Ok(
@@ -527,8 +528,8 @@ pub fn serve(root: &Path) -> Result<(), String> {
     let reap = server.clone();
     std::thread::spawn(move || loop {
         std::thread::sleep(Duration::from_secs(2));
-        for s in reap.sessions.lock().unwrap().values() {
-            let mut v = s.viewers.lock().unwrap();
+        for s in reap.sessions.locked().values() {
+            let mut v = s.viewers.locked();
             v.retain(|_, t| t.elapsed() < Duration::from_secs(20));
             if v.is_empty()
                 && !s.keep.load(Ordering::Acquire)

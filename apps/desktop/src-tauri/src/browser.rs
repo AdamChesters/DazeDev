@@ -1,3 +1,4 @@
+use crate::sync::LockExt;
 use std::{
     collections::VecDeque,
     net::IpAddr,
@@ -138,7 +139,7 @@ impl Requests {
         if nonce != self.nonce || uuid::Uuid::parse_str(id).is_err() {
             return Err("Browser connection has expired".into());
         }
-        let mut recent = self.recent.lock().unwrap();
+        let mut recent = self.recent.locked();
         while recent
             .front()
             .map(|(_, at)| at.elapsed() >= Duration::from_secs(60))
