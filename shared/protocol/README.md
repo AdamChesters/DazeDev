@@ -2,9 +2,11 @@
 
 The desktop host helper at `apps/desktop/src-tauri/resources/host.py` is the wire implementation. Android stages that exact file into generated assets.
 
-Protocol 1 runs over terminals (Android, WSL, local shells and the system OpenSSH client). Replies are nonce-scoped `DAZED:<nonce>:@<index>/<total>:<base64>` lines; requests are newline-terminated base64 JSON with `id`, `method` and `args`. Indices begin at zero. All lines of one reply arrive together.
+Protocol 1 runs only over the system OpenSSH client, which needs a terminal for its own prompts. Replies are nonce-scoped `DAZED:<nonce>:@<index>/<total>:<base64>` lines; requests are newline-terminated base64 JSON with `id`, `method` and `args`. Indices begin at zero. All lines of one reply arrive together.
 
-Protocol 2 runs over the desktop's built-in SSH channels, which carry bytes unchanged. The loader passes `2` after the nonce. After the source line, both directions use binary frames. Requests are a 4-byte big-endian length followed by the JSON request. Replies and events are `u32 length, u8 flags, u16 id length, id, data`: a message may be split into parts with the same id, flag bit 1 marks the last part, and parts of different messages may interleave, so a large reply never delays `ping`. Errors are `{"code", "message"}`; codes are listed in `host-v2.json`. The `ready` result reports `protocol` and `schema`.
+Protocol 2 runs over channels that carry bytes unchanged: the desktop's built-in SSH, WSL and local shells (plain pipes), and Android. The loader passes `2` after the nonce. After the source line, both directions use binary frames. Requests are a 4-byte big-endian length followed by the JSON request. Replies and events are `u32 length, u8 flags, u16 id length, id, data`: a message may be split into parts with the same id, flag bit 1 marks the last part, and parts of different messages may interleave, so a large reply never delays `ping`. Errors are `{"code", "message"}`; codes are listed in `host-v2.json`. The `ready` result reports `protocol` and `schema`.
+
+Uploads: `upload_begin` returns `chunk` (1 MiB on protocol 2, 32 KiB on protocol 1). On protocol 2 it also returns `parallel` (4): the client may keep that many `upload_chunk` requests in flight, each with its own `offset`, and chunks may arrive in any order. Each reply is `{"offset", "received"}`: the contiguous bytes written and the total bytes received. Without `parallel`, send one chunk at a time in order.
 
 `host-v2.json` lists every method with its worker lane and deadline. Python, Rust and frontend tests check it against host.py and the calls the desktop makes.
 

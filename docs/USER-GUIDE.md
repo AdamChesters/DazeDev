@@ -67,7 +67,7 @@ Screenshots show the app interface with sample hosts and terminal output.
 
 - **Settings → Keyboard shortcuts** changes the keys for the command palette (Ctrl+K), terminal search (Ctrl+Shift+F) and full screen (F11). DazeDev refuses a key that another action or a voice hotkey already uses. **Reset to defaults** puts them back.
 - While a terminal has focus, Ctrl+letter keys without Shift or Alt go to the terminal, so Ctrl+K works in your shell or editor there.
-- **Settings → Terminal → History lines** sets how much scrollback each terminal keeps in memory: 10,000 lines by default, up to 100,000.
+- **Settings → Terminal → History lines** sets how much scrollback each terminal keeps in memory: 10,000 lines by default, up to 100,000. All open terminals share at most 200,000 lines and 128 MB of images, so with many terminals each keeps less. Terminals you cannot see (background tabs and other workspaces) get a smaller share.
 
 ## Open files beside your terminals
 
@@ -88,7 +88,7 @@ Screenshots show the app interface with sample hosts and terminal output.
 - Open a hostless group and choose **Add terminal views** to copy views from connected hosts. Use a terminal's options to remove its view from the group; its original session stays open. These groups stay on the phone. A group prompts for the hosts it needs, using each host's own authentication.
 - In a workspace, choose **Group terminals as tabs**, select terminals and confirm. Switch the resulting tabs above the terminal.
 - Tap **Voice** to open a blank prompt and start listening. **End** stops for editing; **Enter** submits once and closes the prompt. Failed or uncertain delivery keeps the draft.
-- **Changelog** shows both products, with All, Desktop and Mobile filters. Release history works from bundled or saved notes when offline. Android update checks use only the public GitHub repository and offer an APK download; development APKs can still be installed offline. Desktop-only releases do not trigger Android update prompts, and mobile-only releases do not trigger desktop prompts.
+- **Changelog** shows both products, with All, Desktop and Mobile filters. Release history works from bundled or saved notes when offline. Android update checks use only the public GitHub repository. The app downloads the new APK itself and installs it only if its SHA-256 matches the release’s `SHA256SUMS` file; development APKs can still be installed offline. Desktop-only releases do not trigger Android update prompts, and mobile-only releases do not trigger desktop prompts.
 
 [Update help](../apps/desktop/UPDATES.md) · [Build instructions](BUILDING.md) · [Credits](CREDITS.md)
 
