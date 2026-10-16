@@ -3,6 +3,7 @@ package com.adamchesters.dazedev.mobile.ui
 import android.app.Application
 import android.net.Uri
 import androidx.lifecycle.AndroidViewModel
+import androidx.lifecycle.SavedStateHandle
 import androidx.lifecycle.viewModelScope
 import com.adamchesters.dazedev.mobile.BuildConfig
 import com.adamchesters.dazedev.mobile.DazeDevApplication
@@ -17,6 +18,8 @@ import com.adamchesters.dazedev.mobile.releases.PublicReleaseCatalog
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.flow.distinctUntilChanged
+import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.launch
 import org.json.JSONArray
 import org.json.JSONObject
@@ -24,6 +27,7 @@ import org.json.JSONObject
 /** Composes the app-wide host registry and the screen controllers into one UI state. */
 class MainViewModel(
     application: Application,
+    saved: SavedStateHandle,
 ) : AndroidViewModel(application) {
     private val registry = (application as DazeDevApplication).hosts
     private val credentials = (application as DazeDevApplication).credentials
@@ -51,6 +55,17 @@ class MainViewModel(
         viewModelScope.launch { registry.prompts.browserRequest.collect { request -> ui.update { it.copy(browserRequest = request) } } }
         hostKeys.start()
         workspace.publishLocalGroups()
+        // After process death, show the same screen, host, folder and terminal again.
+        saved.get<String>(NAVIGATION)?.let { json ->
+            ui.update { it.restoreNavigation(json) { id -> registry.entry(id)?.profile } }
+            connections.sync(force = true)
+        }
+        viewModelScope.launch {
+            ui.state
+                .map { it.navigationJson() }
+                .distinctUntilChanged()
+                .collect { saved[NAVIGATION] = it }
+        }
         updates.start(
             application.assets
                 .open("changelog.json")
@@ -336,5 +351,9 @@ class MainViewModel(
         terminal.closeTerminal()
         registry.prompts.foreground = false
         super.onCleared()
+    }
+
+    private companion object {
+        const val NAVIGATION = "navigation"
     }
 }
