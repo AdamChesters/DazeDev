@@ -16,6 +16,15 @@ class WorkspaceGroupsTest {
         assertEquals(100,local.folders().single().rows.size)
     }
 
+    @Test fun staleSavedTerminalCanBePointedAtTheRestartedSession() {
+        val profile=source();val row=profile.folders().single().rows.single()
+        assertTrue(profile.rebindPaneSession(row.paneId,"\$9","new-stamp"))
+        val updated=SharedProfile(profile.document).folders().single().rows.single()
+        assertEquals("\$9",updated.sessionId);assertEquals("new-stamp",updated.stamp);assertEquals(row.name,updated.name)
+        assertFalse(profile.rebindPaneSession("missing","\$9","new-stamp"))
+        assertThrows(IllegalArgumentException::class.java){profile.rebindPaneSession(row.paneId,"other","stamp")}
+    }
+
     private fun source():SharedProfile {
         val profile=SharedProfile.empty()
         profile.addSession("host","machine:user:socket",JSONObject().put("id","$1").put("stamp","stamp").put("name","Session"),"/dev")

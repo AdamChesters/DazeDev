@@ -20,8 +20,25 @@ android {
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
     }
 
+    // Release signing comes only from the environment or Gradle properties; nothing is committed.
+    val releaseSigning = listOf(
+        "DAZEDEV_RELEASE_STORE_FILE", "DAZEDEV_RELEASE_STORE_PASSWORD", "DAZEDEV_RELEASE_KEY_ALIAS", "DAZEDEV_RELEASE_KEY_PASSWORD",
+    ).associateWith { providers.environmentVariable(it).orElse(providers.gradleProperty(it)).orNull?.takeIf(String::isNotBlank) }
+    signingConfigs {
+        if (releaseSigning.values.all { it != null }) create("release") {
+            storeFile = file(releaseSigning.getValue("DAZEDEV_RELEASE_STORE_FILE")!!)
+            storePassword = releaseSigning.getValue("DAZEDEV_RELEASE_STORE_PASSWORD")
+            keyAlias = releaseSigning.getValue("DAZEDEV_RELEASE_KEY_ALIAS")
+            keyPassword = releaseSigning.getValue("DAZEDEV_RELEASE_KEY_PASSWORD")
+            enableV2Signing = true
+            enableV3Signing = true
+        }
+    }
+
     buildTypes {
         release {
+            isDebuggable = false
+            signingConfig = signingConfigs.findByName("release")
             isMinifyEnabled = true
             isShrinkResources = true
             proguardFiles(
@@ -75,6 +92,9 @@ dependencies {
     implementation("androidx.compose.material:material-icons-extended")
     implementation("org.jetbrains.kotlinx:kotlinx-coroutines-android:1.11.0")
     implementation("com.github.mwiede:jsch:2.28.7")
+    // JSch on Android needs Bouncy Castle for Ed25519, X25519 and ChaCha20 on every API level.
+    implementation("org.bouncycastle:bcprov-jdk18on:1.86")
+    implementation("androidx.webkit:webkit:1.17.1")
     implementation("ai.moonshine:moonshine-voice:0.1.5")
 
     testImplementation("junit:junit:4.13.2")
@@ -114,6 +134,23 @@ tasks.withType<Test>().configureEach {
     // Changing fixture endpoints must rerun integration tests instead of reusing cached skips.
     inputs.property("sshFixture", System.getenv("DAZEDEV_TEST_SSH_PORT") ?: "absent")
     inputs.property("realHostFixture", System.getenv("DAZEDEV_TEST_REAL_FIXTURE") ?: "absent")
+}
+
+// Release APKs ship 64-bit ARM only; debug builds keep every ABI for emulators.
+androidComponents {
+    onVariants(selector().withBuildType("release")) { variant ->
+        variant.packaging.jniLibs.excludes.addAll(listOf("lib/armeabi-v7a/**", "lib/x86/**", "lib/x86_64/**"))
+    }
+}
+
+// Never fall back to an unsigned or debug-signed release.
+tasks.configureEach {
+    if (name == "packageRelease" || name == "bundleRelease") doFirst {
+        if (android.signingConfigs.findByName("release") == null) throw GradleException(
+            "Release signing is not configured. Set DAZEDEV_RELEASE_STORE_FILE, DAZEDEV_RELEASE_STORE_PASSWORD, " +
+                "DAZEDEV_RELEASE_KEY_ALIAS and DAZEDEV_RELEASE_KEY_PASSWORD as environment variables or Gradle properties.",
+        )
+    }
 }
 
 android.sourceSets.getByName("main").java.srcDir(layout.buildDirectory.dir("generated/mobile/kotlin"))

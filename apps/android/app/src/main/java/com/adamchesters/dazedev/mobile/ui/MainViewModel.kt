@@ -11,6 +11,7 @@ import com.adamchesters.dazedev.mobile.ssh.*
 import com.adamchesters.dazedev.mobile.tmux.*
 import com.adamchesters.dazedev.mobile.releases.*
 import com.adamchesters.dazedev.mobile.BuildConfig
+import com.adamchesters.dazedev.mobile.ssh.HostKeyNotice
 import java.io.File
 import java.util.UUID
 import java.util.concurrent.atomic.AtomicLong
@@ -25,6 +26,12 @@ enum class ConnectionPhase { Disconnected, Connecting, Connected }
 data class TmuxWindow(val id:String,val name:String,val active:Boolean)
 data class UserMessage(val id: Long, val text: String)
 data class PendingTerminalConnection(val row:TerminalRow,val ownerId:String,val folderId:String?,val targetProfileId:String)
+data class StaleSession(val hostId:String,val name:String,val replacement:TmuxSession?)
+data class HostKeyChange(val hostId:String,val label:String,val notice:HostKeyNotice)
+data class HostKeyEntry(val hostId:String,val label:String,val type:String,val fingerprint:String)
+data class BrowserRequest(val id:Long,val host:String,val url:String)
+data class AuthNotice(val hostId:String,val host:String,val text:String,val url:String?)
+enum class BrowserAnswer { Once, Connection, Deny }
 data class HostSummary(val profile: ConnectionProfile, val phase: ConnectionPhase, val workspaceCount: Int, val fingerprint: String = "", val folders:List<WorkspaceFolder> = emptyList())
 data class DazeDevMobileUiState(
     val localGroups:List<WorkspaceFolder> = emptyList(),
@@ -66,6 +73,15 @@ data class DazeDevMobileUiState(
     val windows: List<TmuxWindow> = emptyList(),
     val message: UserMessage? = null,
     val pendingTerminalConnection:PendingTerminalConnection? = null,
+    val sessionsLoading:Boolean = false,
+    val terminalError:String? = null,
+    val staleSession:StaleSession? = null,
+    val linkError:String? = null,
+    val hostKeyChange:HostKeyChange? = null,
+    val hostKeys:List<HostKeyEntry>? = null,
+    val browserRequest:BrowserRequest? = null,
+    val authNotice:AuthNotice? = null,
+    val secureScreen:Boolean = false,
 )
 
 class MainViewModel(application: Application) : AndroidViewModel(application) {
@@ -73,22 +89,29 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     private val localGroups=store.localWorkspaces()?.let(::SharedProfile)?:SharedProfile.empty()
     private var groupConnectQueue=listOf<String>()
     private val ids=AtomicLong(1)
-    private val _uiState=MutableStateFlow(DazeDevMobileUiState(profile=store.load()))
+    private val _uiState=MutableStateFlow(DazeDevMobileUiState(profile=store.load(),secureScreen=store.secureScreen))
     val uiState: StateFlow<DazeDevMobileUiState> = _uiState.asStateFlow()
     private var foreground=true
+    private var backgroundDetach: Job?=null
     private var attachment: Job?=null
+    private val terminalSize=MutableStateFlow<Pair<Int,Int>?>(null)
+    private var resumeAfterConnect:Pair<String,Triple<String,String,String>>?=null
+    private var browserAnswer:CompletableDeferred<BrowserAnswer>?=null
     private var attachmentGeneration=0L
     private val hosts=linkedMapOf<String, HostState>()
     private val challenges=linkedMapOf<String,HostKeyChallenge>()
     private fun publishChallenge(){val first=challenges.entries.firstOrNull();_uiState.update {it.copy(hostKeyChallenge=first?.value,challengeHostId=first?.key.orEmpty(),challengeHost=hosts[first?.key]?.profile?.host.orEmpty())}}
+    private fun knownHosts(id:String)=File(getApplication<Application>().filesDir,"ssh/$id/known_hosts")
     private inner class HostState(var profile: ConnectionProfile) {
         val prompts=HostKeyPromptCoordinator()
-        val ssh=SshConnection(File(getApplication<Application>().filesDir,"ssh/${profile.id}/known_hosts"),prompts)
-        val client=HostClient(ssh,viewModelScope) { url ->
-            if(!foreground) "Return to DazeDev before opening a browser link."
-            else BrowserLauncher.open(getApplication<Application>(),url).also {error->if(error!=null)postMessage(error)}
-        }
+        val ssh=SshConnection(knownHosts(profile.id),prompts) {text->viewModelScope.launch(Dispatchers.Main){showAuthNotice(this@HostState,text)}}
+        val client=HostClient(ssh,viewModelScope,{url->openHostUrl(this,url)}) {reason->viewModelScope.launch(Dispatchers.Main){linkLost(this@HostState,reason)}}
+        val label get()=profile.name.ifBlank {profile.host}
         var phase=ConnectionPhase.Disconnected
+        var sessionsLoaded=false
+        var linkError:String?=null
+        var allowBrowser=false
+        var background:Job?=null
         var shared: SharedProfile?=null
         var fingerprint=profile.fingerprint
         var sessions=listOf<TmuxSession>()
@@ -142,7 +165,8 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     private fun publish(h: HostState) {
         publishHosts()
         if (_uiState.value.profile.id != h.profile.id) return
-        _uiState.update {it.copy(profile=h.profile,connectionPhase=h.phase,folders=h.shared?.folders().orEmpty(),sessions=h.sessions,repositories=h.repositories,agents=h.agents,conflict=h.conflict,recoveryDraft=store.draft(h.profile.id)!=null,isRefreshing=h.refreshing,isCreating=h.creating,endingSessionName=h.ending)}
+        _uiState.update {it.copy(profile=h.profile,connectionPhase=h.phase,folders=h.shared?.folders().orEmpty(),sessions=h.sessions,repositories=h.repositories,agents=h.agents,conflict=h.conflict,recoveryDraft=store.draft(h.profile.id)!=null,isRefreshing=h.refreshing,isCreating=h.creating,endingSessionName=h.ending,
+            sessionsLoading=h.phase==ConnectionPhase.Connected && !h.sessionsLoaded,linkError=if(h.phase==ConnectionPhase.Connected)null else h.linkError)}
     }
     private fun publishLocalGroups(){_uiState.update {it.copy(localGroups=localGroups.folders())}}
     private fun saveLocalGroups(){store.saveLocalWorkspaces(localGroups.document);publishLocalGroups()}
@@ -201,7 +225,8 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         normalized.validationError(secret)?.let {postMessage(it);return}
         val h=hosts.getOrPut(normalized.id){HostState(normalized)}
         if(h.connectJob?.isCompleted==false){postMessage("Wait for this host connection to finish or cancel.");return}
-        h.profile=normalized;h.phase=ConnectionPhase.Connecting;publish(h)
+        h.profile=normalized;h.phase=ConnectionPhase.Connecting;h.linkError=null;publish(h)
+        _uiState.update {it.copy(hostKeyChange=null)}
         h.connectJob=viewModelScope.launch {
             var key:ByteArray?=null
             try {
@@ -209,7 +234,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                 h.ssh.connect(normalized,secret,key)
                 val source=withContext(Dispatchers.IO){getApplication<Application>().assets.open("host.py").use {it.readBytes()}}
                 val browserSource=withContext(Dispatchers.IO){getApplication<Application>().assets.open("browser.py").use {it.readBytes()}}
-                val ready=h.client.start(source,normalized.socket,browserSource)
+                val ready=h.client.start(source,normalized.socket,browserSource,h.label)
                 h.fingerprint="${ready.getString("machine")}:${ready.getString("user")}:${normalized.socket}"
                 val pending=_uiState.value.pendingTerminalConnection
                 if(pending?.targetProfileId==normalized.id) require(pending.row.hostKey==h.fingerprint) {
@@ -218,17 +243,14 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                 h.profile=normalized.copy(fingerprint=h.fingerprint)
                 val shared=SharedProfile(h.client.request("profile_load") as JSONObject)
                 shared.rebindOwner(normalized.id,h.fingerprint,HostReference.fromProfile(h.profile));h.shared=shared
+                h.sessionsLoaded=false;h.allowBrowser=false;h.sessions=emptyList()
                 h.phase=ConnectionPhase.Connected;store.save(h.profile);publish(h)
-                val capabilities=h.client.request("capabilities") as JSONObject
-                val advertised=capabilities.getJSONArray("agents")
-                h.agents=(0 until advertised.length()).map {index->
-                    val agent=advertised.getJSONObject(index);val models=agent.getJSONArray("models")
-                    val efforts=(0 until models.length()).associate {i->val m=models.getJSONObject(i);val e=m.getJSONArray("efforts");m.getString("id") to (0 until e.length()).map {e.getString(it)}}
-                    AgentCapability(agent.getString("id"),agent.optString("version"),efforts.keys.toList(),efforts,agent.getBoolean("modelFlag"),agent.getBoolean("effortFlag"))
-                }
-                refresh(h)
+                clearAuthNotice(h)
+                // Sessions first: slow agent and repository scans load afterwards.
+                loadSessions(h)
                 if(_uiState.value.groupConnectionHost==normalized.id)nextGroupConnection()
                 val selected=_uiState.value.pendingTerminalConnection
+                val resume=resumeAfterConnect?.takeIf {it.first==normalized.id}?.second
                 if(selected?.targetProfileId==normalized.id) {
                     _uiState.update {it.copy(pendingTerminalConnection=null)}
                     hosts[selected.ownerId]?.let {owner->
@@ -236,21 +258,64 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                         publish(owner)
                     }
                     openSession(h,selected.row.sessionId,selected.row.stamp,selected.row.name)
+                } else if(resume!=null) {
+                    resumeAfterConnect=null
+                    openSession(h,resume.first,resume.second,resume.third)
                 }
-            } catch(e:CancellationException){h.client.close();h.ssh.disconnectNow();throw e}
-            catch(e:Exception){h.client.close();h.ssh.disconnect();h.phase=ConnectionPhase.Disconnected;publish(h);postMessage(e.message?:"Could not connect this host.")}
+                h.background?.cancel()
+                h.background=viewModelScope.launch {loadCapabilities(h);loadRepositories(h)}
+            } catch(e:HostKeyChangedException){
+                h.client.close();h.ssh.disconnect();h.phase=ConnectionPhase.Disconnected;publish(h);clearAuthNotice(h)
+                _uiState.update {it.copy(hostKeyChange=HostKeyChange(h.profile.id,h.label,e.notice))}
+            } catch(e:TimeoutCancellationException){
+                h.client.close();h.ssh.disconnect();h.phase=ConnectionPhase.Disconnected;publish(h);clearAuthNotice(h)
+                postMessage("${h.label} did not answer in time. Check the host and network, then connect again.")
+            } catch(e:CancellationException){h.client.close();h.ssh.disconnectNow();clearAuthNotice(h);throw e}
+            catch(e:Exception){h.client.close();h.ssh.disconnect();h.phase=ConnectionPhase.Disconnected;publish(h);clearAuthNotice(h);postMessage(e.message?:"Could not connect this host.")}
             finally {key?.fill(0)}
         }
     }
-    fun disconnect() {val h=current()?:return;h.connectJob?.cancel();closeTerminal();h.client.close();h.ssh.disconnectNow();h.phase=ConnectionPhase.Disconnected;_uiState.update {it.copy(selectedSessionName=null,selectedSessionId=null)};publish(h)}
+    private suspend fun loadSessions(h:HostState) {
+        val sessions=h.client.request("sessions") as JSONArray
+        h.sessions=(0 until sessions.length()).map {i->val s=sessions.getJSONObject(i);TmuxSession(s.getString("name"),s.getInt("windows"),s.getInt("attached"),0,s.optString("agent","shell"),s.getString("id"),s.getString("stamp"))}
+        h.sessionsLoaded=true
+        publish(h)
+    }
+    private suspend fun loadCapabilities(h:HostState) {
+        try {
+            val capabilities=h.client.request("capabilities") as JSONObject
+            val advertised=capabilities.getJSONArray("agents")
+            h.agents=(0 until advertised.length()).map {index->
+                val agent=advertised.getJSONObject(index);val models=agent.getJSONArray("models")
+                val efforts=(0 until models.length()).associate {i->val m=models.getJSONObject(i);val e=m.getJSONArray("efforts");m.getString("id") to (0 until e.length()).map {e.getString(it)}}
+                AgentCapability(agent.getString("id"),agent.optString("version"),efforts.keys.toList(),efforts,agent.getBoolean("modelFlag"),agent.getBoolean("effortFlag"))
+            }
+            publish(h)
+        } catch(e:CancellationException){throw e}
+        catch(e:Exception){if(h.phase==ConnectionPhase.Connected)postMessage("Could not list agents on ${h.label}: ${e.message}")}
+    }
+    private suspend fun loadRepositories(h:HostState) {
+        try {
+            val repos=h.client.request("repositories") as JSONObject
+            val list=repos.getJSONArray("repos");h.repositories=(0 until list.length()).map {list.getJSONObject(it).getString("path")}
+            publish(h)
+        } catch(e:CancellationException){throw e}
+        catch(e:Exception){if(h.phase==ConnectionPhase.Connected)postMessage("Could not list repositories on ${h.label}: ${e.message}")}
+    }
+    fun disconnect() {val h=current()?:return;h.connectJob?.cancel();h.background?.cancel();closeTerminal();h.client.close();h.ssh.disconnectNow();h.phase=ConnectionPhase.Disconnected;h.linkError=null;_uiState.update {it.copy(selectedSessionName=null,selectedSessionId=null)};publish(h)}
+    private fun linkLost(h:HostState,reason:String) {
+        if(h.phase!=ConnectionPhase.Connected)return
+        h.background?.cancel();h.client.close();h.ssh.disconnectNow()
+        h.phase=ConnectionPhase.Disconnected;h.linkError="Lost connection to ${h.label}. $reason"
+        if(_uiState.value.selectedTargetHost==h.profile.id){closeTerminal();_uiState.update {it.copy(terminalError=h.linkError)}}
+        publish(h)
+    }
+    /** Profile and sessions; repositories refresh in the background. */
     private suspend fun refresh(h:HostState) {
         val shared=SharedProfile(h.client.request("profile_load") as JSONObject)
         shared.rebindOwner(h.profile.id,h.fingerprint,HostReference.fromProfile(h.profile));h.shared=shared
-        val sessions=h.client.request("sessions") as JSONArray
-        h.sessions=(0 until sessions.length()).map {i->val s=sessions.getJSONObject(i);TmuxSession(s.getString("name"),s.getInt("windows"),s.getInt("attached"),0,s.optString("agent","shell"),s.getString("id"),s.getString("stamp"))}
-        val repos=h.client.request("repositories") as JSONObject
-        val list=repos.getJSONArray("repos");h.repositories=(0 until list.length()).map {list.getJSONObject(it).getString("path")}
-        publish(h)
+        loadSessions(h)
+        viewModelScope.launch {loadRepositories(h)}
     }
     fun refreshSessions() {val h=current()?:return;if(h.refreshing)return;viewModelScope.launch {h.refreshing=true;publish(h);try {refresh(h)}catch(e:Exception){postMessage(e.message?:"Refresh failed.")}finally {h.refreshing=false;publish(h)}}}
     fun reloadProfile() {val h=current()?:return;viewModelScope.launch {try {val shared=SharedProfile(h.client.request("profile_load") as JSONObject);shared.rebindOwner(h.profile.id,h.fingerprint,HostReference.fromProfile(h.profile));h.shared=shared;h.conflict=false;publish(h);refresh(h)}catch(e:Exception){postMessage(e.message?:"Reload failed.")}}}
@@ -289,7 +354,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     }
     private fun openSession(h:HostState,id:String,stamp:String,name:String) {
         closeTerminal()
-        _uiState.update {it.copy(selectedSessionName=name,selectedSessionId=id,selectedStamp=stamp,selectedTargetHost=h.profile.id,selectedTargetLabel=h.profile.name.ifBlank {h.profile.host},tmuxSettings=null,windows=emptyList(),terminalEpoch=attachmentGeneration)}
+        _uiState.update {it.copy(selectedSessionName=name,selectedSessionId=id,selectedStamp=stamp,selectedTargetHost=h.profile.id,selectedTargetLabel=h.label,tmuxSettings=null,windows=emptyList(),terminalEpoch=attachmentGeneration,terminalError=null,staleSession=null)}
         if(!foreground)return
         val generation=attachmentGeneration
         attachment=viewModelScope.launch {
@@ -300,15 +365,64 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                 val browser=try {h.client.request("browser_prepare") as JSONObject}
                     catch(e:CancellationException){throw e}
                     catch(_:Exception){postMessage("Browser forwarding is unavailable. You can still use this terminal and tap its web links.");null}
-                stream=TerminalStream(h.ssh,viewModelScope);stream.attach(h.profile.socket,id,stamp,80,24,browser)
+                // Attach at the measured size so other clients do not reflow several times.
+                val size=withTimeoutOrNull(10_000){terminalSize.filterNotNull().first();delay(200);terminalSize.value} ?: terminalSize.value ?: (80 to 24)
+                if(generation!=attachmentGeneration)return@launch
+                stream=TerminalStream(h.ssh,viewModelScope);stream.attach(h.profile.socket,id,stamp,size.first,size.second,browser)
                 if(generation!=attachmentGeneration){stream.close();return@launch}
+                terminalSize.value?.let {stream.resize(it.first,it.second)}
                 _uiState.update {it.copy(terminal=stream)}
-            }catch(e:CancellationException){stream?.close();throw e}
-            catch(e:Exception){stream?.close();if(generation==attachmentGeneration)postMessage(e.message?:"Terminal connection failed. Refresh to retry.")}
+            }catch(e:TimeoutCancellationException){stream?.close();if(generation==attachmentGeneration)_uiState.update {it.copy(terminalError="The terminal did not connect in time. Try again.")}}
+            catch(e:CancellationException){stream?.close();throw e}
+            catch(e:Exception){stream?.close();if(generation==attachmentGeneration)openFailed(h,id,stamp,name,e)}
         }
     }
-    private fun closeTerminal() {attachmentGeneration++;attachment?.cancel();attachment=null;_uiState.value.terminal?.close();_uiState.update {it.copy(terminal=null,terminalEpoch=attachmentGeneration,tmuxSettings=null,windows=emptyList(),draftReview=null)}}
+    private suspend fun openFailed(h:HostState,id:String,stamp:String,name:String,e:Exception) {
+        val message=e.message.orEmpty()
+        if(!(message.contains("Session changed") || message.contains("no longer exists") || message.contains("ended or restarted"))) {
+            _uiState.update {it.copy(terminalError=message.ifBlank {"Terminal connection failed."})}
+            return
+        }
+        runCatching {loadSessions(h)}
+        val replacement=h.sessions.firstOrNull {it.name==name && (it.id!=id || it.stamp!=stamp)}
+        _uiState.update {it.copy(terminalError="Session ended or restarted.",staleSession=StaleSession(h.profile.id,name,replacement))}
+    }
+    /** Opens the running session with the saved name and points the saved terminal at it. */
+    fun adoptStaleSession() {
+        val stale=_uiState.value.staleSession?:return
+        val h=hosts[stale.hostId]?:return
+        val session=stale.replacement?:return
+        _uiState.update {it.copy(staleSession=null)}
+        _uiState.value.selectedPaneId?.let {pane->
+            if(_uiState.value.localGroupId!=null) {if(localGroups.rebindPaneSession(pane,session.id,session.stamp))saveLocalGroups()}
+            else current()?.let {owner->
+                val shared=owner.shared
+                if(shared!=null) viewModelScope.launch {
+                    try {val draft=SharedProfile(shared.document);if(draft.rebindPaneSession(pane,session.id,session.stamp))save(owner,draft)}
+                    catch(e:Exception){postMessage("The terminal opened, but its saved workspace entry was not updated. ${e.message.orEmpty()}")}
+                }
+            }
+        }
+        openSession(h,session.id,session.stamp,session.name)
+    }
+    fun dismissStaleSession(){_uiState.update {it.copy(staleSession=null)}}
+    /** Called by the terminal view with its fitted size for the current attachment. */
+    fun terminalMeasured(epoch:Long,cols:Int,rows:Int) {if(epoch==_uiState.value.terminalEpoch)terminalSize.value=cols.coerceIn(2,500) to rows.coerceIn(2,300)}
+    private fun closeTerminal() {attachmentGeneration++;attachment?.cancel();attachment=null;terminalSize.value=null;_uiState.value.terminal?.close();_uiState.update {it.copy(terminal=null,terminalEpoch=attachmentGeneration,tmuxSettings=null,windows=emptyList(),draftReview=null)}}
     fun refreshTerminal() {val s=_uiState.value;val h=hosts[s.selectedTargetHost]?:return;openSession(h,s.selectedSessionId?:return,s.selectedStamp?:return,s.selectedSessionName.orEmpty())}
+    /** Reattaches the terminal, reconnecting its host first when the link is gone. */
+    fun reconnectTerminal() {
+        val s=_uiState.value;val h=hosts[s.selectedTargetHost]?:return
+        if(h.phase==ConnectionPhase.Connected && h.client.isOpen){refreshTerminal();return}
+        if(h.phase==ConnectionPhase.Connecting)return
+        val target=Triple(s.selectedSessionId?:return,s.selectedStamp?:return,s.selectedSessionName.orEmpty())
+        resumeAfterConnect=h.profile.id to target
+        if(h.profile.authMethod==AuthMethod.TailscaleSsh){_uiState.update {it.copy(terminalError=null)};connect(h.profile,"");return}
+        // Password and key hosts need the secret again; the session reopens after connecting.
+        closeTerminal()
+        _uiState.update {it.copy(profile=h.profile,showHosts=false,localGroupId=null,selectedFolder=null,selectedSessionName=null,selectedSessionId=null,selectedTargetHost=null,terminalError=null)}
+        publish(h)
+    }
     suspend fun prepareInputTarget():String {
         val state=_uiState.value
         val h=hosts[state.selectedTargetHost]?:error("Terminal host is disconnected.")
@@ -421,9 +535,60 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         if(challenges[hostId]?.id!=id)return
         hosts[hostId]?.prompts?.answer(id,trust);challenges.remove(hostId);publishChallenge()
     }
-    fun setForeground(value:Boolean){foreground=value;if(!value)closeTerminal()else if(_uiState.value.selectedSessionId!=null)refreshTerminal()}
+    /** Keeps the terminal through rotation and short app switches; detaches after a grace period. */
+    fun setForeground(value:Boolean){
+        foreground=value
+        backgroundDetach?.cancel();backgroundDetach=null
+        if(!value){backgroundDetach=viewModelScope.launch {delay(BACKGROUND_GRACE_MS);closeTerminal()};return}
+        val s=_uiState.value
+        if(s.selectedSessionId!=null && s.staleSession==null && attachment?.isActive!=true && s.terminal?.connected!=true && hosts[s.selectedTargetHost]?.phase==ConnectionPhase.Connected)refreshTerminal()
+    }
+    private fun showAuthNotice(h:HostState,text:String) {
+        val url=Regex("https://[^\\s]+").find(text)?.value?.trimEnd('.',',',')')
+        _uiState.update {it.copy(authNotice=AuthNotice(h.profile.id,h.label,text,url))}
+    }
+    private fun clearAuthNotice(h:HostState){_uiState.update {if(it.authNotice?.hostId==h.profile.id)it.copy(authNotice=null)else it}}
+    fun dismissAuthNotice(){_uiState.update {it.copy(authNotice=null)}}
+    /** Host-initiated links ask first, unless allowed for this connection. */
+    private suspend fun openHostUrl(h:HostState,url:String):String? {
+        if(!foreground)return "Return to DazeDev before opening a browser link."
+        runCatching {BrowserUrl.validate(url)}.onFailure {return it.message}
+        if(!h.allowBrowser) {
+            if(browserAnswer!=null)return "Another link is waiting for approval on the phone."
+            val answer=CompletableDeferred<BrowserAnswer>();browserAnswer=answer
+            _uiState.update {it.copy(browserRequest=BrowserRequest(ids.getAndIncrement(),h.label,url))}
+            val result=try {withTimeoutOrNull(120_000){answer.await()}} finally {browserAnswer=null;_uiState.update {it.copy(browserRequest=null)}}
+            when(result) {
+                BrowserAnswer.Connection->h.allowBrowser=true
+                BrowserAnswer.Once->Unit
+                else->return "The phone user did not open this link."
+            }
+        }
+        return BrowserLauncher.open(getApplication<Application>(),url).also {error->if(error!=null)postMessage(error)}
+    }
+    fun answerBrowserRequest(answer:BrowserAnswer){browserAnswer?.complete(answer)}
+    fun openHostKeys() {
+        viewModelScope.launch {
+            val list=withContext(Dispatchers.IO){hosts.values.flatMap {h->KnownHostKeys.list(knownHosts(h.profile.id)).map {HostKeyEntry(h.profile.id,h.label,it.type,it.fingerprint)}}}
+            _uiState.update {it.copy(hostKeys=list,hostKeyChange=null)}
+        }
+    }
+    /** Blocks screenshots and the Recents preview when on. */
+    fun setSecureScreen(value:Boolean){store.secureScreen=value;_uiState.update {it.copy(secureScreen=value)}}
+    fun closeHostKeys(){_uiState.update {it.copy(hostKeys=null)}}
+    fun dismissHostKeyChange(){_uiState.update {it.copy(hostKeyChange=null)}}
+    fun forgetHostKey(entry:HostKeyEntry) {
+        viewModelScope.launch {
+            try {
+                withContext(Dispatchers.IO){KnownHostKeys.forget(knownHosts(entry.hostId),entry.fingerprint)}
+                postMessage("Forgot the saved key for ${entry.label}. The next connection shows the new fingerprint to check.")
+            } catch(e:Exception){postMessage(e.message?:"Could not forget this key.")}
+            openHostKeys()
+        }
+    }
     fun consumeMessage(id:Long){_uiState.update {if(it.message?.id==id)it.copy(message=null)else it}}
     private fun postMessage(text:String){_uiState.update {it.copy(message=UserMessage(ids.getAndIncrement(),text))}}
     private suspend fun readPrivateKey(value:String):ByteArray=withContext(Dispatchers.IO){getApplication<Application>().contentResolver.openInputStream(value.toUri())?.use {val buffer=ByteArray(1_048_577);try {var total=0;while(total<buffer.size){val count=it.read(buffer,total,buffer.size-total);if(count<0)break;total+=count};require(total<=1_048_576){"Private key exceeds 1 MiB."};buffer.copyOf(total)}finally{buffer.fill(0)}}?:error("Could not open this private key.")}
     override fun onCleared(){closeTerminal();hosts.values.forEach {it.connectJob?.cancel();it.client.close();it.ssh.disconnectNow();it.promptJob.cancel()};super.onCleared()}
+    private companion object {const val BACKGROUND_GRACE_MS=120_000L}
 }

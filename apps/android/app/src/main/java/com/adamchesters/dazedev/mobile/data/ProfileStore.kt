@@ -17,6 +17,9 @@ class ProfileStore(private val context: Context) {
                 workingDirectory=p.optString("workingDirectory"), id=p.getString("id"), name=p.optString("name"), socket=p.optString("socket"), fingerprint=p.optString("fingerprint"))
         }
     }.getOrDefault(emptyList())
+    var secureScreen: Boolean
+        get() = prefs.getBoolean("secure_screen", false)
+        set(value) { prefs.edit().putBoolean("secure_screen", value).apply() }
     fun load(): ConnectionProfile = loadAll().firstOrNull() ?: ConnectionProfile()
     fun save(profile: ConnectionProfile) {
         val existing = loadAll()

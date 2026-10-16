@@ -1,6 +1,8 @@
 package com.adamchesters.dazedev.mobile.voice
 
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertFalse
+import org.junit.Assert.assertTrue
 import org.junit.Test
 
 class TranscriptAccumulatorTest {
@@ -35,5 +37,11 @@ class TranscriptAccumulatorTest {
         assertEquals("", transcript.complete("   "))
         assertEquals("hello", transcript.complete("  hello  "))
         assertEquals("hello", transcript.partial(""))
+    }
+    @Test fun reportsPendingWordsUntilTheLineCompletes() {
+        val t=TranscriptAccumulator()
+        assertFalse(t.hasPartial())
+        t.partial("hello wor");assertTrue(t.hasPartial())
+        t.complete("hello world");assertFalse(t.hasPartial())
     }
 }

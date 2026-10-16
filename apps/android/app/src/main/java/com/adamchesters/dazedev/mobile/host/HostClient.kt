@@ -14,8 +14,9 @@ import kotlinx.coroutines.sync.Semaphore
 import org.json.JSONObject
 
 class HostClient(private val ssh: SshConnection, private val scope: CoroutineScope,
-    private val onBrowserOpen: suspend (String)->String? = { "Browser unavailable" }) {
-    private var channel: ChannelExec? = null
+    private val onBrowserOpen: suspend (String)->String? = { "Browser unavailable" },
+    private val onLinkLost: (String)->Unit = {}) {
+    @Volatile private var channel: ChannelExec? = null
     private var reader: Job? = null
     private val writer = Mutex()
     private val requests=Semaphore(8)
@@ -26,80 +27,108 @@ class HostClient(private val ssh: SshConnection, private val scope: CoroutineSco
     private val browserEndpoint=UUID.randomUUID().toString().replace("-", "")
     private val browserDevice=UUID.randomUUID().toString().replace("-", "")
     private val browserJobs=ConcurrentHashMap<String,Job>()
+    val isOpen get() = channel?.isConnected == true
 
-    suspend fun start(source: ByteArray, socket: String, browserSource: ByteArray = ByteArray(0)): JSONObject {
+    suspend fun start(source: ByteArray, socket: String, browserSource: ByteArray = ByteArray(0), host: String = "this host"): JSONObject {
         close()
         nonce = UUID.randomUUID().toString().replace("-", "")
         ready = CompletableDeferred()
-        val loader = "import base64,sys;print('DAZED:'+sys.argv[1]+':bootstrap',flush=True);exec(compile(base64.b64decode(sys.stdin.buffer.readline().strip(),validate=True),'<dazedev-host>','exec'))"
         val browserEnvironment=if(browserSource.isNotEmpty())"export DAZED_BROWSER_ENDPOINT=$browserEndpoint DAZED_BROWSER_DESKTOP=$browserDevice; " else ""
         val payload=if(browserSource.isNotEmpty()) {
             ("import base64\nBROWSER_SOURCE=base64.b64decode('${Base64.getEncoder().encodeToString(browserSource)}').decode()\n".toByteArray()+source)
         } else source
-        val cmd = "export DAZED_TMUX_SOCKET=${ShellQuoter.quote(socket)}; ${browserEnvironment}exec python3 -u -c ${ShellQuoter.quote(loader)} $nonce"
+        // -I keeps stray modules in the home or working folder from loading.
+        val cmd = "export DAZED_TMUX_SOCKET=${ShellQuoter.quote(socket)}; ${browserEnvironment}exec python3 -I -u -c ${ShellQuoter.quote(HostLoader.script)} $nonce"
         val active = ssh.openStream(cmd)
-        val input = java.io.BufferedInputStream(active.inputStream, 65536)
+        val input = active.inputStream
         val output = active.outputStream
-        active.setErrStream(object : java.io.OutputStream() { override fun write(value: Int) {} })
+        val stderr = TailBuffer()
+        active.setErrStream(stderr)
         channel = active
-        withContext(Dispatchers.IO) { active.connect(15_000) }
         val runNonce = nonce
         val handshake = ready
         val browserIds=LinkedHashSet<String>()
+        try { withContext(Dispatchers.IO) { active.connect(15_000) } } catch (e: Exception) { close(); throw e }
         reader = scope.launch(Dispatchers.IO) {
             var bootstrapped=false
-        val frames = HostFrames(runNonce)
-            try {
-                val buffer = StringBuilder()
-                while (isActive && channel === active) {
-                    val ch = input.read()
-                    if (ch == -1) error("Host stream closed. Reconnect to continue.")
-                    if (ch == 10) {
-                        val line = buffer.toString().trimEnd('\r'); buffer.setLength(0)
-                        if (line == "DAZED:$runNonce:bootstrap" && !bootstrapped) {
-                            bootstrapped=true
-                            writer.withLock { output.write(Base64.getEncoder().encode(payload));output.write(10);output.flush() }
-                        } else frames.line(line)?.let { text ->
-                            val reply = JSONObject(text)
-                            if(reply.optString("event")=="browser-open") {
-                                val open=BrowserFrames.parse(reply) ?: return@let
-                                if(channel!==active || !active.isConnected || !handshake.isCompleted || handshake.isCancelled || open.id in browserIds || browserJobs.size>=8)return@let
-                                browserIds.add(open.id)
-                                if(browserIds.size>128)browserIds.remove(browserIds.first())
-                                val job=scope.launch(start=CoroutineStart.LAZY) {
-                                    try {
-                                        val failure=withContext(Dispatchers.Main) {
-                                            if(channel!==active || !active.isConnected)"Browser connection expired"
-                                            else try {onBrowserOpen(open.url)} catch(e:CancellationException) {throw e}
-                                            catch(e:Exception) {"Could not open the phone browser"}
-                                        }
-                                        if(channel===active && active.isConnected) {
-                                            val result=JSONObject().put("id",open.id)
-                                            if(failure!=null)result.put("error",failure.take(1024))
-                                            request("browser_result",result,10_000)
-                                        }
-                                    } catch(e:CancellationException) {throw e}
-                                    catch(_:Exception) { }
-                                    finally {browserJobs.remove(open.id)}
-                                }
-                                browserJobs[open.id]=job;job.start()
-                                return@let
-                            }
-                            val id = reply.getString("id")
-                            if (id == "ready") handshake.complete(reply.getJSONObject("result"))
-                            else pending.remove(id)?.complete(reply)
-                        }
-                    } else {
-                        require(buffer.length < 4096) { "Host protocol line too long" }
-                        buffer.append(ch.toChar())
-                    }
+            val frames = HostFrames(runNonce)
+            val lines = HostLines()
+            var failure: Exception? = null
+            var linked = false
+            fun handle(line: String) {
+                if (!bootstrapped && line.startsWith("DAZED:$runNonce:python:")) {
+                    HostLoader.tooOld(line, runNonce)?.let { error("DazeDev needs Python 3.9 or newer on $host (found $it).") }
+                    return
                 }
+                if (!bootstrapped && line == "DAZED:$runNonce:no-tmux") error("DazeDev needs tmux on $host. Install tmux, then connect again.")
+                if (line == "DAZED:$runNonce:bootstrap" && !bootstrapped) {
+                    bootstrapped=true
+                    // No request can be written before the ready reply, so this needs no lock.
+                    output.write(Base64.getEncoder().encode(payload));output.write(10);output.flush()
+                    return
+                }
+                val text = frames.line(line) ?: return
+                val reply = JSONObject(text)
+                if(reply.optString("event")=="browser-open") {
+                    val open=BrowserFrames.parse(reply) ?: return
+                    if(channel!==active || !active.isConnected || !handshake.isCompleted || handshake.isCancelled || open.id in browserIds || browserJobs.size>=8)return
+                    browserIds.add(open.id)
+                    if(browserIds.size>128)browserIds.remove(browserIds.first())
+                    val job=scope.launch(start=CoroutineStart.LAZY) {
+                        try {
+                            val failed=withContext(Dispatchers.Main) {
+                                if(channel!==active || !active.isConnected)"Browser connection expired"
+                                else try {onBrowserOpen(open.url)} catch(e:CancellationException) {throw e}
+                                catch(e:Exception) {"Could not open the phone browser"}
+                            }
+                            if(channel===active && active.isConnected) {
+                                val result=JSONObject().put("id",open.id)
+                                if(failed!=null)result.put("error",failed.take(1024))
+                                request("browser_result",result,10_000)
+                            }
+                        } catch(e:CancellationException) {throw e}
+                        catch(_:Exception) { }
+                        finally {browserJobs.remove(open.id)}
+                    }
+                    browserJobs[open.id]=job;job.start()
+                    return
+                }
+                val id = reply.getString("id")
+                if (id == "ready") {linked = true;handshake.complete(reply.getJSONObject("result"))}
+                else pending.remove(id)?.complete(reply)
+            }
+            try {
+                val buffer = ByteArray(16384)
+                while (isActive && channel === active) {
+                    val count = input.read(buffer)
+                    if (count < 0) {
+                        // The exit status arrives just after end of stream.
+                        repeat(20) { if (!active.isClosed) delay(50) }
+                        error(HostLoader.closedMessage(stderr.text(), active.exitStatus, host))
+                    }
+                    lines.feed(buffer, count, ::handle)
+                }
+            } catch (e: CancellationException) {
+                failure = e
             } catch (e: Exception) {
-                handshake.completeExceptionally(e)
-                if (channel === active) {pending.values.forEach { it.completeExceptionally(e) }; pending.clear()}
-            } finally { active.disconnect() }
+                failure = e
+            } finally {
+                val error = failure ?: IllegalStateException("Host stream closed. Reconnect to continue.")
+                handshake.completeExceptionally(error)
+                if (channel === active) {
+                    channel = null
+                    pending.values.forEach { it.completeExceptionally(error) }; pending.clear()
+                    if (linked && error !is CancellationException) onLinkLost(error.message ?: "Host stream closed.")
+                }
+                active.disconnect()
+            }
         }
-        return try { withTimeout(20_000) { ready.await() } } catch (e: Exception) { close();throw e }
+        return try {
+            withTimeoutOrNull(20_000) { handshake.await() }
+                ?: error(HostLoader.closedMessage(stderr.text(), -1, host).let {
+                    if (it.startsWith("Host stream closed")) "$host did not start the DazeDev helper within 20 s." else it
+                })
+        } catch (e: Exception) { close(); throw e }
     }
 
     suspend fun request(method: String, args: JSONObject = JSONObject(), timeoutMs: Long = 60_000): Any {
@@ -113,7 +142,8 @@ class HostClient(private val ssh: SshConnection, private val scope: CoroutineSco
             withContext(Dispatchers.IO) {
                 writer.withLock { val output=active.outputStream;output.write(Base64.getEncoder().encode(request));output.write(10);output.flush() }
             }
-            val reply = withTimeout(timeoutMs) { deferred.await() }
+            // A timeout is a failure the caller must show, not a silent cancellation.
+            val reply = withTimeoutOrNull(timeoutMs) { deferred.await() } ?: throw HostTimeoutException(method, timeoutMs)
             if (reply.has("error")) error(reply.getString("error"))
             reply.get("result")
         } finally { pending.remove(id);deferred.cancel();requests.release() }
@@ -121,8 +151,10 @@ class HostClient(private val ssh: SshConnection, private val scope: CoroutineSco
 
     fun close() {
         browserJobs.values.forEach {it.cancel()};browserJobs.clear()
+        val old = channel
+        channel = null
         reader?.cancel();reader = null
-        channel?.disconnect();channel = null
+        old?.disconnect()
         pending.values.forEach { it.cancel() }; pending.clear()
         ready.cancel()
     }

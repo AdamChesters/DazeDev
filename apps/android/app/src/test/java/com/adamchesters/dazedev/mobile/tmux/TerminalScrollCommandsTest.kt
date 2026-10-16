@@ -1,20 +1,24 @@
 package com.adamchesters.dazedev.mobile.tmux
 
+import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue
 import org.junit.Test
 
 class TerminalScrollCommandsTest {
     @Test fun quotesSocketAndStampAsLiteralArguments() {
-        val command=TerminalScrollCommands.command("socket'; touch /tmp/no", "\$7", "stamp'; echo no", -12)
-        assertTrue(command.endsWith("${ShellQuoter.quote("socket'; touch /tmp/no")} '\$7' ${ShellQuoter.quote("stamp'; echo no")} -12 0"))
+        val command=TerminalScrollCommands.cancel("socket'; touch /tmp/no", "\$7", "stamp'; echo no")
+        assertTrue(command.startsWith("python3 -I -c "))
+        assertTrue(command.endsWith("${ShellQuoter.quote("socket'; touch /tmp/no")} '\$7' ${ShellQuoter.quote("stamp'; echo no")}"))
+    }
+    @Test fun neverEntersCopyMode() {
+        assertFalse(TerminalScrollCommands.script.contains("'copy-mode','-e'"))
+        assertFalse(TerminalScrollCommands.script.contains("scroll-up"))
+        assertTrue(TerminalScrollCommands.script.contains("'cancel'"))
     }
     @Test(expected=IllegalArgumentException::class) fun rejectsNonSessionTargets() {
-        TerminalScrollCommands.command("", "other-session", "stamp", -1)
-    }
-    @Test(expected=IllegalArgumentException::class) fun rejectsUnboundedScrollRequests() {
-        TerminalScrollCommands.command("", "\$1", "stamp", Int.MIN_VALUE)
+        TerminalScrollCommands.cancel("", "other-session", "stamp")
     }
     @Test(expected=IllegalArgumentException::class) fun rejectsMissingSessionStamp() {
-        TerminalScrollCommands.command("", "\$1", "", -1)
+        TerminalScrollCommands.cancel("", "\$1", "")
     }
 }

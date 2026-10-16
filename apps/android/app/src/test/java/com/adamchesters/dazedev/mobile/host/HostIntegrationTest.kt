@@ -10,13 +10,12 @@ import org.json.JSONObject
 import org.json.JSONArray
 import org.junit.Assert.*
 import org.junit.Assume.assumeTrue
+import com.adamchesters.dazedev.mobile.Fixtures
 import org.junit.Test
 
 class HostIntegrationTest {
     @Test fun sharedHelperConflictIdempotencyStaleTargetAndInteractivePty() = runBlocking {
-        val root=System.getenv("DAZEDEV_TEST_REAL_FIXTURE")
-        assumeTrue("Requires disposable real host fixture",root!=null)
-        val folder=File(requireNotNull(root))
+        val folder=File(Fixtures.env("DAZEDEV_TEST_REAL_FIXTURE","Requires disposable real host fixture"))
         val port=JSONObject(File(folder,"fixture-ports.json").readText()).getInt("127.0.0.1")
         val socket=File(folder,"fixture-socket.txt").readText()
         val source=File(File(folder,"fixture-host-source.txt").readText()).readBytes()
@@ -30,7 +29,10 @@ class HostIntegrationTest {
         try {
             val key=File(folder,"fixture-key.pem").readBytes()
             try {ssh.connect(ConnectionProfile("127.0.0.1",port,"key-user",AuthMethod.PrivateKey,"content://fixture/key"),"fixture-passphrase",key)}finally{key.fill(0)}
-            val ready=client.start(source,socket);assertTrue(ready.getString("machine").isNotBlank())
+            // Commands start in the fixture home; a stray module there must not replace the standard library.
+            val stray=File(folder,"home/json.py");stray.writeText("raise SystemExit('stray json.py was imported')\n")
+            val ready=try {client.start(source,socket)} finally {stray.delete()}
+            assertTrue(ready.getString("machine").isNotBlank())
             other.start(source,socket)
             val capabilities=client.request("capabilities") as JSONObject
             assertEquals(1,capabilities.getInt("protocol"))

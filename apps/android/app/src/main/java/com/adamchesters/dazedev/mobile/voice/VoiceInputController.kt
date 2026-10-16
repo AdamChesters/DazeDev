@@ -53,6 +53,9 @@ internal class TranscriptAccumulator {
         return combined()
     }
 
+    @Synchronized
+    fun hasPartial(): Boolean = currentLine.isNotEmpty()
+
     private fun combined(): String = buildList {
         addAll(completedLines)
         currentLine.takeIf(String::isNotEmpty)?.let(::add)
@@ -75,6 +78,8 @@ class VoiceInputController(
     private var status = VoiceInputStatus()
     private var generation = 0L
     @Volatile private var modelLoaded = false
+    @Volatile private var lastTranscriptAt = 0L
+    @Volatile private var stoppedAt = 0L
     private var destroyed = false
     private var initializationError: Throwable? = null
 
@@ -120,29 +125,29 @@ class VoiceInputController(
                 preparation = files
                 val directory = files.prepare(::handleProgress)
                 if (!isCurrent(runGeneration)) return@submit
-                val capture = MicTranscriber(appContext).language("en")
-                    .modelArch(JNI.MOONSHINE_MODEL_ARCH_MEDIUM_STREAMING)
-                    .callbacksOnMainThread(false)
-                    .onText {text -> if(isCurrent(runGeneration))handlePartialTranscript(text)}
-                    .onLine {line -> if(isCurrent(runGeneration))handleCompletedLine(line.text.orEmpty())}
-                    .onError {error -> if(isCurrent(runGeneration))handleMicrophoneError(error)}
+                VoiceModel.listener = object : VoiceModel.Listener {
+                    override fun text(value: String) {if(isCurrent(runGeneration))handlePartialTranscript(value)}
+                    override fun line(value: String) {if(isCurrent(runGeneration))handleCompletedLine(value)}
+                    override fun error(error: Throwable) {if(isCurrent(runGeneration))handleMicrophoneError(error)}
+                }
+                // The loaded model is shared and kept while the terminal screen is open.
+                val capture = VoiceModel.acquire(appContext, directory)
+                modelLoaded = true
                 activeMicrophone = capture
                 microphone = capture
-                capture.loadFromFiles(directory.absolutePath, JNI.MOONSHINE_MODEL_ARCH_MEDIUM_STREAMING)
-                modelLoaded = true
-                if (!isCurrent(runGeneration)) {capture.close();return@submit}
+                if (!isCurrent(runGeneration)) return@submit
                 capture.start()
 
                 val listeningStatus = VoiceInputStatus(phase = VoiceInputPhase.Listening)
                 if (!transition(runGeneration, listeningStatus)) {
-                    capture.close()
+                    runCatching(capture::stop)
                 }
             } catch (error: Throwable) {
-                runCatching {activeMicrophone?.close()}
+                runCatching {activeMicrophone?.stop()}
                 fail(runGeneration, error, preparing = !modelLoaded)
             } finally {
                 preparation = null
-                if(!isCurrent(runGeneration)){runCatching {activeMicrophone?.close()};modelLoaded=false}
+                if(!isCurrent(runGeneration)){runCatching {activeMicrophone?.stop()}}
             }
         }
     }
@@ -172,15 +177,27 @@ class VoiceInputController(
         postStatus(nextStatus)
         microphone?.let { activeMicrophone ->
             worker.execute {
+                stoppedAt = System.currentTimeMillis()
                 activeMicrophone.stop()
                 stopGeneration?.let {
-                    runCatching { Thread.sleep(STOP_FINALIZATION_TIMEOUT_MS) }
-                    runCatching(activeMicrophone::close)
+                    awaitFinalTranscript()
                     microphone = null
-                    modelLoaded = false
                     finishStopping(it)
                 }
             }
+        }
+    }
+
+    /**
+     * After stop, Moonshine flushes the last audio and reports the final line.
+     * Wait for that line (or a quiet period when no words are pending), with a cap.
+     */
+    private fun awaitFinalTranscript() {
+        val deadline = stoppedAt + STOP_FINALIZATION_TIMEOUT_MS
+        while (System.currentTimeMillis() < deadline) {
+            val quietFor = System.currentTimeMillis() - maxOf(lastTranscriptAt, stoppedAt)
+            if (!transcript.hasPartial() && quietFor >= QUIET_AFTER_STOP_MS) return
+            try { Thread.sleep(25) } catch (_: InterruptedException) { return }
         }
     }
 
@@ -188,7 +205,7 @@ class VoiceInputController(
     fun cancelCapture() {
         val active = synchronized(stateLock) {generation+=1;status=VoiceInputStatus();microphone.also {microphone=null}}
         preparation?.cancel();preparingTask?.cancel(true)
-        worker.execute {runCatching {active?.close()};modelLoaded=false}
+        worker.execute {runCatching {active?.stop()}}
         postStatus(VoiceInputStatus())
     }
 
@@ -207,10 +224,7 @@ class VoiceInputController(
         preparation?.cancel();preparingTask?.cancel(true)
         transcript.reset()
         microphone?.let { activeMicrophone ->
-            worker.execute {
-                runCatching(activeMicrophone::stop)
-                runCatching(activeMicrophone::close)
-            }
+            worker.execute {runCatching(activeMicrophone::stop)}
         }
         worker.shutdown()
     }
@@ -240,12 +254,14 @@ class VoiceInputController(
     }
 
     private fun handlePartialTranscript(text: String) {
+        lastTranscriptAt = System.currentTimeMillis()
         val runGeneration = transcriptGeneration() ?: return
         val combined = transcript.partial(text)
         if (combined.isNotBlank()) postTranscript(runGeneration, combined, isFinal = false)
     }
 
     private fun handleCompletedLine(text: String) {
+        lastTranscriptAt = System.currentTimeMillis()
         val runGeneration = transcriptGeneration() ?: return
         val combined = transcript.complete(text)
         if (combined.isNotBlank()) postTranscript(runGeneration, combined, isFinal = true)
@@ -268,11 +284,10 @@ class VoiceInputController(
         }
         if (!shouldReport) return
 
-        microphone?.let { activeMicrophone ->
-            worker.execute {
-                runCatching(activeMicrophone::close)
-                modelLoaded = false
-            }
+        worker.execute {
+            VoiceModel.release()
+            microphone = null
+            modelLoaded = false
         }
         postStatus(VoiceInputStatus())
         postError(friendlyMessage(error, preparing = false))
@@ -369,6 +384,7 @@ class VoiceInputController(
     }
 
     private companion object {
-        const val STOP_FINALIZATION_TIMEOUT_MS = 1_000L
+        const val STOP_FINALIZATION_TIMEOUT_MS = 5_000L
+        const val QUIET_AFTER_STOP_MS = 400L
     }
 }

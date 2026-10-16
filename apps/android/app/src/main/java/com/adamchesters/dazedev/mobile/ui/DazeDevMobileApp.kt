@@ -22,6 +22,10 @@ import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.setValue
 import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.Modifier
+import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.verticalScroll
 import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.LifecycleEventObserver
 import androidx.lifecycle.compose.LocalLifecycleOwner
@@ -77,6 +81,12 @@ fun DazeDevMobileApp(viewModel: MainViewModel) {
         onDispose { lifecycleOwner.lifecycle.removeObserver(observer) }
     }
 
+    LaunchedEffect(uiState.secureScreen) {
+        val window=(context as? android.app.Activity)?.window ?: return@LaunchedEffect
+        if(uiState.secureScreen)window.addFlags(android.view.WindowManager.LayoutParams.FLAG_SECURE)
+        else window.clearFlags(android.view.WindowManager.LayoutParams.FLAG_SECURE)
+    }
+
     LaunchedEffect(uiState.message?.id) {
         val message = uiState.message ?: return@LaunchedEffect
         snackbarHostState.showSnackbar(message.text)
@@ -90,6 +100,8 @@ fun DazeDevMobileApp(viewModel: MainViewModel) {
 
     BackHandler(enabled = !uiState.showHosts && uiState.localGroupId == null && uiState.selectedSessionName == null && uiState.connectionPhase != ConnectionPhase.Connected) {viewModel.cancelConnection()}
 
+    val terminalState = remember(uiState.selectedTargetHost,uiState.selectedSessionId,uiState.selectedStamp,uiState.selectedSessionName,uiState.selectedTargetLabel,
+        uiState.selectedPaneId,uiState.terminal,uiState.terminalEpoch,uiState.terminalError,uiState.staleSession,uiState.isSending,uiState.localGroups,uiState.folders,uiState.selectedFolder,uiState.localGroupId) {uiState.terminalScreenState()}
     Scaffold(
         snackbarHost = { SnackbarHost(snackbarHostState) },
     ) { contentPadding ->
@@ -117,7 +129,7 @@ fun DazeDevMobileApp(viewModel: MainViewModel) {
                 onRenameSession = viewModel::renameSession,
             )
             else -> TerminalScreen(
-                uiState = uiState,
+                uiState = terminalState,
                 contentPadding = contentPadding,
                 onBack = viewModel::leaveTerminal,
                 onRefresh = viewModel::refreshTerminal,
@@ -128,6 +140,8 @@ fun DazeDevMobileApp(viewModel: MainViewModel) {
                 onWindows = viewModel::readWindows,
                 onPrepareTarget = viewModel::prepareInputTarget,
                 onValidateTarget = viewModel::validateInputTarget,
+                onReconnect = viewModel::reconnectTerminal,
+                onMeasured = viewModel::terminalMeasured,
                 onMessage = { text ->
                     coroutineScope.launch {
                         snackbarHostState.currentSnackbarData?.dismiss()
@@ -162,6 +176,36 @@ fun DazeDevMobileApp(viewModel: MainViewModel) {
     if(uiState.windows.isNotEmpty()) TmuxWindowPicker(uiState.windows,viewModel::selectWindow,viewModel::dismissWindows)
     uiState.draftReview?.let {review->DraftReview(review,viewModel::applyDraftReview,viewModel::dismissDraftReview)}
     uiState.tmuxSettings?.let {settings->TmuxSettingsSheet(settings,viewModel::applyTmuxSetting,viewModel::dismissTmuxSettings)}
+    uiState.staleSession?.let {stale->
+        val replacement=stale.replacement
+        AlertDialog(onDismissRequest=viewModel::dismissStaleSession,title={Text("Session ended or restarted")},
+            text={Text(if(replacement!=null)"“${stale.name}” was closed or its tmux server restarted. A session with the same name is running now. Open it and update this saved terminal?"
+                else "No session named “${stale.name}” is running now. Go back to start a new one or pick another session.")},
+            confirmButton={if(replacement!=null)Button(onClick=viewModel::adoptStaleSession){Text("Open current session")} else TextButton(onClick={viewModel.dismissStaleSession();viewModel.leaveTerminal()}){Text("Back")}},
+            dismissButton={if(replacement!=null)TextButton(onClick=viewModel::dismissStaleSession){Text("Not now")}})
+    }
+    uiState.hostKeyChange?.let {change->
+        AlertDialog(onDismissRequest=viewModel::dismissHostKeyChange,title={Text("Warning: SSH host key changed")},
+            text={Text("The key that ${change.label} sent does not match the saved key. Someone may be intercepting the connection. DazeDev did not connect.\n\nNew ${change.notice.type} key:\n${change.notice.fingerprint}\n\nOnly if you know the server key was replaced (for example after a reinstall), forget the old key in Saved host keys, then connect again and check the new fingerprint.")},
+            confirmButton={TextButton(onClick=viewModel::dismissHostKeyChange){Text("Close")}},
+            dismissButton={TextButton(onClick=viewModel::openHostKeys){Text("Saved host keys")}})
+    }
+    uiState.hostKeys?.let {keys->HostKeyManager(keys,viewModel::forgetHostKey,viewModel::closeHostKeys)}
+    uiState.browserRequest?.let {request->
+        AlertDialog(onDismissRequest={viewModel.answerBrowserRequest(BrowserAnswer.Deny)},title={Text("Open link from ${request.host}?")},
+            text={Text("${request.host} wants to open:\n\n${request.url.take(2000)}")},
+            confirmButton={Column {
+                TextButton(onClick={viewModel.answerBrowserRequest(BrowserAnswer.Once)}){Text("Open")}
+                TextButton(onClick={viewModel.answerBrowserRequest(BrowserAnswer.Connection)}){Text("Allow for this connection")}
+            }},
+            dismissButton={TextButton(onClick={viewModel.answerBrowserRequest(BrowserAnswer.Deny)}){Text("Don't open")}})
+    }
+    uiState.authNotice?.let {notice->
+        AlertDialog(onDismissRequest=viewModel::dismissAuthNotice,title={Text("Message from ${notice.host}")},
+            text={Text(notice.text,modifier=Modifier.verticalScroll(rememberScrollState()))},
+            confirmButton={notice.url?.let {url->TextButton(onClick={BrowserLauncher.open(context,url)?.let {error->coroutineScope.launch {snackbarHostState.showSnackbar(error)}}}){Text("Open link")}}},
+            dismissButton={TextButton(onClick=viewModel::dismissAuthNotice){Text("Close")}})
+    }
     uiState.hostKeyChallenge?.let { challenge ->
         val promptHostId=uiState.challengeHostId
         AlertDialog(
@@ -196,4 +240,25 @@ private fun queryDisplayName(cursor: Cursor?): String? = cursor?.use {
     if (!it.moveToFirst()) return@use null
     val index = it.getColumnIndex(OpenableColumns.DISPLAY_NAME)
     if (index < 0) null else it.getString(index)
+}
+
+@Composable
+private fun HostKeyManager(keys:List<HostKeyEntry>,onForget:(HostKeyEntry)->Unit,onClose:()->Unit) {
+    var confirm by remember {mutableStateOf<HostKeyEntry?>(null)}
+    AlertDialog(onDismissRequest=onClose,title={Text("Saved host keys")},
+        text={Column(Modifier.verticalScroll(rememberScrollState())) {
+            if(keys.isEmpty())Text("No host keys are saved on this phone.")
+            keys.forEach {key->
+                Text(key.label,style=androidx.compose.material3.MaterialTheme.typography.titleSmall)
+                Text("${key.type}\n${key.fingerprint}",style=androidx.compose.material3.MaterialTheme.typography.bodySmall)
+                TextButton(onClick={confirm=key}){Text("Forget")}
+            }
+        }},
+        confirmButton={TextButton(onClick=onClose){Text("Close")}})
+    confirm?.let {key->
+        AlertDialog(onDismissRequest={confirm=null},title={Text("Forget this key?")},
+            text={Text("The next connection to ${key.label} asks you to check and trust its key again. Do this only if you know the server key changed.")},
+            confirmButton={TextButton(onClick={onForget(key);confirm=null}){Text("Forget key")}},
+            dismissButton={TextButton(onClick={confirm=null}){Text("Cancel")}})
+    }
 }

@@ -2,6 +2,7 @@ package com.adamchesters.dazedev.mobile.ui
 
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.gestures.detectDragGesturesAfterLongPress
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
@@ -113,8 +114,10 @@ fun HostWorkspaceScreen(state:DazeDevMobileUiState,padding:PaddingValues,viewMod
             }
         }
         HorizontalDivider()
-        Row(Modifier.fillMaxWidth(),horizontalArrangement=Arrangement.Center) {
+        Row(Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()),horizontalArrangement=Arrangement.Center) {
             TextButton(onClick={history=true}){Text("Changelog")}
+            TextButton(onClick=viewModel::openHostKeys){Text("Host keys")}
+            TextButton(onClick={viewModel.setSecureScreen(!state.secureScreen)},modifier=Modifier.semantics {contentDescription=if(state.secureScreen)"Private screen is on. Screenshots and the Recents preview are blocked." else "Private screen is off."}){Text(if(state.secureScreen)"Private screen: on" else "Private screen: off")}
             TextButton(onClick={
                 val assets=context.assets
                 val paths=listOf("moonshine-license.txt","xterm-license.txt","addon-fit-license.txt","addon-unicode11-license.txt","addon-web-links-license.txt") + assets.list("licenses").orEmpty().map {"licenses/$it"}

@@ -13,24 +13,26 @@ import kotlinx.coroutines.test.*
 import org.json.JSONObject
 import org.junit.Assert.*
 import org.junit.Assume.assumeTrue
+import com.adamchesters.dazedev.mobile.Fixtures
 import org.junit.Test
 
 @OptIn(ExperimentalCoroutinesApi::class)
 class BrowserIntegrationTest {
     @Test fun remoteOpenReachesMobileCallbackAndAcknowledgesWithoutBlockingReader() = runBlocking {
-        val root=System.getenv("DAZEDEV_TEST_REAL_FIXTURE")
-        assumeTrue("Requires disposable real host fixture",root!=null)
-        val folder=File(requireNotNull(root))
+        val folder=File(Fixtures.env("DAZEDEV_TEST_REAL_FIXTURE","Requires disposable real host fixture"))
         val port=JSONObject(File(folder,"fixture-ports.json").readText()).getInt("127.0.0.1")
         val socket=File(folder,"fixture-socket.txt").readText()
         val hostSource=File(File(folder,"fixture-host-source.txt").readText())
+        // The fixture copies the helpers with a private bridge folder; never run the shared copies.
+        assertTrue("Browser helper must be the fixture's isolated copy",hostSource.canonicalPath.startsWith(folder.canonicalPath+File.separator))
+        assertFalse(File(hostSource.parentFile,"browser.py").readText().contains("'/tmp'"))
         val known=File.createTempFile("dazedev-browser-test","hosts")
         val prompts=HostKeyPromptCoordinator()
         val ssh=SshConnection(known,prompts)
         val trust=launch {prompts.challenge.filterNotNull().collect {prompts.answer(it.id,true)}}
         val scope=CoroutineScope(SupervisorJob()+Dispatchers.IO)
         val opened=CompletableDeferred<String>()
-        val client=HostClient(ssh,scope) { url->opened.complete(url);null }
+        val client=HostClient(ssh,scope,onBrowserOpen={ url->opened.complete(url);null })
         var terminal:TerminalStream?=null
         var target:JSONObject?=null
         Dispatchers.setMain(UnconfinedTestDispatcher())
@@ -55,7 +57,8 @@ class BrowserIntegrationTest {
                 }
             }
             assertTrue(active.send("\"\$BROWSER\" https://example.com/login && printf 'BROWSER_%s\\n' 'ACK_OK'\r".toByteArray()))
-            assertEquals("https://example.com/login",withTimeout(10_000){opened.await()})
+            val url=withTimeoutOrNull(10_000){opened.await()} ?: throw AssertionError("Browser request never reached the phone callback: $output")
+            assertEquals("https://example.com/login",url)
             try {withTimeout(10_000){completed.await()}}
             catch(e:Exception) {throw AssertionError("Browser shim did not receive its successful acknowledgement: $output",e)}
             assertEquals(1,(client.request("capabilities") as JSONObject).getInt("protocol"))
