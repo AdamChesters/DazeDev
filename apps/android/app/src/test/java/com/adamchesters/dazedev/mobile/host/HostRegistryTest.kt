@@ -218,4 +218,48 @@ class HostRegistryTest {
             assertFalse(factory.hosts.single().isOpen)
             scope.cancel()
         }
+
+    @Test fun networkLossWaitsAndReconnectsWhenTheNetworkReturns() =
+        runTest {
+            val scope = CoroutineScope(SupervisorJob() + StandardTestDispatcher(testScheduler))
+            val factory = FakeLinkFactory()
+            val registry = fakeRegistry(scope, factory)
+            registry.keepConnected.value = true
+            val events = mutableListOf<HostEvent>()
+            val watcher = scope.launch { registry.events.toList(events) }
+            registry.connect(tailscaleProfile(), CharArray(0))
+            advanceUntilIdle()
+            registry.networkLost()
+            advanceUntilIdle()
+            val waiting = registry.snapshot("host-1")!!
+            assertEquals(ConnectionPhase.Disconnected, waiting.phase)
+            assertEquals("Waiting for the network to reconnect Dev.", waiting.linkError)
+            assertTrue(events.any { it is HostEvent.LinkLost })
+            // No attempt runs while the network is gone.
+            assertEquals(1, factory.ssh.single().connects)
+            registry.networkAvailable()
+            advanceUntilIdle()
+            assertEquals(ConnectionPhase.Connected, registry.snapshot("host-1")!!.phase)
+            assertEquals(2, factory.ssh.single().connects)
+            assertTrue(events.contains(HostEvent.Reconnected("host-1")))
+            watcher.cancel()
+            scope.cancel()
+        }
+
+    @Test fun networkLossWithoutKeepConnectedOnlyDisconnects() =
+        runTest {
+            val scope = CoroutineScope(SupervisorJob() + StandardTestDispatcher(testScheduler))
+            val factory = FakeLinkFactory()
+            val registry = fakeRegistry(scope, factory)
+            registry.connect(tailscaleProfile(), CharArray(0))
+            advanceUntilIdle()
+            registry.networkLost()
+            registry.networkAvailable()
+            advanceUntilIdle()
+            val host = registry.snapshot("host-1")!!
+            assertEquals(ConnectionPhase.Disconnected, host.phase)
+            assertEquals("Lost connection to Dev. The phone lost its network connection.", host.linkError)
+            assertEquals(1, factory.ssh.single().connects)
+            scope.cancel()
+        }
 }

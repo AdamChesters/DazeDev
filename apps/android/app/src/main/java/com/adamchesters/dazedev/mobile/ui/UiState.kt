@@ -12,7 +12,6 @@ import com.adamchesters.dazedev.mobile.host.WorkspaceFolder
 import com.adamchesters.dazedev.mobile.releases.MobileUpdate
 import com.adamchesters.dazedev.mobile.releases.ReleaseEntry
 import com.adamchesters.dazedev.mobile.ssh.HostKeyChallenge
-import com.adamchesters.dazedev.mobile.ssh.TerminalLink
 import com.adamchesters.dazedev.mobile.tmux.TmuxSession
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.update
@@ -60,17 +59,20 @@ data class HostSummary(
 
 data class DazeDevMobileUiState(
     val localGroups: List<WorkspaceFolder> = emptyList(),
-    val localGroupId: String? = null,
     val groupConnectPrompt: Boolean = false,
     val groupConnectionHost: String? = null,
     val selectedPaneId: String? = null,
     val releaseHistory: List<ReleaseEntry> = emptyList(),
     val releaseHistoryStatus: String = "",
     val mobileUpdate: MobileUpdate? = null,
+    val updateProgress: String? = null,
+    val updateError: String? = null,
+    /** Path of a downloaded APK whose SHA-256 matched the release's SHA256SUMS. */
+    val verifiedUpdate: String? = null,
     val checkingUpdates: Boolean = false,
     val profile: ConnectionProfile = ConnectionProfile(),
     val hosts: List<HostSummary> = emptyList(),
-    val showHosts: Boolean = true,
+    val backStack: List<Screen> = listOf(Screen.Hosts),
     val connectionPhase: ConnectionPhase = ConnectionPhase.Disconnected,
     val folders: List<WorkspaceFolder> = emptyList(),
     val selectedFolder: String? = null,
@@ -82,7 +84,6 @@ data class DazeDevMobileUiState(
     val selectedStamp: String? = null,
     val selectedTargetHost: String? = null,
     val selectedTargetLabel: String = "",
-    val terminal: TerminalLink? = null,
     val terminalEpoch: Long = 0,
     val tmuxSettings: JSONObject? = null,
     val isRefreshing: Boolean = false,

@@ -7,6 +7,7 @@ import com.adamchesters.dazedev.mobile.host.HelperSources
 import com.adamchesters.dazedev.mobile.host.HostRegistry
 import com.adamchesters.dazedev.mobile.host.SshHostLinkFactory
 import com.adamchesters.dazedev.mobile.service.KeepConnected
+import com.adamchesters.dazedev.mobile.service.NetworkWatcher
 import com.adamchesters.dazedev.mobile.ui.BrowserLauncher
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
@@ -34,6 +35,7 @@ class DazeDevApplication : Application() {
             )
         hosts.keepConnected.value = store.keepConnected
         KeepConnected(this, hosts, hosts.keepConnected).start()
+        NetworkWatcher(this, hosts).start()
         val saved = store.loadAll().map { it.id }.toSet()
         hosts.scope.launch { runCatching { credentials.prune(saved) } }
     }

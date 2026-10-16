@@ -55,7 +55,7 @@ class HostClient(
                 source
             }
         // -I keeps stray modules in the home or working folder from loading.
-        val cmd = "export DAZED_TMUX_SOCKET=${ShellQuoter.quote(socket)}; ${browserEnvironment}exec python3 -I -u -c ${ShellQuoter.quote(HostLoader.script)} $nonce"
+        val cmd = "export DAZED_TMUX_SOCKET=${ShellQuoter.quote(socket)}; ${browserEnvironment}exec python3 -I -u -c ${ShellQuoter.quote(HostLoader.script)} $nonce 2"
         val active = ssh.openStream(cmd)
         val input = active.inputStream
         val output = active.outputStream
@@ -74,27 +74,30 @@ class HostClient(
         reader =
             scope.launch(Dispatchers.IO) {
                 var bootstrapped = false
-                val frames = HostFrames(runNonce)
+                // Text lines until the helper source is sent, then protocol 2 frames.
+                var frames: MessageFrames? = null
                 val lines = HostLines()
                 var failure: Exception? = null
                 var linked = false
 
-                fun handle(line: String) {
-                    if (!bootstrapped && line.startsWith("DAZED:$runNonce:python:")) {
+                fun line(line: String): Boolean {
+                    if (line.startsWith("DAZED:$runNonce:python:")) {
                         HostLoader.tooOld(line, runNonce)?.let { error("DazeDev needs Python 3.9 or newer on $host (found $it).") }
-                        return
+                        return true
                     }
-                    if (!bootstrapped && line == "DAZED:$runNonce:no-tmux") error("DazeDev needs tmux on $host. Install tmux, then connect again.")
-                    if (line == "DAZED:$runNonce:bootstrap" && !bootstrapped) {
-                        bootstrapped = true
-                        // No request can be written before the ready reply, so this needs no lock.
-                        output.write(Base64.getEncoder().encode(payload))
-                        output.write(10)
-                        output.flush()
-                        return
-                    }
-                    val text = frames.line(line) ?: return
-                    val reply = JSONObject(text)
+                    if (line == "DAZED:$runNonce:no-tmux") error("DazeDev needs tmux on $host. Install tmux, then connect again.")
+                    if (line != "DAZED:$runNonce:bootstrap") return true
+                    bootstrapped = true
+                    // No request can be written before the ready reply, so this needs no lock.
+                    output.write(Base64.getEncoder().encode(payload))
+                    output.write(10)
+                    output.flush()
+                    frames = MessageFrames()
+                    return false
+                }
+
+                fun handle(message: ByteArray) {
+                    val reply = JSONObject(String(message, Charsets.UTF_8))
                     if (reply.optString("event") == "browser-open") {
                         val open = BrowserFrames.parse(reply) ?: return
                         if (channel !== active || !active.isConnected || !handshake.isCompleted || handshake.isCancelled || open.id in browserIds || browserJobs.size >= 8) return
@@ -135,8 +138,11 @@ class HostClient(
                     }
                     val id = reply.getString("id")
                     if (id == "ready") {
+                        val result = reply.getJSONObject("result")
+                        val protocol = result.optInt("protocol", 1)
+                        require(protocol == 2) { "The DazeDev helper on $host answered with protocol $protocol; this app needs protocol 2." }
                         linked = true
-                        handshake.complete(reply.getJSONObject("result"))
+                        handshake.complete(result)
                     } else {
                         pending.remove(id)?.complete(reply)
                     }
@@ -150,7 +156,9 @@ class HostClient(
                             repeat(20) { if (!active.isClosed) delay(50) }
                             error(HostLoader.closedMessage(stderr.text(), active.exitStatus, host))
                         }
-                        lines.feed(buffer, count, ::handle)
+                        var used = 0
+                        if (!bootstrapped) used = lines.feed(buffer, count, ::line)
+                        frames?.let { decoder -> if (used < count) decoder.push(buffer, used, count - used).forEach(::handle) }
                     }
                 } catch (e: CancellationException) {
                     failure = e
@@ -207,14 +215,13 @@ class HostClient(
             withContext(Dispatchers.IO) {
                 writer.withLock {
                     val output = active.outputStream
-                    output.write(Base64.getEncoder().encode(request))
-                    output.write(10)
+                    output.write(MessageFrames.request(request))
                     output.flush()
                 }
             }
             // A timeout is a failure the caller must show, not a silent cancellation.
             val reply = withTimeoutOrNull(timeoutMs) { deferred.await() } ?: throw HostTimeoutException(method, timeoutMs)
-            if (reply.has("error")) error(reply.getString("error"))
+            MessageFrames.errorText(reply.opt("error"))?.let { error(it) }
             reply.get("result")
         } finally {
             pending.remove(id)

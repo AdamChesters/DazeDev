@@ -112,7 +112,7 @@ class SessionController(
                 store.completeLaunch(h.profile.id, request)
                 registry.refresh(h)
                 val first = created.first()
-                if (terminal.generation == navigationGeneration && current() === h && !ui.value.showHosts) {
+                if (terminal.generation == navigationGeneration && current() === h && ui.value.screen != Screen.Hosts) {
                     terminal.openSession(h, first.getString("id"), first.getString("stamp"), first.getString("name"))
                 } else {
                     ui.message("Created ${created.size} terminals on ${h.profile.name.ifBlank { h.profile.host }}.")

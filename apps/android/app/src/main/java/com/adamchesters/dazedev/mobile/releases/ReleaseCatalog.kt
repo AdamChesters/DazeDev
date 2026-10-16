@@ -7,6 +7,7 @@ import javax.net.ssl.HttpsURLConnection
 
 private const val REPOSITORY = "AdamChesters/DazeDev"
 private const val MAX_METADATA = 1024 * 1024
+private const val MAX_SUMS = 64 * 1024
 
 data class ReleaseEntry(
     val platform: String,
@@ -20,7 +21,38 @@ data class MobileUpdate(
     val version: String,
     val url: String,
     val notes: String,
-)
+    /** The release's SHA256SUMS asset, or null when the release has none. */
+    val checksums: String? = null,
+    val page: String = "",
+) {
+    val fileName get() = url.substringAfterLast('/')
+}
+
+/** Finds [name]'s SHA-256 in a sha256sum-style file ("<hex>  <name>" or "<hex> *<name>"). */
+fun expectedSha256(
+    sums: String,
+    name: String,
+): String? =
+    sums
+        .lineSequence()
+        .mapNotNull { Regex("^([0-9a-fA-F]{64}) [ *](.+)$").matchEntire(it.trimEnd('\r')) }
+        .firstOrNull { it.groupValues[2] == name }
+        ?.groupValues
+        ?.get(1)
+        ?.lowercase()
+
+private fun releaseAsset(
+    asset: JSONObject,
+    tag: String,
+    name: String,
+    maxSize: Long,
+): String? {
+    if (asset.optString("name") != name || asset.optLong("size") !in 1..maxSize) return null
+    val url = asset.optString("browser_download_url")
+    val uri = runCatching { URI(url) }.getOrNull() ?: return null
+    if (uri.scheme != "https" || uri.host != "github.com" || uri.userInfo != null || uri.port != -1 || uri.query != null || uri.fragment != null) return null
+    return url.takeIf { uri.path == "/$REPOSITORY/releases/download/$tag/$name" }
+}
 
 fun mergeHistory(
     remote: String,
@@ -108,16 +140,10 @@ fun findMobileUpdate(
         val version = Version.parse(label) ?: continue
         if (version <= installed || (installed.pre.isEmpty() && (version.pre.isNotEmpty() || release.optBoolean("prerelease")))) continue
         val assets = release.optJSONArray("assets") ?: continue
-        val expected = "DazeDev-Mobile-$label.apk"
-        for (j in 0 until assets.length()) {
-            val asset = assets.optJSONObject(j) ?: continue
-            if (asset.optString("name") != expected || asset.optLong("size") !in 1..512L * 1024 * 1024) continue
-            val url = asset.optString("browser_download_url")
-            val uri = runCatching { URI(url) }.getOrNull() ?: continue
-            if (uri.scheme != "https" || uri.host != "github.com" || uri.userInfo != null || uri.port != -1 || uri.query != null || uri.fragment != null) continue
-            if (uri.path != "/$REPOSITORY/releases/download/$tag/$expected") continue
-            candidates.add(version to MobileUpdate(label, url, release.optString("body").take(50000)))
-        }
+        val list = (0 until assets.length()).mapNotNull(assets::optJSONObject)
+        val apk = list.firstNotNullOfOrNull { releaseAsset(it, tag, "DazeDev-Mobile-$label.apk", 512L * 1024 * 1024) } ?: continue
+        val sums = list.firstNotNullOfOrNull { releaseAsset(it, tag, "SHA256SUMS", MAX_SUMS.toLong()) }
+        candidates.add(version to MobileUpdate(label, apk, release.optString("body").take(50000), sums, "https://github.com/$REPOSITORY/releases/tag/$tag"))
     }
     return candidates.maxByOrNull { it.first }?.second
 }
@@ -154,4 +180,23 @@ object PublicReleaseCatalog : ReleaseSource {
     override fun updates(current: String): MobileUpdate? = findMobileUpdate(fetch("https://api.github.com/repos/$REPOSITORY/releases?per_page=100"), current)
 
     override fun history(): String = fetch("https://raw.githubusercontent.com/$REPOSITORY/main/shared/releases/changelog.json")
+
+    override fun checksums(update: MobileUpdate): String? {
+        val url = update.checksums ?: return null
+        val out = java.io.ByteArrayOutputStream()
+        ReleaseDownload.fetch(url, out, MAX_SUMS.toLong()) {}
+        return out.toString(Charsets.UTF_8.name())
+    }
+
+    override fun download(
+        update: MobileUpdate,
+        target: java.io.File,
+        progress: (Long) -> Unit,
+    ): String {
+        val digest = java.security.MessageDigest.getInstance("SHA-256")
+        target.outputStream().use { file ->
+            ReleaseDownload.fetch(update.url, java.security.DigestOutputStream(file, digest), 512L * 1024 * 1024, progress)
+        }
+        return digest.digest().joinToString("") { "%02x".format(it) }
+    }
 }

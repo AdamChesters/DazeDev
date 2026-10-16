@@ -26,6 +26,7 @@ import kotlinx.coroutines.test.runCurrent
 import kotlinx.coroutines.test.runTest
 import org.json.JSONArray
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNull
 import org.junit.Assert.assertSame
 import org.junit.Assert.assertTrue
@@ -117,7 +118,7 @@ class TerminalControllerTest {
             s.measure(100, 30)
             advanceUntilIdle()
             assertEquals(AttachRequest("", "$1", "s1", 100, 30, null), s.opener.requests.single())
-            assertSame(s.opener.opened.single(), s.ui.value.terminal)
+            assertSame(s.opener.opened.single(), s.terminal.link.value)
             assertEquals("main", s.ui.value.selectedSessionName)
             s.scope.cancel()
         }
@@ -144,7 +145,7 @@ class TerminalControllerTest {
             assertEquals(AttachRequest("", "$2", "s2", 90, 20, null), s.opener.requests[1])
             s.opener.gates[1].complete(Unit)
             advanceUntilIdle()
-            assertSame(s.opener.opened.single(), s.ui.value.terminal)
+            assertSame(s.opener.opened.single(), s.terminal.link.value)
             assertEquals("other", s.ui.value.selectedSessionName)
             s.scope.cancel()
         }
@@ -154,10 +155,12 @@ class TerminalControllerTest {
             val s = Setup(this)
             advanceUntilIdle()
             s.terminal.openSession(s.host, "$1", "s1", "main")
+            assertEquals(Screen.Terminal(s.host.profile.id, "$1"), s.ui.value.screen)
             s.terminal.leaveTerminal()
+            assertFalse(s.ui.value.screen is Screen.Terminal)
             advanceUntilIdle()
             assertTrue(s.opener.requests.isEmpty())
-            assertNull(s.ui.value.terminal)
+            assertNull(s.terminal.link.value)
             assertNull(s.ui.value.selectedSessionName)
             s.scope.cancel()
         }
@@ -202,16 +205,16 @@ class TerminalControllerTest {
             s.terminal.setForeground(false)
             advanceTimeBy(119_000)
             runCurrent()
-            assertSame(first, s.ui.value.terminal)
+            assertSame(first, s.terminal.link.value)
             advanceTimeBy(2_000)
             runCurrent()
-            assertNull(s.ui.value.terminal)
+            assertNull(s.terminal.link.value)
             assertTrue(first.closed)
             s.terminal.setForeground(true)
             s.measure(80, 24)
             advanceUntilIdle()
             assertEquals(2, s.opener.requests.size)
-            assertSame(s.opener.opened[1], s.ui.value.terminal)
+            assertSame(s.opener.opened[1], s.terminal.link.value)
             s.scope.cancel()
         }
 
@@ -223,7 +226,7 @@ class TerminalControllerTest {
             s.measure(80, 24)
             advanceUntilIdle()
             s.terminal.linkLost("host-1", "Lost connection to Dev. gone")
-            assertNull(s.ui.value.terminal)
+            assertNull(s.terminal.link.value)
             assertTrue(
                 s.opener.opened
                     .single()

@@ -90,39 +90,6 @@ import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import kotlinx.coroutines.withTimeoutOrNull
 
-/** Only what the terminal screen shows, so unrelated app state (such as a snackbar) does not recompose it. */
-@androidx.compose.runtime.Immutable
-data class TerminalScreenState(
-    val selectedTargetHost: String?,
-    val selectedSessionId: String?,
-    val selectedStamp: String?,
-    val selectedSessionName: String?,
-    val selectedTargetLabel: String,
-    val selectedPaneId: String?,
-    val terminal: com.adamchesters.dazedev.mobile.ssh.TerminalLink?,
-    val terminalEpoch: Long,
-    val terminalError: String?,
-    val staleSession: Boolean,
-    val isSending: Boolean,
-    val tabs: List<com.adamchesters.dazedev.mobile.host.TerminalRow>,
-)
-
-fun DazeDevMobileUiState.terminalScreenState() =
-    TerminalScreenState(
-        selectedTargetHost,
-        selectedSessionId,
-        selectedStamp,
-        selectedSessionName,
-        selectedTargetLabel,
-        selectedPaneId,
-        terminal,
-        terminalEpoch,
-        terminalError,
-        staleSession != null,
-        isSending,
-        terminalTabs(),
-    )
-
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun TerminalScreen(
@@ -158,23 +125,7 @@ fun TerminalScreen(
         edit.apply()
     }
     LaunchedEffect(draftKey) {
-        withContext(Dispatchers.IO) {
-            val cutoff = System.currentTimeMillis() - 7L * 24 * 60 * 60 * 1000
-            val edit = drafts.edit()
-            drafts.all.keys.filter { it.startsWith("original:") }.forEach { key ->
-                val old = key.removePrefix("original:")
-                if (!drafts.contains("saved:$old")) edit.putLong("saved:$old", System.currentTimeMillis())
-            }
-            drafts.all.filter { it.key.startsWith("saved:") && it.key != "saved:$draftKey" && (it.value as? Long ?: Long.MAX_VALUE) < cutoff }.forEach { (key, _) ->
-                val old = key.removePrefix("saved:")
-                edit
-                    .remove(old)
-                    .remove("original:$old")
-                    .remove("target:$old")
-                    .remove(key)
-            }
-            edit.apply()
-        }
+        withContext(Dispatchers.IO) { pruneDrafts(drafts, draftKey) }
     }
     // The shared voice model stays loaded while this screen is open.
     DisposableEffect(Unit) {

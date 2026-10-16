@@ -3,12 +3,14 @@ package com.adamchesters.dazedev.mobile.ui
 import android.app.Application
 import android.net.Uri
 import androidx.lifecycle.AndroidViewModel
+import androidx.lifecycle.SavedStateHandle
 import androidx.lifecycle.viewModelScope
 import com.adamchesters.dazedev.mobile.BuildConfig
 import com.adamchesters.dazedev.mobile.DazeDevApplication
 import com.adamchesters.dazedev.mobile.data.ConnectionProfile
 import com.adamchesters.dazedev.mobile.data.ProfileStore
 import com.adamchesters.dazedev.mobile.host.BrowserAnswer
+import com.adamchesters.dazedev.mobile.host.ConnectionPhase
 import com.adamchesters.dazedev.mobile.host.HostEvent
 import com.adamchesters.dazedev.mobile.host.SessionLaunch
 import com.adamchesters.dazedev.mobile.host.TerminalRow
@@ -16,6 +18,8 @@ import com.adamchesters.dazedev.mobile.releases.PublicReleaseCatalog
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.flow.distinctUntilChanged
+import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.launch
 import org.json.JSONArray
 import org.json.JSONObject
@@ -23,6 +27,7 @@ import org.json.JSONObject
 /** Composes the app-wide host registry and the screen controllers into one UI state. */
 class MainViewModel(
     application: Application,
+    saved: SavedStateHandle,
 ) : AndroidViewModel(application) {
     private val registry = (application as DazeDevApplication).hosts
     private val credentials = (application as DazeDevApplication).credentials
@@ -30,10 +35,13 @@ class MainViewModel(
     private val ui = UiStore(DazeDevMobileUiState(profile = store.load(), secureScreen = store.secureScreen, keepConnected = store.keepConnected, keepOtherSize = store.keepOtherSize))
     val uiState: StateFlow<DazeDevMobileUiState> = ui.state.asStateFlow()
     private val terminal = TerminalController(ui, registry, viewModelScope)
+
+    /** The open terminal's live stream, kept out of the UI state. */
+    val terminalLink = terminal.link
     private val connections = ConnectionController(ui, registry, terminal)
     private val workspace = WorkspaceController(ui, registry, store, viewModelScope, terminal, connections::connect, connections::showHosts)
     private val sessions = SessionController(ui, registry, store, viewModelScope, terminal, workspace)
-    private val updates = UpdateController(ui, viewModelScope, store, PublicReleaseCatalog, BuildConfig.VERSION_NAME)
+    private val updates = UpdateController(ui, viewModelScope, store, PublicReleaseCatalog, BuildConfig.VERSION_NAME, downloads = java.io.File(application.cacheDir, "updates"))
     private val hostKeys = HostKeyController(ui, registry, viewModelScope, (application as DazeDevApplication)::knownHosts)
 
     init {
@@ -47,6 +55,17 @@ class MainViewModel(
         viewModelScope.launch { registry.prompts.browserRequest.collect { request -> ui.update { it.copy(browserRequest = request) } } }
         hostKeys.start()
         workspace.publishLocalGroups()
+        // After process death, show the same screen, host, folder and terminal again.
+        saved.get<String>(NAVIGATION)?.let { json ->
+            ui.update { it.restoreNavigation(json) { id -> registry.entry(id)?.profile } }
+            connections.sync(force = true)
+        }
+        viewModelScope.launch {
+            ui.state
+                .map { it.navigationJson() }
+                .distinctUntilChanged()
+                .collect { saved[NAVIGATION] = it }
+        }
         updates.start(
             application.assets
                 .open("changelog.json")
@@ -68,6 +87,12 @@ class MainViewModel(
     fun checkUpdates(manual: Boolean = true) = updates.checkUpdates(manual)
 
     fun dismissUpdate() = updates.dismissUpdate()
+
+    fun downloadUpdate() = updates.downloadUpdate()
+
+    fun installStarted() = updates.installStarted()
+
+    fun installFailed(message: String) = updates.installFailed(message)
 
     fun refreshReleaseHistory() = updates.refreshReleaseHistory()
 
@@ -97,6 +122,19 @@ class MainViewModel(
     fun removeLocalTerminalView(pane: String) = workspace.removeLocalTerminalView(pane)
 
     fun showHosts() = connections.showHosts()
+
+    /** Back: leaves the terminal, cancels a connection, closes the folder, then returns to the host list. */
+    fun back() {
+        val s = ui.value
+        when {
+            s.screen is Screen.Terminal -> leaveTerminal()
+            s.screen == Screen.Hosts -> Unit
+            s.localGroupId == null && s.connectionPhase != ConnectionPhase.Connected -> cancelConnection()
+            s.groupConnectionHost != null || s.pendingTerminalConnection != null -> cancelConnection()
+            s.selectedFolder != null -> selectFolder(null)
+            else -> showHosts()
+        }
+    }
 
     fun newHost() = connections.newHost()
 
@@ -313,5 +351,9 @@ class MainViewModel(
         terminal.closeTerminal()
         registry.prompts.foreground = false
         super.onCleared()
+    }
+
+    private companion object {
+        const val NAVIGATION = "navigation"
     }
 }

@@ -20,4 +20,14 @@ interface ReleaseSource {
     fun updates(current: String): MobileUpdate?
 
     fun history(): String
+
+    /** The text of the release's SHA256SUMS asset, or null when the release has none. */
+    fun checksums(update: MobileUpdate): String?
+
+    /** Downloads the APK to [target] and returns its SHA-256 as lowercase hex. */
+    fun download(
+        update: MobileUpdate,
+        target: java.io.File,
+        progress: (Long) -> Unit,
+    ): String
 }

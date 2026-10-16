@@ -2,7 +2,6 @@ package com.adamchesters.dazedev.mobile.host
 
 import org.junit.Assert.*
 import org.junit.Test
-import java.util.Base64
 
 class HostProtocolTest {
     @Test fun linesSplitAcrossReadsAndIgnoreCarriageReturns() {
@@ -19,15 +18,15 @@ class HostProtocolTest {
     @Test(expected = IllegalArgumentException::class)
     fun rejectsOverlongLines() {
         val bytes = ByteArray(5000) { 'x'.code.toByte() }
-        HostLines().feed(bytes, bytes.size) {}
+        HostLines().feed(bytes, bytes.size) { true }
     }
 
-    @Test fun framesReassembleWithTheSameRegexForEveryLine() {
-        val payload = Base64.getEncoder().encodeToString("""{"id":"1","result":true}""".toByteArray())
-        val frames = HostFrames("n")
-        assertNull(frames.line("DAZED:n:@0/2:${payload.take(10)}"))
-        assertEquals("""{"id":"1","result":true}""", frames.line("DAZED:n:@1/2:${payload.drop(10)}"))
-        assertNull(frames.line("DAZED:other:@0/1:$payload"))
+    @Test fun linesStopAtTheSwitchToBinaryFrames() {
+        val bytes = "DAZED:n:python:3.12\nDAZED:n:bootstrap\n\u0000\u0000".toByteArray()
+        val seen = mutableListOf<String>()
+        val used = HostLines().feed(bytes, bytes.size) { seen.add(it) && it != "DAZED:n:bootstrap" }
+        assertEquals(listOf("DAZED:n:python:3.12", "DAZED:n:bootstrap"), seen)
+        assertEquals(bytes.size - 2, used)
     }
 
     @Test fun loaderReportsOldPython() {

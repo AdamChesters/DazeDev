@@ -47,4 +47,34 @@ class ReleaseCatalogTest {
         assertEquals(entries, mergeHistory("not json", entries))
         assertNull(findMobileUpdate(json, "0.1.0-alpha.2"))
     }
+
+    @Test fun checksumAssetAndReleasePageComeFromTheSameRelease() {
+        val tag = "android/v2.0.0"
+        val good = "https://github.com/AdamChesters/DazeDev/releases/download/$tag/SHA256SUMS"
+        val withSums = release("2.0.0").also { it.getJSONArray("assets").put(JSONObject().put("name", "SHA256SUMS").put("size", 100).put("browser_download_url", good)) }
+        val update = findMobileUpdate(JSONArray().put(withSums).toString(), "1.0.0")!!
+        assertEquals(good, update.checksums)
+        assertEquals("https://github.com/AdamChesters/DazeDev/releases/tag/$tag", update.page)
+        assertEquals("DazeDev-Mobile-2.0.0.apk", update.fileName)
+        assertNull(findMobileUpdate(JSONArray().put(release("2.0.0")).toString(), "1.0.0")!!.checksums)
+        val foreign = release("2.0.0").also { it.getJSONArray("assets").put(JSONObject().put("name", "SHA256SUMS").put("size", 100).put("browser_download_url", "https://evil.example/SHA256SUMS")) }
+        assertNull(findMobileUpdate(JSONArray().put(foreign).toString(), "1.0.0")!!.checksums)
+    }
+
+    @Test fun checksumLinesMatchTheExactFileName() {
+        val hash = "AB".repeat(32)
+        val sums = "${"0".repeat(64)}  DazeDev-Mobile-2.0.0.apk.idsig\r\n$hash *DazeDev-Mobile-2.0.0.apk\r\nnot a line\n"
+        assertEquals(hash.lowercase(), expectedSha256(sums, "DazeDev-Mobile-2.0.0.apk"))
+        assertNull(expectedSha256(sums, "DazeDev-Mobile-2.0.1.apk"))
+        assertNull(expectedSha256("${"0".repeat(63)}  a.apk", "a.apk"))
+    }
+
+    @Test fun downloadsStayOnGitHubOverHttps() {
+        assertTrue(ReleaseDownload.allowed("https://github.com/AdamChesters/DazeDev/releases/download/x/y.apk"))
+        assertTrue(ReleaseDownload.allowed("https://release-assets.githubusercontent.com/github-production-release-asset/1?sig=x"))
+        assertFalse(ReleaseDownload.allowed("http://github.com/a"))
+        assertFalse(ReleaseDownload.allowed("https://github.com.evil.example/a"))
+        assertFalse(ReleaseDownload.allowed("https://user@github.com/a"))
+        assertFalse(ReleaseDownload.allowed("https://evilgithubusercontent.com/a"))
+    }
 }

@@ -1,6 +1,5 @@
 package com.adamchesters.dazedev.mobile.ui
 
-import android.content.Intent
 import android.database.Cursor
 import android.provider.OpenableColumns
 import androidx.activity.compose.BackHandler
@@ -43,10 +42,8 @@ fun DazeDevMobileApp(viewModel: MainViewModel) {
     val snackbarHostState = remember { SnackbarHostState() }
     val coroutineScope = rememberCoroutineScope()
 
-    BackHandler(
-        enabled = uiState.selectedSessionName != null,
-        onBack = viewModel::leaveTerminal,
-    )
+    val terminalLink by viewModel.terminalLink.collectAsStateWithLifecycle()
+    BackHandler(enabled = uiState.screen != Screen.Hosts, onBack = viewModel::back)
 
     val privateKeyPicker =
         rememberLauncherForActivityResult(
@@ -97,18 +94,6 @@ fun DazeDevMobileApp(viewModel: MainViewModel) {
         viewModel.consumeMessage(message.id)
     }
 
-    BackHandler(enabled = !uiState.showHosts && uiState.selectedSessionName == null) {
-        if (uiState.groupConnectionHost != null || uiState.pendingTerminalConnection != null) {
-            viewModel.cancelConnection()
-        } else if (uiState.selectedFolder != null) {
-            viewModel.selectFolder(null)
-        } else {
-            viewModel.showHosts()
-        }
-    }
-
-    BackHandler(enabled = !uiState.showHosts && uiState.localGroupId == null && uiState.selectedSessionName == null && uiState.connectionPhase != ConnectionPhase.Connected) { viewModel.cancelConnection() }
-
     val terminalState =
         remember(
             uiState.selectedTargetHost,
@@ -117,7 +102,7 @@ fun DazeDevMobileApp(viewModel: MainViewModel) {
             uiState.selectedSessionName,
             uiState.selectedTargetLabel,
             uiState.selectedPaneId,
-            uiState.terminal,
+            terminalLink,
             uiState.terminalEpoch,
             uiState.terminalError,
             uiState.staleSession,
@@ -126,20 +111,21 @@ fun DazeDevMobileApp(viewModel: MainViewModel) {
             uiState.folders,
             uiState.selectedFolder,
             uiState.localGroupId,
-        ) { uiState.terminalScreenState() }
+        ) { uiState.terminalScreenState(terminalLink) }
     Scaffold(
         snackbarHost = { SnackbarHost(snackbarHostState) },
     ) { contentPadding ->
+        val screen = uiState.screen
         when {
-            uiState.showHosts -> {
+            screen == Screen.Hosts -> {
                 HostWorkspaceScreen(uiState, contentPadding, viewModel)
             }
 
-            uiState.localGroupId != null && uiState.selectedSessionName == null && uiState.groupConnectionHost == null && uiState.pendingTerminalConnection == null -> {
+            uiState.localGroupId != null && screen !is Screen.Terminal && uiState.groupConnectionHost == null && uiState.pendingTerminalConnection == null -> {
                 LocalWorkspaceScreen(uiState, contentPadding, viewModel)
             }
 
-            uiState.groupConnectionHost != null || uiState.pendingTerminalConnection != null || (uiState.localGroupId == null && uiState.connectionPhase != ConnectionPhase.Connected && uiState.selectedSessionName == null) -> {
+            uiState.groupConnectionHost != null || uiState.pendingTerminalConnection != null || (uiState.localGroupId == null && uiState.connectionPhase != ConnectionPhase.Connected && screen !is Screen.Terminal) -> {
                 ConnectionScreen(
                     uiState = uiState,
                     contentPadding = contentPadding,
@@ -150,11 +136,11 @@ fun DazeDevMobileApp(viewModel: MainViewModel) {
                 )
             }
 
-            uiState.selectedSessionName == null && uiState.selectedFolder != "__sessions" -> {
+            screen !is Screen.Terminal && uiState.selectedFolder != "__sessions" -> {
                 HostWorkspaceScreen(uiState, contentPadding, viewModel)
             }
 
-            uiState.selectedSessionName == null -> {
+            screen !is Screen.Terminal -> {
                 SessionListScreen(
                     uiState = uiState,
                     contentPadding = contentPadding,
@@ -218,21 +204,7 @@ fun DazeDevMobileApp(viewModel: MainViewModel) {
             dismissButton = { TextButton(onClick = viewModel::dismissGroupConnect) { Text("Keep disconnected") } },
         )
     }
-    uiState.mobileUpdate?.let { update ->
-        AlertDialog(
-            onDismissRequest = viewModel::dismissUpdate,
-            title = { Text("Android update available") },
-            text = { Text("DazeDev Mobile ${update.version} is available from the public GitHub repository. Download the APK and confirm installation in Android.\n\n${update.notes.take(1500)}") },
-            confirmButton = {
-                TextButton(onClick = {
-                    runCatching { context.startActivity(Intent(Intent.ACTION_VIEW, android.net.Uri.parse(update.url))) }
-                        .onFailure { coroutineScope.launch { snackbarHostState.showSnackbar("Could not open the download. Try again from Changelog.") } }
-                    viewModel.dismissUpdate()
-                }) { Text("Download APK") }
-            },
-            dismissButton = { TextButton(onClick = viewModel::dismissUpdate) { Text("Later") } },
-        )
-    }
+    uiState.mobileUpdate?.let { update -> UpdateDialog(update, uiState, viewModel) }
     if (uiState.windows.isNotEmpty()) TmuxWindowPicker(uiState.windows, viewModel::selectWindow, viewModel::dismissWindows)
     uiState.draftReview?.let { review -> DraftReview(review, viewModel::applyDraftReview, viewModel::dismissDraftReview) }
     uiState.tmuxSettings?.let { settings -> TmuxSettingsSheet(settings, viewModel::applyTmuxSetting, viewModel::dismissTmuxSettings) }
