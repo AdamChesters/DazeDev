@@ -17,10 +17,10 @@ it('quotes uploaded paths literally and preserves arbitrary file bytes', () => {
   expect(Uint8Array.from(atob(encodeChunk(data)), (c) => c.charCodeAt(0))).toEqual(data);
 });
 it('labels the original connection honestly when the nested destination is unknown', () => {
-  expect(hostLabel('Devbox', { ...unknownStatus, nestedSsh: true })).toContain(
+  expect(hostLabel('Workstation', { ...unknownStatus, nestedSsh: true })).toContain(
     'SSH destination unverified',
   );
-  expect(hostLabel('Devbox', unknownStatus)).toBe('Connection: Devbox');
+  expect(hostLabel('Workstation', unknownStatus)).toBe('Connection: Workstation');
 });
 
 import { previewKind } from '../src/lib/source-viewer';

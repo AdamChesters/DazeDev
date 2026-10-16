@@ -26,10 +26,10 @@ it('assembles bounded image chunks from the selected host with a stable revision
     data: btoa(String.fromCharCode(...bytes.slice(offset, offset + 49152))),
   });
   rpc.mockResolvedValueOnce(base(0)).mockResolvedValueOnce(base(49152));
-  const image = await readHostImage('devbox', '/tmp/image.png');
+  const image = await readHostImage('host-1', '/tmp/image.png');
   expect(Uint8Array.from(atob(image.src.split(',')[1]), (c) => c.charCodeAt(0))).toEqual(bytes);
   expect(rpc.mock.calls[1]).toEqual([
-    'devbox',
+    'host-1',
     'image_read',
     { path: '/tmp/image.png', offset: 49152, revision: 'same' },
   ]);
