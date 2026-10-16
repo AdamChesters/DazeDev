@@ -232,4 +232,45 @@ class TerminalControllerTest {
             assertEquals("Lost connection to Dev. gone", s.ui.value.terminalError)
             s.scope.cancel()
         }
+
+    @Test fun keepingOtherDevicesSizeAttachesWithIgnoreSizeOnlyOnNewTmux() =
+        runTest {
+            val s = Setup(this)
+            advanceUntilIdle()
+            s.terminal.keepOtherSize = { true }
+            s.factory.ssh
+                .single()
+                .output = "tmux 3.4\n"
+            s.terminal.openSession(s.host, "$1", "s1", "main")
+            s.measure(80, 24)
+            advanceUntilIdle()
+            assertTrue(
+                s.opener.requests
+                    .single()
+                    .ignoreSize,
+            )
+
+            val old = Setup(this)
+            advanceUntilIdle()
+            old.terminal.keepOtherSize = { true }
+            old.factory.ssh
+                .single()
+                .output = "tmux 3.1c\n"
+            old.terminal.openSession(old.host, "$1", "s1", "main")
+            old.measure(80, 24)
+            advanceUntilIdle()
+            assertEquals(
+                false,
+                old.opener.requests
+                    .single()
+                    .ignoreSize,
+            )
+            assertTrue(
+                old.ui.value.message!!
+                    .text
+                    .contains("older than 3.2"),
+            )
+            s.scope.cancel()
+            old.scope.cancel()
+        }
 }

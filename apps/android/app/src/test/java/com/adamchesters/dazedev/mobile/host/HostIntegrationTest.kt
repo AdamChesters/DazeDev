@@ -139,9 +139,24 @@ class HostIntegrationTest {
                 assertFalse(interrupted.contains("WAIT_DONE"))
                 val second = TerminalStream(ssh, scope)
                 try {
-                    second.attach(socket, session.getString("id"), session.getString("stamp"), 72, 20)
+                    // A client attached with ignore-size must not resize the window for the first one.
+                    second.attach(socket, session.getString("id"), session.getString("stamp"), 100, 40, ignoreSize = true)
                     withTimeout(5_000) { while ((client.request("sessions") as JSONArray).getJSONObject(0).getInt("attached") != 2)delay(50) }
                     assertTrue(attached.connected)
+                    val kept = StringBuilder()
+                    val sizeKept =
+                        async {
+                            withTimeout(10_000) {
+                                attached.output.first { bytes ->
+                                    kept.append(bytes.toString(Charsets.UTF_8))
+                                    kept.contains(Regex("KEEP_\\d+ \\d+\r\n"))
+                                }
+                            }
+                        }
+                    delay(300)
+                    assertTrue(stream.send("printf 'KEEP_'; stty size\r".toByteArray()))
+                    sizeKept.await()
+                    assertTrue("Other client resized the window: $kept", kept.contains("KEEP_19 72\r\n"))
                 } finally {
                     second.close()
                 }

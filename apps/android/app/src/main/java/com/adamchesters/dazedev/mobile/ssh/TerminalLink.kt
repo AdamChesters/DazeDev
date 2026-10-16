@@ -30,6 +30,8 @@ data class AttachRequest(
     val cols: Int,
     val rows: Int,
     val browser: JSONObject?,
+    /** Attach with tmux's ignore-size flag, so this phone does not resize other devices. */
+    val ignoreSize: Boolean = false,
 )
 
 /** Opens terminals; a failed or cancelled attach leaves nothing open. */
@@ -49,7 +51,7 @@ object SshTerminalOpener : TerminalOpener {
     ): TerminalLink {
         val stream = TerminalStream(ssh, scope)
         try {
-            stream.attach(request.socket, request.id, request.stamp, request.cols, request.rows, request.browser)
+            stream.attach(request.socket, request.id, request.stamp, request.cols, request.rows, request.browser, request.ignoreSize)
         } catch (e: Throwable) {
             stream.close()
             throw e

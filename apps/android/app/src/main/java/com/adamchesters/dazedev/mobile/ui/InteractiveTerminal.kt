@@ -6,11 +6,14 @@ import android.content.ClipboardManager
 import android.content.Context
 import android.view.accessibility.AccessibilityManager
 import android.webkit.*
+import androidx.compose.foundation.layout.WindowInsets
+import androidx.compose.foundation.layout.ime
 import androidx.compose.runtime.*
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.layout.onSizeChanged
 import androidx.compose.ui.platform.LocalConfiguration
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.unit.IntSize
 import androidx.compose.ui.viewinterop.AndroidView
 import androidx.webkit.JavaScriptReplyProxy
@@ -254,9 +257,12 @@ fun InteractiveTerminal(
         withTimeoutOrNull(15_000) { reply.filterNotNull().first() } ?: return@LaunchedEffect
         controller.call("font", fontScale.toString())
     }
-    LaunchedEffect(web, viewport) {
+    // While an on-screen keyboard covers part of the view (also while it animates), the page keeps the
+    // terminal size and scrolls instead, so other devices do not resize.
+    val keyboard = WindowInsets.ime.getBottom(LocalDensity.current) > 0
+    LaunchedEffect(web, viewport, keyboard) {
         withTimeoutOrNull(15_000) { reply.filterNotNull().first() } ?: return@LaunchedEffect
-        if (viewport.width > 0 && viewport.height > 0) controller.call("viewport", "${viewport.width},${viewport.height}")
+        if (viewport.width > 0 && viewport.height > 0) controller.call("viewport", "${viewport.width},${viewport.height},$keyboard")
     }
     DisposableEffect(web) {
         onDispose {

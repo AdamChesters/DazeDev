@@ -50,10 +50,11 @@ class TerminalStream(
         cols: Int,
         rows: Int,
         browser: JSONObject? = null,
+        ignoreSize: Boolean = false,
     ) {
         require(Regex("\\$[0-9]+").matches(id) && stamp.isNotBlank()) { "Refresh this session before attaching." }
-        val script = "import subprocess,sys,os; a=['tmux']+(['-L',sys.argv[1]] if sys.argv[1] else []); s=subprocess.check_output(a+['display-message','-p','-t',sys.argv[2],'#{pid}:#{start_time}:#{session_created}'],text=True).strip(); assert s==sys.argv[3], 'Session ended or restarted. Go back and open it again.'; os.execvp('tmux',a+['-u','attach-session','-t',sys.argv[2]])"
-        val attachCommand = "exec python3 -I -u -c ${ShellQuoter.quote(script)} ${ShellQuoter.quote(socket)} ${ShellQuoter.quote(id)} ${ShellQuoter.quote(stamp)}"
+        val script = "import subprocess,sys,os; a=['tmux']+(['-L',sys.argv[1]] if sys.argv[1] else []); s=subprocess.check_output(a+['display-message','-p','-t',sys.argv[2],'#{pid}:#{start_time}:#{session_created}'],text=True).strip(); assert s==sys.argv[3], 'Session ended or restarted. Go back and open it again.'; os.execvp('tmux',a+['-u','attach-session']+(['-f','ignore-size'] if sys.argv[4]=='1' else [])+['-t',sys.argv[2]])"
+        val attachCommand = "exec python3 -I -u -c ${ShellQuoter.quote(script)} ${ShellQuoter.quote(socket)} ${ShellQuoter.quote(id)} ${ShellQuoter.quote(stamp)} ${if (ignoreSize) "1" else "0"}"
         val command =
             if (browser == null) {
                 attachCommand

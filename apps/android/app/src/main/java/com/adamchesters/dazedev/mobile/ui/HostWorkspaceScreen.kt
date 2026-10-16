@@ -173,6 +173,7 @@ fun HostWorkspaceScreen(
             TextButton(onClick = viewModel::openHostKeys) { Text("Host keys") }
             TextButton(onClick = { viewModel.setSecureScreen(!state.secureScreen) }, modifier = Modifier.semantics { contentDescription = if (state.secureScreen) "Private screen is on. Screenshots and the Recents preview are blocked." else "Private screen is off." }) { Text(if (state.secureScreen) "Private screen: on" else "Private screen: off") }
             KeepConnectedToggle(state.keepConnected, viewModel::setKeepConnected, viewModel::notificationsDenied)
+            TerminalSizeSetting(state.keepOtherSize, viewModel::setKeepOtherSize)
             TextButton(onClick = {
                 val assets = context.assets
                 val paths = listOf("moonshine-license.txt", "xterm-license.txt", "addon-fit-license.txt", "addon-unicode11-license.txt", "addon-web-links-license.txt") + assets.list("licenses").orEmpty().map { "licenses/$it" }

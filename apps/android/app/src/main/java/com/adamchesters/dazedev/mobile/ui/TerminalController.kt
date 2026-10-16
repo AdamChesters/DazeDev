@@ -10,6 +10,7 @@ import com.adamchesters.dazedev.mobile.ssh.SshTerminalOpener
 import com.adamchesters.dazedev.mobile.ssh.TerminalLink
 import com.adamchesters.dazedev.mobile.ssh.TerminalOpener
 import com.adamchesters.dazedev.mobile.tmux.TmuxSession
+import com.adamchesters.dazedev.mobile.tmux.TmuxVersion
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Job
@@ -40,6 +41,9 @@ class TerminalController(
 
     /** Connects a host without a secret (Tailscale SSH). */
     var connect: (ConnectionProfile) -> Unit = {}
+
+    /** The "Keep the other devices' size" setting. */
+    var keepOtherSize: () -> Boolean = { false }
 
     /** Points the selected saved terminal at a replacement session. */
     var rebindPane: (String, TmuxSession) -> Unit = { _, _ -> }
@@ -101,8 +105,9 @@ class TerminalController(
                     delay(200)
                     terminalSize.value
                 } ?: terminalSize.value ?: (80 to 24)
+            val ignoreSize = keepOtherSize() && ignoreSizeSupported(h)
             if (generation != attachmentGeneration) return
-            stream = opener.open(h.ssh, scope, AttachRequest(h.profile.socket, id, stamp, size.first, size.second, browser))
+            stream = opener.open(h.ssh, scope, AttachRequest(h.profile.socket, id, stamp, size.first, size.second, browser, ignoreSize))
             if (generation != attachmentGeneration) {
                 stream.close()
                 return
@@ -119,6 +124,19 @@ class TerminalController(
             stream?.close()
             if (generation == attachmentGeneration) openFailed(h, id, stamp, name, e)
         }
+    }
+
+    private suspend fun ignoreSizeSupported(h: HostEntry): Boolean {
+        val supported =
+            h.tmuxIgnoreSize ?: try {
+                TmuxVersion.supportsIgnoreSize(h.ssh.execute("tmux -V").stdout).also { h.tmuxIgnoreSize = it }
+            } catch (e: CancellationException) {
+                throw e
+            } catch (_: Exception) {
+                false
+            }
+        if (!supported) ui.message("This host's tmux is older than 3.2, so it cannot keep the other devices' size. The terminal follows this phone.")
+        return supported
     }
 
     private suspend fun openFailed(

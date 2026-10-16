@@ -27,7 +27,7 @@ class MainViewModel(
     private val registry = (application as DazeDevApplication).hosts
     private val credentials = (application as DazeDevApplication).credentials
     private val store = ProfileStore(application)
-    private val ui = UiStore(DazeDevMobileUiState(profile = store.load(), secureScreen = store.secureScreen, keepConnected = store.keepConnected))
+    private val ui = UiStore(DazeDevMobileUiState(profile = store.load(), secureScreen = store.secureScreen, keepConnected = store.keepConnected, keepOtherSize = store.keepOtherSize))
     val uiState: StateFlow<DazeDevMobileUiState> = ui.state.asStateFlow()
     private val terminal = TerminalController(ui, registry, viewModelScope)
     private val connections = ConnectionController(ui, registry, terminal)
@@ -40,6 +40,7 @@ class MainViewModel(
         connections.workspace = workspace
         terminal.connect = { connections.connect(it, "") }
         terminal.rebindPane = workspace::rebindPane
+        terminal.keepOtherSize = { ui.value.keepOtherSize }
         viewModelScope.launch { registry.hosts.collect { connections.sync(it) } }
         viewModelScope.launch { registry.events.collect(::onHostEvent) }
         viewModelScope.launch { registry.prompts.authNotice.collect { notice -> ui.update { it.copy(authNotice = notice) } } }
@@ -285,6 +286,12 @@ class MainViewModel(
         store.keepConnected = value
         registry.keepConnected.value = value
         ui.update { it.copy(keepConnected = value) }
+    }
+
+    /** Applies to terminals opened from now on. */
+    fun setKeepOtherSize(value: Boolean) {
+        store.keepOtherSize = value
+        ui.update { it.copy(keepOtherSize = value) }
     }
 
     fun notificationsDenied() {

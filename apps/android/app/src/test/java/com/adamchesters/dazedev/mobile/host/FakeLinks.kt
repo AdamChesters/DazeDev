@@ -30,10 +30,16 @@ class FakeSsh : SshLink {
         isConnected = true
     }
 
+    val commands = mutableListOf<String>()
+    var output = ""
+
     override suspend fun execute(
         command: String,
         timeoutMs: Long,
-    ) = ExecResult("", "", 0)
+    ): ExecResult {
+        commands.add(command)
+        return ExecResult(output, "", 0)
+    }
 
     override suspend fun openStream(
         command: String,

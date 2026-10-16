@@ -40,6 +40,12 @@ class ProfileStore(
             prefs.edit().putBoolean("secure_screen", value).apply()
         }
 
+    var keepOtherSize: Boolean
+        get() = prefs.getBoolean("keep_other_size", false)
+        set(value) {
+            prefs.edit().putBoolean("keep_other_size", value).apply()
+        }
+
     var keepConnected: Boolean
         get() = prefs.getBoolean("keep_connected", false)
         set(value) {

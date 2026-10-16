@@ -35,6 +35,9 @@ class HostEntry(
 
     /** The last connection needed no typed secret, so it can reconnect unattended. */
     var unattended = false
+
+    /** Whether this host's tmux can attach without resizing others (3.2 or newer); null until checked. */
+    var tmuxIgnoreSize: Boolean? = null
     val edits = Mutex()
 
     fun snapshot(recoveryDraft: Boolean) =
