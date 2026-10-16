@@ -16,8 +16,9 @@ DazeDev's first implementation uses the following independently maintained compo
 | ONNX Runtime | MIT · https://github.com/microsoft/onnxruntime |
 | ort Rust bindings | MIT / Apache-2.0 · https://github.com/pykeio/ort |
 | Silero VAD | MIT · https://github.com/snakers4/silero-vad |
-| Whisper models | MIT · https://github.com/openai/whisper |
-| Parakeet Unified English | CC-BY-4.0 · https://huggingface.co/nvidia/parakeet-unified-en-0.6b |
+| Whisper models | Small, Medium and Large v3: Apache-2.0; Large v3 Turbo: MIT · https://github.com/openai/whisper · notices: `src-tauri/licenses/Whisper-GGUF-NOTICE.txt` |
+| Parakeet Unified English | NVIDIA Open Model License · https://huggingface.co/nvidia/parakeet-unified-en-0.6b · notice: `src-tauri/licenses/Parakeet-NOTICE.txt` |
+| GGUF speech conversions | Handy Computer; same license as each base model · https://huggingface.co/handy-computer |
 | S1-mini by Superwhisper | Apache-2.0 with naming clause · https://huggingface.co/superwhisper/s1-mini/blob/main/LICENSE |
 
 Model files are optional, separately downloaded assets. `src-tauri/resources/models.json` pins exact URLs, sizes and hashes. The S1-mini name and Superwhisper attribution are displayed in the app. The bundled llama.cpp release includes its license. Additional license texts are collected under `src-tauri/licenses` for inclusion in the installer.

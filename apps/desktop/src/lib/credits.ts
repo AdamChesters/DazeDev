@@ -71,7 +71,12 @@ export const credits = [
     license: 'MIT / Apache-2.0',
     url: 'https://github.com/microsoft/onnxruntime',
   },
-  { name: 'Whisper', by: 'OpenAI', license: 'MIT', url: 'https://github.com/openai/whisper' },
+  {
+    name: 'Whisper',
+    by: 'OpenAI',
+    license: 'Apache-2.0 (Small, Medium, Large v3); MIT (Large v3 Turbo)',
+    url: 'https://github.com/openai/whisper',
+  },
   {
     name: 'Parakeet Unified',
     by: 'NVIDIA',
@@ -81,7 +86,7 @@ export const credits = [
   {
     name: 'GGUF speech conversions',
     by: 'Handy Computer',
-    license: 'Whisper: MIT; Parakeet conversion: CC-BY-4.0 with upstream model terms',
+    license: 'Same license as each base model',
     url: 'https://huggingface.co/handy-computer',
   },
   {
