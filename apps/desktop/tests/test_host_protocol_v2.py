@@ -60,6 +60,16 @@ class FrameTests(unittest.TestCase):
         self.assertEqual(json.loads(data)['error'], {'code': 'failed', 'message': 'bad'})
         self.assertEqual(str(host.HostError('conflict', 'file changed')), 'CONFLICT: file changed')
 
+class UploadChunkTests(unittest.TestCase):
+    def test_binary_channel_takes_larger_upload_chunks(self):
+        try:
+            host.BINARY = False
+            self.assertEqual(host.upload_chunk_size(), 32768)
+            host.BINARY = True
+            self.assertEqual(host.upload_chunk_size(), 1048576)
+        finally:
+            host.BINARY = False
+
 class BinaryHostTests(unittest.TestCase):
     def test_binary_host_answers_ping_and_ignores_stray_child_output(self):
         env = dict(os.environ, DAZED_TMUX_SOCKET='dazedev-v2-test-' + str(os.getpid()))

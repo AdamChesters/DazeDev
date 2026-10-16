@@ -460,12 +460,15 @@ def upload_begin(a):
     key = uuid.uuid4().hex
     UPLOADS[key] = dict(path=P(path), target=target, size=size, offset=0,
                         device=folder.stat().st_dev, touched=time.monotonic())
-    return {'id':key, 'path':str(target)}
+    return {'id':key, 'path':str(target), 'chunk':upload_chunk_size()}
 
+def upload_chunk_size():
+    # Protocol 2 frames carry large requests; terminal lines stay small.
+    return 1048576 if BINARY else 32768
 def upload_chunk(a):
     item = UPLOADS[a['id']]
     data = base64.b64decode(a['data'], validate=True)
-    if len(data) > 32768 or type(a['offset']) is not int or a['offset'] != item['offset'] or item['offset'] + len(data) > item['size']:
+    if len(data) > upload_chunk_size() or type(a['offset']) is not int or a['offset'] != item['offset'] or item['offset'] + len(data) > item['size']:
         raise ValueError('Upload offset or chunk size does not match; cancel and retry')
     upload_space(item['path'].parent, item['size'] - item['offset'], excluding=a['id'])
     try:

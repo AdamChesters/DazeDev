@@ -1,6 +1,11 @@
 import { encodeChunk, shellPath } from './documents';
 
 export const QUICK_UPLOAD_LIMIT = 10 * 1024 * 1024;
+/** Chunk size the host offered in upload_begin; older hosts take 32 KiB. */
+export function uploadChunkSize(transfer: { chunk?: unknown }) {
+  const chunk = Number(transfer.chunk);
+  return Number.isSafeInteger(chunk) && chunk >= 4096 ? Math.min(chunk, 1048576) : 32768;
+}
 export type UploadCall = <T>(method: string, args: Record<string, unknown>) => Promise<T>;
 
 export function validateClipboardFiles(files: readonly Blob[]) {
@@ -28,7 +33,7 @@ export async function uploadClipboardFiles(
   try {
     for (const [index, file] of files.entries()) {
       ensureCurrent();
-      const transfer = await request<{ id: string; path: string }>('upload_begin', {
+      const transfer = await request<{ id: string; path: string; chunk?: number }>('upload_begin', {
         paste: true,
         name: file.name || (file.type === 'image/png' ? 'screenshot.png' : 'clipboard-file'),
         size: file.size,
@@ -36,7 +41,9 @@ export async function uploadClipboardFiles(
       try {
         for (let offset = 0; offset < file.size;) {
           ensureCurrent();
-          const bytes = new Uint8Array(await file.slice(offset, offset + 32768).arrayBuffer());
+          const bytes = new Uint8Array(
+            await file.slice(offset, offset + uploadChunkSize(transfer)).arrayBuffer(),
+          );
           const result = await request<{ offset: number }>('upload_chunk', {
             id: transfer.id,
             offset,

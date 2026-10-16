@@ -187,3 +187,36 @@ describe('clipboard formats', () => {
     expect(aborted).toEqual(['1', '2']);
   });
 });
+
+describe('upload chunk size', () => {
+  it('uses the size the host offers, within limits', async () => {
+    const { uploadChunkSize } = await import('../src/lib/clipboard-upload');
+    expect(uploadChunkSize({})).toBe(32768);
+    expect(uploadChunkSize({ chunk: 1048576 })).toBe(1048576);
+    expect(uploadChunkSize({ chunk: 8 * 1048576 })).toBe(1048576);
+    expect(uploadChunkSize({ chunk: 100 })).toBe(32768);
+    expect(uploadChunkSize({ chunk: '1048576' })).toBe(1048576);
+  });
+  it('sends one chunk per offered size', async () => {
+    const { uploadClipboardFiles } = await import('../src/lib/clipboard-upload');
+    const bytes = new Uint8Array(150_000).map((_, i) => i % 251);
+    const sizes: number[] = [];
+    let offset = 0;
+    await uploadClipboardFiles(
+      [new File([bytes], 'big.bin')],
+      async <T>(method: string, args: Record<string, unknown>) => {
+        if (method === 'upload_begin') return { id: 't', path: '/x', chunk: 65536 } as T;
+        if (method === 'upload_chunk') {
+          const size = atob(String(args.data)).length;
+          sizes.push(size);
+          offset += size;
+          return { offset } as T;
+        }
+        return (method === 'upload_finish' ? { path: '/x' } : {}) as T;
+      },
+      () => true,
+      () => {},
+    );
+    expect(sizes).toEqual([65536, 65536, 150_000 - 131072]);
+  });
+});
