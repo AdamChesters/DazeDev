@@ -1,37 +1,86 @@
 package com.adamchesters.dazedev.mobile.host
 
-import java.util.Base64
-
-class HostFrames(
-    nonce: String,
+/**
+ * Protocol 2 replies and events. Each frame is u32 length, u8 flags (1 = last part),
+ * u16 id length, id, data. Parts of different messages can interleave, so parts are
+ * joined per id until the last one arrives.
+ */
+class MessageFrames(
+    private val maxMessage: Int = MAX_MESSAGE,
 ) {
-    private val prefix = "DAZED:$nonce:"
-    private val body = StringBuilder()
-    private var next = 0
-    private var total = 0
+    private var buffer = ByteArray(65536)
+    private var size = 0
+    private val parts = HashMap<String, java.io.ByteArrayOutputStream>()
 
-    fun line(line: String): String? {
-        if (!line.startsWith(prefix)) return null
-        val match = FRAME.matchEntire(line.substring(prefix.length)) ?: return null
-        val index = match.groupValues[1].toIntOrNull() ?: error("Invalid frame index")
-        val count = match.groupValues[2].toIntOrNull() ?: error("Invalid frame count")
-        require(count in 1..MAX_FRAMES && index == next && (index == 0 || count == total)) { "Out-of-order host frame" }
-        if (index == 0) total = count
-        body.append(match.groupValues[3])
-        require(body.length <= MAX_FRAMES * 48) { "Host reply is too large" }
-        next++
-        if (next != total) return null
-        val decoded = Base64.getDecoder().decode(body.toString())
-        body.setLength(0)
-        next = 0
-        total = 0
-        return decoded.toString(Charsets.UTF_8)
+    /** Adds bytes from the channel and returns each message that is now complete. */
+    fun push(
+        bytes: ByteArray,
+        offset: Int = 0,
+        count: Int = bytes.size,
+    ): List<ByteArray> {
+        append(bytes, offset, count)
+        val messages = ArrayList<ByteArray>()
+        var start = 0
+        while (size - start >= 4) {
+            val length = readInt(start)
+            require(length in 3..maxMessage.toLong() + 1024) { "Invalid host message frame" }
+            if (size - start - 4 < length) break
+            val body = start + 4
+            val idLength = ((buffer[body + 1].toInt() and 0xff) shl 8) or (buffer[body + 2].toInt() and 0xff)
+            require(3 + idLength <= length) { "Invalid host message frame" }
+            val id = String(buffer, body + 3, idLength, Charsets.UTF_8)
+            val part = parts.getOrPut(id) { java.io.ByteArrayOutputStream() }
+            val dataLength = length.toInt() - 3 - idLength
+            require(part.size().toLong() + dataLength <= maxMessage) { "Host message exceeds limits" }
+            part.write(buffer, body + 3 + idLength, dataLength)
+            if (buffer[body].toInt() and 1 == 1) messages.add(parts.remove(id)!!.toByteArray())
+            start = body + length.toInt()
+        }
+        System.arraycopy(buffer, start, buffer, 0, size - start)
+        size -= start
+        return messages
     }
 
-    private companion object {
-        // Matches the helper's own cap of 350,000 frames of 48 characters.
-        const val MAX_FRAMES = 350_000
-        val FRAME = Regex("@([0-9]+)/([0-9]+):([A-Za-z0-9+/=]*)")
+    private fun readInt(at: Int): Long =
+        ((buffer[at].toLong() and 0xff) shl 24) or ((buffer[at + 1].toLong() and 0xff) shl 16) or
+            ((buffer[at + 2].toLong() and 0xff) shl 8) or (buffer[at + 3].toLong() and 0xff)
+
+    private fun append(
+        bytes: ByteArray,
+        offset: Int,
+        count: Int,
+    ) {
+        if (size + count > buffer.size) buffer = buffer.copyOf(maxOf(buffer.size * 2, size + count))
+        System.arraycopy(bytes, offset, buffer, size, count)
+        size += count
+    }
+
+    companion object {
+        /** The helper's own cap (MAX_MESSAGE in host.py). */
+        const val MAX_MESSAGE = 64 * 1024 * 1024
+
+        /** A protocol 2 request: u32 big-endian length, then the JSON bytes. */
+        fun request(json: ByteArray): ByteArray {
+            val n = json.size
+            return byteArrayOf((n ushr 24).toByte(), (n ushr 16).toByte(), (n ushr 8).toByte(), n.toByte()) + json
+        }
+
+        /** Error text for the app. Protocol 2 sends {code, message}; a conflict keeps the "CONFLICT:" prefix. */
+        fun errorText(error: Any?): String? =
+            when (error) {
+                null, org.json.JSONObject.NULL -> {
+                    null
+                }
+
+                is org.json.JSONObject -> {
+                    val message = error.optString("message").ifEmpty { "Host error" }
+                    if (error.optString("code") == "conflict") "CONFLICT: $message" else message
+                }
+
+                else -> {
+                    error.toString()
+                }
+            }
     }
 }
 
@@ -41,20 +90,27 @@ class HostLines(
 ) {
     private val line = java.io.ByteArrayOutputStream()
 
+    /**
+     * Feeds bytes and calls [onLine] for each full line. When [onLine] returns false,
+     * reading stops after that line and the number of bytes used is returned, so the
+     * caller can pass the rest to a binary decoder. Otherwise returns [count].
+     */
     fun feed(
         bytes: ByteArray,
         count: Int,
-        onLine: (String) -> Unit,
-    ) {
+        onLine: (String) -> Boolean,
+    ): Int {
         var start = 0
         for (i in 0 until count) {
             if (bytes[i].toInt() != 10) continue
             append(bytes, start, i - start)
-            onLine(line.toString(Charsets.ISO_8859_1.name()).trimEnd('\r'))
+            val more = onLine(line.toString(Charsets.ISO_8859_1.name()).trimEnd('\r'))
             line.reset()
             start = i + 1
+            if (!more) return start
         }
         append(bytes, start, count - start)
+        return count
     }
 
     private fun append(

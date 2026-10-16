@@ -45,6 +45,7 @@ class HostIntegrationTest {
                         stray.delete()
                     }
                 assertTrue(ready.getString("machine").isNotBlank())
+                assertEquals(2, ready.getInt("protocol"))
                 other.start(source, socket)
                 val capabilities = client.request("capabilities") as JSONObject
                 assertEquals(1, capabilities.getInt("protocol"))

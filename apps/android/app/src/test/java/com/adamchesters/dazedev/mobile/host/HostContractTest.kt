@@ -3,7 +3,6 @@ package com.adamchesters.dazedev.mobile.host
 import org.json.JSONObject
 import org.junit.Assert.*
 import org.junit.Test
-import java.util.Base64
 
 class HostContractTest {
     private fun fixture() = JSONObject(requireNotNull(javaClass.classLoader?.getResource("profile-v1.json")).readText())
@@ -167,27 +166,6 @@ class HostContractTest {
         assertTrue(p.folders().isEmpty())
         // Removing a profile row cannot call a transport or end a tmux session.
         assertEquals(7, p.revision)
-    }
-
-    @Test fun boundedNonceScopedFramesHandleLargeReplies() {
-        val text = "界".repeat(10000)
-        val base = Base64.getEncoder().encodeToString(text.toByteArray())
-        val chunks = base.chunked(48)
-        val frames = HostFrames("test")
-        assertNull(frames.line("DAZED:other:@0/1:e30="))
-        var result: String? = null
-        chunks.forEachIndexed { i, c -> result = frames.line("DAZED:test:@$i/${chunks.size}:$c") }
-        assertEquals(text, result)
-    }
-
-    @Test(expected = IllegalArgumentException::class)
-    fun reorderedFramesAreRefused() {
-        HostFrames("test").line("DAZED:test:@1/2:eA==")
-    }
-
-    @Test(expected = IllegalArgumentException::class)
-    fun excessiveFramesAreRefused() {
-        HostFrames("test").line("DAZED:test:@0/999999:eA==")
     }
 
     @Test fun foreignIdentitySurvivesOwnerIdCollisionAndDetailsStayIndependent() {
