@@ -873,6 +873,23 @@ def dictionary_write(a):
             if os.path.exists(temp):os.unlink(temp)
         return {'saved':True}
 
+WORKTREE_SCRIPT = 'scripts/new-worktree.sh'
+def create_worktree(a):
+    path=P(a['path']).resolve(); branch=a['branch']; destination=a.get('destination')
+    if not isinstance(branch,str) or not branch or branch.startswith('-'): raise ValueError('Branch name must not be empty or start with "-"')
+    if destination is not None and (not isinstance(destination,str) or destination.startswith('-')): raise ValueError('Worktree destination must not start with "-"')
+    run(['git','check-ref-format','--branch',branch])
+    script=path/WORKTREE_SCRIPT; run_script=a.get('runScript')
+    if script.exists():
+        # The repository's script runs only after the user confirms it.
+        if not isinstance(run_script,bool): return {'needsConfirmation':True,'script':WORKTREE_SCRIPT}
+        if run_script:
+            run(['bash','--',str(script),branch],cwd=path,timeout=120)
+            return repo_info(path)
+    if not destination: raise ValueError('Choose a worktree destination')
+    run(['git','-C',str(path),'worktree','add','-b',branch,'--',destination],env=identity_env(a.get('identity','')),timeout=60)
+    return repo_info(path)
+
 def dispatch(method,a):
     if method == 'browser_prepare':
         if not BROWSER: raise RuntimeError('Desktop browser bridge unavailable: '+(BROWSER_ERROR or 'reconnect this host'))
@@ -916,13 +933,7 @@ def dispatch(method,a):
         if dest.exists(): raise ValueError('Destination already exists; existing files preserved')
         run(['gh','repo','clone',full,str(dest)],env=identity_env(a['identity']),timeout=180)
         return repo_info(dest)
-    if method=='worktree':
-        path=P(a['path']).resolve(); branch=a['branch'];run(['git','check-ref-format','--branch',branch])
-        # Honor the repository's explicit script when present.
-        script=path/'scripts/new-worktree.sh'
-        if script.exists(): run(['bash',str(script),branch],cwd=path,timeout=120)
-        else: run(['git','-C',str(path),'worktree','add','-b',branch,a['destination']],env=identity_env(a.get('identity','')),timeout=60)
-        return repo_info(path)
+    if method=='worktree': return create_worktree(a)
     raise ValueError('Unknown method')
 
 # Read-only methods share the read lane; everything else stays ordered on the
