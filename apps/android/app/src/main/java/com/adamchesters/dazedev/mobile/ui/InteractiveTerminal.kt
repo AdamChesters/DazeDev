@@ -17,7 +17,7 @@ import androidx.webkit.JavaScriptReplyProxy
 import androidx.webkit.WebMessageCompat
 import androidx.webkit.WebViewCompat
 import androidx.webkit.WebViewFeature
-import com.adamchesters.dazedev.mobile.ssh.TerminalStream
+import com.adamchesters.dazedev.mobile.ssh.TerminalLink
 import kotlinx.coroutines.*
 import kotlinx.coroutines.channels.Channel
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -34,9 +34,9 @@ private const val ORIGIN = "https://terminal.dazedev.invalid"
 /** Unacknowledged output allowed in the page at once. */
 private const val OUTPUT_WINDOW = 512L * 1024
 
-class TerminalController {
+class TerminalPageController {
     var web: WebView? = null
-    var stream: TerminalStream? = null
+    var stream: TerminalLink? = null
     var ready by mutableStateOf(false)
 
     fun call(
@@ -69,14 +69,14 @@ class TerminalController {
     }
 }
 
-private fun inputRefused(stream: TerminalStream?) = if (stream?.connected == true) "Input is still being sent. Wait a moment, then try again." else "Input was not sent. Reconnect the terminal."
+private fun inputRefused(stream: TerminalLink?) = if (stream?.connected == true) "Input is still being sent. Wait a moment, then try again." else "Input was not sent. Reconnect the terminal."
 
 /** One WebView per attachment: the caller keys this on the terminal epoch. The page measures before the stream attaches. */
 @SuppressLint("SetJavaScriptEnabled")
 @Composable
 fun InteractiveTerminal(
-    stream: TerminalStream?,
-    controller: TerminalController,
+    stream: TerminalLink?,
+    controller: TerminalPageController,
     onMeasured: (Int, Int) -> Unit,
     onScrolled: (Boolean) -> Unit,
     onMessage: (String) -> Unit,

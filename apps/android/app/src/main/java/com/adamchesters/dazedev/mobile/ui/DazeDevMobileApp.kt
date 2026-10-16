@@ -30,6 +30,8 @@ import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.LifecycleEventObserver
 import androidx.lifecycle.compose.LocalLifecycleOwner
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
+import com.adamchesters.dazedev.mobile.host.BrowserAnswer
+import com.adamchesters.dazedev.mobile.host.ConnectionPhase
 import kotlinx.coroutines.launch
 
 @Composable

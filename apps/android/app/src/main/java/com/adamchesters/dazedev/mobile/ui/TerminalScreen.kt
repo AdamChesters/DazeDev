@@ -99,7 +99,7 @@ data class TerminalScreenState(
     val selectedSessionName: String?,
     val selectedTargetLabel: String,
     val selectedPaneId: String?,
-    val terminal: com.adamchesters.dazedev.mobile.ssh.TerminalStream?,
+    val terminal: com.adamchesters.dazedev.mobile.ssh.TerminalLink?,
     val terminalEpoch: Long,
     val terminalError: String?,
     val staleSession: Boolean,
@@ -190,7 +190,7 @@ fun TerminalScreen(
     var voicePrefix by remember(draftKey) { mutableStateOf("") }
     var frozenTarget by rememberSaveable(draftKey) { mutableStateOf(drafts.getString("target:$draftKey", null)) }
     val scope = rememberCoroutineScope()
-    val terminalController = remember(uiState.terminalEpoch) { TerminalController() }
+    val terminalController = remember(uiState.terminalEpoch) { TerminalPageController() }
     var submitting by remember(draftKey) { mutableStateOf(false) }
     var startingVoice by remember(draftKey) { mutableStateOf(false) }
     var voiceStartRequest by remember(draftKey) { mutableStateOf(0L) }

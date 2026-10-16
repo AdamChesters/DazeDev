@@ -9,6 +9,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.window.Dialog
 import androidx.compose.ui.window.DialogProperties
+import com.adamchesters.dazedev.mobile.host.ConnectionPhase
 import com.adamchesters.dazedev.mobile.host.SharedProfile
 import com.adamchesters.dazedev.mobile.host.TerminalRow
 import org.json.JSONObject

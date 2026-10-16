@@ -122,7 +122,7 @@ fun findMobileUpdate(
     return candidates.maxByOrNull { it.first }?.second
 }
 
-object PublicReleaseCatalog {
+object PublicReleaseCatalog : ReleaseSource {
     // Fixed public endpoints, no token lookup and no authenticated fallback.
     private fun fetch(url: String): String {
         val connection = URI(url).toURL().openConnection() as HttpsURLConnection
@@ -151,7 +151,7 @@ object PublicReleaseCatalog {
         }
     }
 
-    fun updates(current: String): MobileUpdate? = findMobileUpdate(fetch("https://api.github.com/repos/$REPOSITORY/releases?per_page=100"), current)
+    override fun updates(current: String): MobileUpdate? = findMobileUpdate(fetch("https://api.github.com/repos/$REPOSITORY/releases?per_page=100"), current)
 
-    fun history(): String = fetch("https://raw.githubusercontent.com/$REPOSITORY/main/shared/releases/changelog.json")
+    override fun history(): String = fetch("https://raw.githubusercontent.com/$REPOSITORY/main/shared/releases/changelog.json")
 }

@@ -1,9 +1,12 @@
 package com.adamchesters.dazedev.mobile.host
 
-import com.adamchesters.dazedev.mobile.ssh.SshConnection
+import com.adamchesters.dazedev.mobile.ssh.SshLink
 import com.adamchesters.dazedev.mobile.tmux.ShellQuoter
 import com.jcraft.jsch.ChannelExec
 import kotlinx.coroutines.*
+import kotlinx.coroutines.flow.MutableSharedFlow
+import kotlinx.coroutines.flow.SharedFlow
+import kotlinx.coroutines.flow.asSharedFlow
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.Semaphore
 import kotlinx.coroutines.sync.withLock
@@ -14,11 +17,14 @@ import java.util.concurrent.ConcurrentHashMap
 import java.util.concurrent.atomic.AtomicLong
 
 class HostClient(
-    private val ssh: SshConnection,
+    private val ssh: SshLink,
     private val scope: CoroutineScope,
     private val onBrowserOpen: suspend (String) -> String? = { "Browser unavailable" },
     private val onLinkLost: (String) -> Unit = {},
-) {
+) : HostLink {
+    private val linkEvents = MutableSharedFlow<HostLinkEvent>(extraBufferCapacity = 8)
+    override val events: SharedFlow<HostLinkEvent> = linkEvents.asSharedFlow()
+
     @Volatile private var channel: ChannelExec? = null
     private var reader: Job? = null
     private val writer = Mutex()
@@ -30,13 +36,13 @@ class HostClient(
     private val browserEndpoint = UUID.randomUUID().toString().replace("-", "")
     private val browserDevice = UUID.randomUUID().toString().replace("-", "")
     private val browserJobs = ConcurrentHashMap<String, Job>()
-    val isOpen get() = channel?.isConnected == true
+    override val isOpen get() = channel?.isConnected == true
 
-    suspend fun start(
+    override suspend fun start(
         source: ByteArray,
         socket: String,
-        browserSource: ByteArray = ByteArray(0),
-        host: String = "this host",
+        browserSource: ByteArray,
+        host: String,
     ): JSONObject {
         close()
         nonce = UUID.randomUUID().toString().replace("-", "")
@@ -157,7 +163,11 @@ class HostClient(
                         channel = null
                         pending.values.forEach { it.completeExceptionally(error) }
                         pending.clear()
-                        if (linked && error !is CancellationException) onLinkLost(error.message ?: "Host stream closed.")
+                        if (linked && error !is CancellationException) {
+                            val reason = error.message ?: "Host stream closed."
+                            onLinkLost(reason)
+                            linkEvents.tryEmit(HostLinkEvent.Lost(reason))
+                        }
                     }
                     active.disconnect()
                 }
@@ -175,10 +185,10 @@ class HostClient(
         }
     }
 
-    suspend fun request(
+    override suspend fun request(
         method: String,
-        args: JSONObject = JSONObject(),
-        timeoutMs: Long = 60_000,
+        args: JSONObject,
+        timeoutMs: Long,
     ): Any {
         val active = channel?.takeIf { it.isConnected } ?: error("Reconnect this host first.")
         require(requests.tryAcquire()) { "Host is busy. Wait for the current operation." }
@@ -213,7 +223,7 @@ class HostClient(
         }
     }
 
-    fun close() {
+    override fun close() {
         browserJobs.values.forEach { it.cancel() }
         browserJobs.clear()
         val old = channel

@@ -15,9 +15,9 @@ import java.util.concurrent.atomic.AtomicBoolean
 import java.util.concurrent.atomic.AtomicLong
 
 class TerminalStream(
-    private val ssh: SshConnection,
+    private val ssh: SshLink,
     parent: CoroutineScope,
-) {
+) : TerminalLink {
     private val scope = CoroutineScope(parent.coroutineContext + SupervisorJob(parent.coroutineContext[Job]))
     private var active: ChannelExec? = null
     private val closing = AtomicBoolean(false)
@@ -32,14 +32,14 @@ class TerminalStream(
     private val incoming = Channel<ByteArray>(Channel.UNLIMITED)
     private val bufferedOutput = AtomicLong(0)
     private val drained = Channel<Unit>(Channel.CONFLATED)
-    val output =
+    override val output =
         incoming.receiveAsFlow().onEach {
             bufferedOutput.addAndGet(-it.size.toLong())
             drained.trySend(Unit)
         }
     private val _connected = MutableStateFlow(false)
-    val state = _connected.asStateFlow()
-    val connected get() = _connected.value
+    override val state = _connected.asStateFlow()
+    override val connected get() = _connected.value
 
     @Volatile private var attached: Triple<String, String, String>? = null
 
@@ -138,7 +138,7 @@ class TerminalStream(
     }
 
     /** False when the stream is closed or too much input is already waiting. */
-    fun send(bytes: ByteArray): Boolean {
+    override fun send(bytes: ByteArray): Boolean {
         if (!connected || closing.get() || bytes.size !in 1..65_536) return false
         if (queuedInput.addAndGet(bytes.size.toLong()) > MAX_QUEUED_INPUT) {
             queuedInput.addAndGet(-bytes.size.toLong())
@@ -147,7 +147,7 @@ class TerminalStream(
         return outgoing.trySend(bytes.copyOf()).isSuccess.also { if (!it) queuedInput.addAndGet(-bytes.size.toLong()) }
     }
 
-    fun resize(
+    override fun resize(
         cols: Int,
         rows: Int,
     ) {
@@ -155,7 +155,7 @@ class TerminalStream(
     }
 
     /** Leaves tmux copy mode on this session's active pane, if it is in it. */
-    suspend fun cancelCopyMode() {
+    override suspend fun cancelCopyMode() {
         val target = attached ?: return
         ssh
             .execute(TerminalScrollCommands.cancel(target.first, target.second, target.third), 15_000)
@@ -167,7 +167,7 @@ class TerminalStream(
         const val MAX_BUFFERED_OUTPUT = 8L shl 20
     }
 
-    fun close() {
+    override fun close() {
         if (closing.compareAndSet(false, true)) {
             _connected.value = false
             outgoing.cancel()

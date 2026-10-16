@@ -49,6 +49,7 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import com.adamchesters.dazedev.mobile.data.AuthMethod
 import com.adamchesters.dazedev.mobile.data.ConnectionProfile
+import com.adamchesters.dazedev.mobile.host.ConnectionPhase
 
 @Composable
 fun ConnectionScreen(

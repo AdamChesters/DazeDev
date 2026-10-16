@@ -1,6 +1,7 @@
 package com.adamchesters.dazedev.mobile.ui
 
 import com.adamchesters.dazedev.mobile.data.ConnectionProfile
+import com.adamchesters.dazedev.mobile.host.ConnectionPhase
 import com.adamchesters.dazedev.mobile.host.HostReference
 import com.adamchesters.dazedev.mobile.host.TerminalRow
 

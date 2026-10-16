@@ -1,15 +1,17 @@
 package com.adamchesters.dazedev.mobile.data
 
 import android.content.Context
+import com.adamchesters.dazedev.mobile.releases.UpdateStore
 import org.json.JSONArray
 import org.json.JSONObject
 
 class ProfileStore(
     private val context: Context,
-) {
+) : HostStore,
+    UpdateStore {
     private val prefs = context.getSharedPreferences("dazedev_mobile_hosts", Context.MODE_PRIVATE)
 
-    fun loadAll(): List<ConnectionProfile> =
+    override fun loadAll(): List<ConnectionProfile> =
         runCatching {
             val array = JSONArray(prefs.getString("hosts", "[]"))
             (0 until array.length()).map { index ->
@@ -38,7 +40,7 @@ class ProfileStore(
 
     fun load(): ConnectionProfile = loadAll().firstOrNull() ?: ConnectionProfile()
 
-    fun save(profile: ConnectionProfile) {
+    override fun save(profile: ConnectionProfile) {
         val existing = loadAll()
         val hosts = if (existing.any { it.id == profile.id }) existing.map { if (it.id == profile.id) profile else it } else existing + profile
         val a = JSONArray()
@@ -65,7 +67,7 @@ class ProfileStore(
         }
     }
 
-    fun releaseHistory(): String = prefs.getString("release-history", "[]") ?: "[]"
+    override fun releaseHistory(): String = prefs.getString("release-history", "[]") ?: "[]"
 
     fun localWorkspaces(): JSONObject? {
         for (key in listOf("local-workspaces", "local-workspaces-last-good")) {
@@ -91,19 +93,19 @@ class ProfileStore(
         check(editor.putString("local-workspaces", validated.toString()).commit()) { "Could not save workspace; previous settings retained." }
     }
 
-    fun saveReleaseHistory(value: String) {
+    override fun saveReleaseHistory(value: String) {
         prefs.edit().putString("release-history", value).apply()
     }
 
-    fun lastUpdateCheck(): Long = prefs.getLong("last-update-check", 0L)
+    override fun lastUpdateCheck(): Long = prefs.getLong("last-update-check", 0L)
 
-    fun checkedUpdates() {
+    override fun checkedUpdates() {
         prefs.edit().putLong("last-update-check", System.currentTimeMillis()).apply()
     }
 
-    fun ignoredUpdate(): String = prefs.getString("ignored-update", "") ?: ""
+    override fun ignoredUpdate(): String = prefs.getString("ignored-update", "") ?: ""
 
-    fun ignoreUpdate(version: String) {
+    override fun ignoreUpdate(version: String) {
         prefs.edit().putString("ignored-update", version).apply()
     }
 
@@ -135,21 +137,23 @@ class ProfileStore(
         prefs.edit().remove("launch:$host:$digest").apply()
     }
 
-    fun retainDraft(
+    override fun retainDraft(
         host: String,
         document: JSONObject,
-        base: JSONObject? = null,
+        base: JSONObject?,
     ) {
         val edit = prefs.edit().putString("draft:$host", document.toString())
         if (base != null) edit.putString("draft-base:$host", base.toString())
         edit.apply()
     }
 
-    fun draftBase(host: String): JSONObject? = prefs.getString("draft-base:$host", null)?.let(::JSONObject)
+    override fun draftBase(host: String): JSONObject? = prefs.getString("draft-base:$host", null)?.let(::JSONObject)
 
-    fun draft(host: String): JSONObject? = prefs.getString("draft:$host", null)?.let(::JSONObject)
+    override fun hasDraft(host: String): Boolean = prefs.contains("draft:$host")
 
-    fun clearDraft(host: String) {
+    override fun draft(host: String): JSONObject? = prefs.getString("draft:$host", null)?.let(::JSONObject)
+
+    override fun clearDraft(host: String) {
         prefs
             .edit()
             .remove("draft:$host")
