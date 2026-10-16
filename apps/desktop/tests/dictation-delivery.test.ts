@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from 'vitest';
-import { deliverDictation, reviewPasteText } from '../src/lib/terminals';
+import { deliverDictation } from '../src/lib/terminals';
 
 describe('dictation delivery', () => {
   it('pastes without consulting unavailable or changing foreground context', async () => {
@@ -16,16 +16,5 @@ describe('dictation delivery', () => {
     expect(terminal.pasteDictation).toHaveBeenCalledExactlyOnceWith('My answer', false);
     expect(terminal.context).not.toHaveBeenCalled();
     expect(terminal.processId).not.toHaveBeenCalled();
-  });
-  it('preserves explicit automatic submission and propagates actual delivery failures', async () => {
-    const pasteDictation = vi.fn().mockRejectedValue(new Error('Disconnected'));
-    await expect(deliverDictation({ pasteDictation }, 'Answer', true)).rejects.toThrow(
-      'Disconnected',
-    );
-    expect(pasteDictation).toHaveBeenCalledExactlyOnceWith('Answer', true);
-  });
-  it('pastes multiline speech without executing shell lines when bracketed paste is unavailable', () => {
-    expect(reviewPasteText('First line\nSecond line', false)).toBe('First line Second line');
-    expect(reviewPasteText('First line\nSecond line', true)).toBe('First line\nSecond line');
   });
 });

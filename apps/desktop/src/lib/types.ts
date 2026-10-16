@@ -123,7 +123,9 @@ export interface Device {
     automatic: boolean;
     microphone: string;
   };
-  clipboardByHost?: Record<string, 'off' | 'write' | 'read-write'>;
+  clipboardByHost?: Record<string, import('./terminals').TerminalSettings['clipboard']>;
+  clipboardPolicy?: number;
+  appShortcuts?: Partial<Record<import('./app-shortcuts').AppAction, import('./shortcut').Shortcut>>;
   terminal?: import('./terminals').TerminalSettings;
   inputMode?: 'toggle' | 'hold';
   motionPreferenceVersion?: number;

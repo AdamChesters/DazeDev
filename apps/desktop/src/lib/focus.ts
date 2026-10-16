@@ -1,5 +1,10 @@
 // Keep keyboard navigation inside the current modal and restore its trigger.
-export function focusDialog(node: HTMLElement, options: { restore?: () => boolean } = {}) {
+// When `key` changes (one dialog element showing a different modal), focus
+// moves to the first control of the new content.
+export function focusDialog(
+  node: HTMLElement,
+  options: { restore?: () => boolean; key?: string } = {},
+) {
   const previous = document.activeElement as HTMLElement | null;
   const elements = () =>
     Array.from(
@@ -18,7 +23,13 @@ export function focusDialog(node: HTMLElement, options: { restore?: () => boolea
       }
       return true;
     });
-  queueMicrotask(() => elements()[0]?.focus());
+  const focusFirst = () => {
+    const first = elements()[0];
+    if (first) first.focus();
+    else node.focus();
+  };
+  queueMicrotask(focusFirst);
+  let currentKey = options.key;
   const key = (e: KeyboardEvent) => {
     if (e.key !== 'Tab') return;
     const all = elements(),
@@ -45,6 +56,17 @@ export function focusDialog(node: HTMLElement, options: { restore?: () => boolea
   };
   node.addEventListener('keydown', key);
   return {
+    update(next: { restore?: () => boolean; key?: string } = {}) {
+      options = next;
+      if (next.key === currentKey) return;
+      currentKey = next.key;
+      // Wait for the new content to render. Focus left with the old content,
+      // unless the new content already focused its own control.
+      requestAnimationFrame(() => {
+        const active = document.activeElement;
+        if (!active || active === node || !node.contains(active)) focusFirst();
+      });
+    },
     destroy() {
       node.removeEventListener('keydown', key);
       if (!options.restore?.() && previous?.isConnected) previous.focus();

@@ -2,6 +2,9 @@ import { rpc } from './bridge';
 import { wrappedWebLinks } from './web-links';
 export const imagePath = (value: string) =>
   /\.(png|jpe?g|gif|webp|bmp|ico|avif)(?:[?#].*)?$/i.test(value);
+// Previews only load local image data. A remote image is shown as its URL with
+// an "Open in browser" action instead of being fetched inside the app.
+export const localImageSource = (src: string) => /^(data:image\/|blob:)/i.test(src.trim());
 export interface ViewedImage {
   path: string;
   src: string;

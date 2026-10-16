@@ -9,7 +9,7 @@ import {
 } from '../src/lib/shortcut';
 const context = {
   hostId: 'dev',
-  hostName: 'Devbox',
+  hostName: 'Workstation',
   workspaceId: 'work',
   workspaceName: 'Planning',
   paneId: 'pane',
@@ -55,7 +55,7 @@ it('interpretation and decline have no action effects; only Implement consumes o
   const effect = vi.fn();
   const text = 'Open four new terminals with Codex';
   const reviewed = reviewCommand(text, parseCommand(text, [], 'dev'), context);
-  expect(reviewed.summary).toContain('Open 4 terminals in workspace “Planning” on Devbox');
+  expect(reviewed.summary).toContain('Open 4 terminals in workspace “Planning” on Workstation');
   expect(reviewed.summary).toContain('Start codex in each terminal');
   expect(effect).not.toHaveBeenCalled();
   // Decline discards this object; a freshly interpreted review is required.

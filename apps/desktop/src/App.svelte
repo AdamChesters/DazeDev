@@ -29,7 +29,23 @@
   import Licenses from './components/Licenses.svelte';
   import { hostLabel, terminalPresentation, unknownStatus, type PaneStatus } from './lib/pane-status';
   import { diagnostic, exportDiagnostics } from './lib/diagnostics';
-  import { onMount, tick } from 'svelte';
+  import { onMount, tick, untrack } from 'svelte';
+  import { AlertThrottle } from './lib/terminal-alerts';
+  import {
+    migrateClipboardPolicy,
+    paneContainers,
+    pruneKeys,
+    prunePaneChoices,
+  } from './lib/device-state';
+  import {
+    appActions,
+    appActionFor,
+    appShortcut,
+    shortcutConflict,
+    terminalOwnsKey,
+    type AppAction,
+  } from './lib/app-shortcuts';
+  import { macPlatform } from './lib/terminal-setup';
   import { sessionNameError } from './lib/session-name';
   import { recommendVoice, accelerationAdvice, type VoiceHardware } from './lib/hardware';
   import { fade } from 'svelte/transition';
@@ -79,7 +95,12 @@
     unknownVariables,
     type PromptValues,
   } from './lib/prompt';
-  import { terminals, terminalDefaults, deliverDictation } from './lib/terminals';
+  import {
+    terminals,
+    terminalDefaults,
+    deliverDictation,
+    type TerminalSettings,
+  } from './lib/terminals';
   import ColorPicker from './components/ColorPicker.svelte';
   import { tabColors, retainedPaneColors } from './lib/colors';
   import TmuxSettings from './components/TmuxSettings.svelte';
@@ -260,13 +281,14 @@
       theme: device.theme || 'blue',
       inputShortcut: device.inputShortcut || defaultShortcut,
       commandShortcut: device.commandShortcut || defaultCommandShortcut,
+      searchShortcut: appShortcut(device.appShortcuts, 'search'),
       voiceStatus,
       voiceMode,
       voiceTarget,
       dictation,
       settings: {
         ...(device.terminal || terminalDefaults),
-        clipboard: device.clipboardByHost?.[pane.hostId] || device.terminal?.clipboard || 'write',
+        clipboard: device.clipboardByHost?.[pane.hostId] || device.terminal?.clipboard || 'notify',
       },
       status: terminalState[pane.id] || '',
       ready: !!terminals.get(pane.id)?.context(),
@@ -350,8 +372,11 @@
       } else if (action === 'binary') await terminal.binary?.(String(args.data || ''));
       else if (action === 'resize') await terminal.resize?.(Number(args.cols), Number(args.rows));
       else if (action === 'paste') {
-        await terminal.paste(String(args.text || ''), false, String(args.context || ''));
+        // The terminal window already asked about multi-line text.
+        await terminal.paste(String(args.text || ''), false, String(args.context || ''), 'clipboard');
         result = terminal.context();
+      } else if (action === 'paste-confirm-off') {
+        setPasteConfirmation(false);
       } else if (action === 'reconnect') {
         terminal.resume?.();
         const host = device.hosts.find((h) => h.id === pane.hostId);
@@ -361,10 +386,12 @@
         await terminal.recover();
       } else if (action === 'focus') {
         owner.focused = paneId;
-        (device.localFocus ||= {})[owner.id] = paneId;
-        device.activeWorkspace = owner.id;
-        device.activeHost = owner.hostId;
-        persistDevice();
+        setLocalFocus(owner.id, paneId);
+        if (device.activeWorkspace !== owner.id || device.activeHost !== owner.hostId) {
+          device.activeWorkspace = owner.id;
+          device.activeHost = owner.hostId;
+          persistDevice();
+        }
       } else if (action === 'dock') {
         await call('terminal_window_publish', { paneId, value: { requestId, result: null } });
         await dockTerminal(paneId);
@@ -458,7 +485,7 @@
     notice = 'Repository prompt pasted for review. Press Enter in the terminal when ready.';
   }
   let alertAudio: AudioContext | undefined;
-  let lastTerminalAlert = 0;
+  const alertThrottle = new AlertThrottle();
   async function softAlert() {
     alertAudio ||= new AudioContext();
     await alertAudio.resume();
@@ -478,8 +505,7 @@
     };
   }
   function terminalAlert(pane: Pane, message: string) {
-    if (Date.now() - lastTerminalAlert < 3000) return;
-    lastTerminalAlert = Date.now();
+    if (!alertThrottle.allow(pane.id)) return;
     if (device.terminalAlerts?.visual) notice = `${pane.name}: ${message}`;
     if (device.terminalAlerts?.sound) void softAlert().catch(() => {});
   }
@@ -835,15 +861,23 @@
   let selectedPanes = $state<string[]>([]);
   let draggingPanes = $state<string[]>([]);
   let selectionWorkspace = '';
+  // Saves only when the remembered focus really changes.
+  function setLocalFocus(workspaceId: string, paneId: string) {
+    if (device.localFocus?.[workspaceId] === paneId) return;
+    (device.localFocus ||= {})[workspaceId] = paneId;
+    persistDevice();
+  }
   function selectPane(paneId: string, workspace: Workspace, additive = false) {
     const group = terminalTabs(workspace, paneId);
-    if (group) (device.activeTerminalTabs ||= {})[group.id] = paneId;
+    if (group && device.activeTerminalTabs?.[group.id] !== paneId) {
+      (device.activeTerminalTabs ||= {})[group.id] = paneId;
+      persistDevice();
+    }
     if (selectionWorkspace !== workspace.id) selectedPanes = [];
     selectionWorkspace = workspace.id;
     selectedPanes = selectPanes(selectedPanes, paneId, additive);
     workspace.focused = paneId;
-    (device.localFocus ||= {})[workspace.id] = paneId;
-    persistDevice();
+    setLocalFocus(workspace.id, paneId);
   }
   const updateCanPresent = $derived(canPresentUpdate(modal, voiceStatus, !!draggingPane));
   $effect(() => {
@@ -877,6 +911,8 @@
   ) {
     if (sameShortcut(binding, bindingFor(mode === 'dictation' ? 'command' : 'dictation')))
       throw new Error('Choose different hotkeys for terminal dictation and IDE commands.');
+    const clash = appActions.find((a) => sameShortcut(appShortcut(device.appShortcuts, a.id), binding));
+    if (clash) throw new Error(`${binding.label} is already used by ${clash.label}.`);
     if (mode === 'dictation') device.inputShortcut = binding;
     else device.commandShortcut = binding;
     capturingShortcut = null;
@@ -886,6 +922,29 @@
   function captureShortcut(mode: VoiceMode) {
     capturingShortcut = mode;
     shortcutStatus = 'Press a key combination, or choose a mouse/device button.';
+  }
+  let capturingAppShortcut = $state<AppAction | null>(null);
+  let appShortcutStatus = $state('');
+  const mac = macPlatform();
+  function saveAppShortcut(action: AppAction, binding: Shortcut) {
+    const clash = shortcutConflict(action, binding, device.appShortcuts, [
+      { label: 'Terminal dictation', shortcut: bindingFor('dictation') },
+      { label: 'IDE voice command', shortcut: bindingFor('command') },
+    ]);
+    if (clash) {
+      appShortcutStatus = `${binding.label} is already used by ${clash}. Press another combination, or Escape to cancel.`;
+      return;
+    }
+    device.appShortcuts = { ...device.appShortcuts, [action]: binding };
+    capturingAppShortcut = null;
+    appShortcutStatus = '';
+    persistDevice();
+  }
+  function resetAppShortcuts() {
+    device.appShortcuts = {};
+    capturingAppShortcut = null;
+    appShortcutStatus = 'Shortcuts reset to defaults.';
+    persistDevice();
   }
   async function inputEdge(pressed: boolean, mode: VoiceMode) {
     if (capturingShortcut || (pressed && !appHasFocus())) return;
@@ -960,6 +1019,8 @@
     });
     if (actual !== p.agent) {
       p.agent = actual;
+      const owner = workspaces.find((w) => w.panes.some((pane) => pane.id === p.id));
+      if (owner) saved(owner.hostId);
       throw new Error(
         'The agent in this terminal changed. Refresh its controls before choosing a model.',
       );
@@ -968,6 +1029,7 @@
       effort && p.agent === 'claude' ? '/effort' : p.agent === 'opencode' ? '/models' : '/model',
       true,
       expectedContext,
+      'command',
     );
     terminals.get(p.id)?.focus?.();
   }
@@ -1646,6 +1708,9 @@
       void task(() => configureShortcut());
     }
   });
+  $effect(() => {
+    if (capturingAppShortcut && modal !== 'settings') capturingAppShortcut = null;
+  });
   let launchAxis = $state<'row' | 'column' | null>(null);
   $effect(() => {
     if (
@@ -1696,6 +1761,45 @@
     Object.fromEntries(workspaces.map((w) => [w.id, rectangles(layoutFor(w))])),
   );
   const current = $derived(workspaces.find((w) => w.id === device.activeWorkspace));
+  // Per-pane state goes when its pane goes, so the device file does not grow.
+  const seenContainers = new Set<string>();
+  $effect(() => {
+    const { byWorkspace, byGroup } = paneContainers(workspaces);
+    const live = new Set(workspaces.flatMap((w) => w.panes.map((p) => p.id)));
+    const hostIds = new Set([HOSTLESS, ...device.hosts.map((h) => h.id)]);
+    const complete = device.hosts.every((h) => !!profiles[h.id]);
+    untrack(() => {
+      for (const id of [...byWorkspace.keys(), ...byGroup.keys()]) seenContainers.add(id);
+      const status = pruneKeys(paneStatus, live);
+      if (status !== paneStatus) paneStatus = status;
+      const states = pruneKeys(terminalState, live);
+      if (states !== terminalState) terminalState = states;
+      const progress = pruneKeys(terminalProgress, live);
+      if (progress !== terminalProgress) terminalProgress = progress;
+      alertThrottle.retain(live);
+      let changed = false;
+      const focus = prunePaneChoices(device.localFocus || {}, byWorkspace, seenContainers, complete);
+      if (device.localFocus && focus !== device.localFocus) {
+        device.localFocus = focus;
+        changed = true;
+      }
+      const tabs = prunePaneChoices(device.activeTerminalTabs || {}, byGroup, seenContainers, complete);
+      if (device.activeTerminalTabs && tabs !== device.activeTerminalTabs) {
+        device.activeTerminalTabs = tabs;
+        changed = true;
+      }
+      for (const key of ['clipboardByHost', 'collapsedHosts'] as const) {
+        const record = device[key] as Record<string, unknown> | undefined;
+        if (!record) continue;
+        const pruned = pruneKeys(record, hostIds);
+        if (pruned !== record) {
+          (device as unknown as Record<string, unknown>)[key] = pruned;
+          changed = true;
+        }
+      }
+      if (changed) persistDevice();
+    });
+  });
   let searchOrigin = $state<SearchTarget | null>(null);
   let searchPanel = $state<TerminalSearch>();
   const searchTargets = $derived(
@@ -1748,8 +1852,7 @@
     if (!owner || !controls?.revealMatch?.(hit.id)) return false;
     selectWorkspace(owner);
     owner.focused = hit.paneId;
-    (device.localFocus ||= {})[owner.id] = hit.paneId;
-    persistDevice();
+    setLocalFocus(owner.id, hit.paneId);
     await tick();
     await new Promise<void>((resolve) =>
       requestAnimationFrame(() => requestAnimationFrame(() => resolve())),
@@ -1852,12 +1955,24 @@
       busy = --pendingTasks > 0;
     }
   }
+  // Debounced; skips the write when nothing in the saved file changed.
+  let lastDeviceSave = '';
   function persistDevice() {
     if (!mounted) return;
     clearTimeout(deviceTimer);
     deviceTimer = setTimeout(() => {
-      void call('device_save', { value: { ...$state.snapshot(device), recovery } }).catch(fail);
+      const value = { ...$state.snapshot(device), recovery };
+      const text = JSON.stringify(value);
+      if (text === lastDeviceSave) return;
+      void call('device_save', { value }).then(() => {
+        lastDeviceSave = text;
+      }, fail);
     }, 180);
+  }
+  function setPasteConfirmation(confirm: boolean) {
+    device.terminal = { ...(device.terminal || terminalDefaults), confirmPaste: confirm };
+    persistDevice();
+    if (!confirm) notice = 'Multi-line paste no longer asks first. Change this in Settings > Terminal.';
   }
   function saved(hostId: string) {
     if (hostId === HOSTLESS) {
@@ -2437,6 +2552,31 @@
     await call('device_save', { value: { ...$state.snapshot(device), recovery } });
     await call('app_close');
   }
+  let closeFailure = $state('');
+  // Hosts ask to open links in the local browser; the user decides each one.
+  let browserRequests = $state<{ requestId: string; hostId: string; url: string }[]>([]);
+  let browserTrust = $state(false);
+  const browserRequest = $derived(browserRequests[0]);
+  async function decideBrowserRequest(allow: boolean) {
+    const request = browserRequests[0];
+    if (!request) return;
+    const trustHost = allow && browserTrust;
+    browserRequests = browserRequests.slice(1);
+    browserTrust = false;
+    await call('browser_open_decision', { requestId: request.requestId, allow, trustHost }).catch(
+      fail,
+    );
+  }
+  let closingApp = $state(false);
+  $effect(() => {
+    if (modal !== 'close-native') closingApp = false;
+  });
+  async function closeAnyway() {
+    closeFailure = '';
+    clearTimeout(deviceTimer);
+    await call('device_save', { value: { ...$state.snapshot(device), recovery } }).catch(() => {});
+    await call('app_close');
+  }
   function closePane(p: Pane, confirmed = false) {
     if (dictationActive && p.id === voiceTarget) {
       notice = 'Stop dictation before closing its terminal.';
@@ -2729,7 +2869,7 @@
   function focusBroadcastInput() {
     if (modal === 'broadcast' && appHasFocus())
       document
-        .querySelector<HTMLTextAreaElement>('[role="dialog"][aria-label="broadcast"] textarea')
+        .querySelector<HTMLTextAreaElement>('[data-modal="broadcast"] textarea')
         ?.focus();
   }
   function openBroadcast() {
@@ -3000,7 +3140,7 @@
   function focusCommandInput() {
     if (modal !== 'command' || !appHasFocus()) return;
     const input = document.querySelector<HTMLTextAreaElement>(
-      '[role="dialog"][aria-label="command"] textarea',
+      '[data-modal="command"] textarea',
     );
     if (!input || document.activeElement === input) return;
     // Preserve an explicit edit elsewhere; recover focus lost when the Stop button disappears.
@@ -3105,8 +3245,29 @@
       modal = 'destroy';
     } else if (a.kind === 'worktree') {
       branch = a.branch;
+      worktreeQuestion = null;
       modal = 'worktree';
     }
+  }
+  // The host asks before running a repository's own worktree script.
+  let worktreeRequest: { hostId: string; args: Record<string, unknown> } | null = null;
+  let worktreeQuestion = $state<{ script: string } | null>(null);
+  async function sendWorktree(runScript?: boolean) {
+    const request = worktreeRequest;
+    if (!request) throw new Error('Start the worktree again.');
+    const result = await rpc<{ needsConfirmation?: boolean; script?: string } | null>(
+      request.hostId,
+      'worktree',
+      runScript === undefined ? request.args : { ...request.args, runScript },
+    );
+    if (result?.needsConfirmation && runScript === undefined) {
+      worktreeQuestion = { script: result.script || 'scripts/new-worktree.sh' };
+      return;
+    }
+    worktreeQuestion = null;
+    worktreeRequest = null;
+    await refresh();
+    modal = 'repos';
   }
   function openUpdates() {
     automaticUpdatePending = false;
@@ -3263,6 +3424,23 @@
           window.dispatchEvent(new Event('blur'));
         }
       }),
+      on<{ requestId: string; hostId: string; url: string }>('browser-open-request', (request) => {
+        if (
+          typeof request?.requestId === 'string' &&
+          typeof request.hostId === 'string' &&
+          typeof request.url === 'string'
+        )
+        {
+          browserRequests = [...browserRequests, request];
+          // The question waits in this window; make sure the user can see it.
+          void (async () => {
+            const window = getCurrentWindow();
+            await window.show();
+            await window.unminimize();
+            await window.setFocus();
+          })().catch(() => {});
+        }
+      }),
       on<{ paneId: string }>('terminal-window-closed', (event) => {
         detachedPanes.delete(event.paneId);
         if (detachedFocus === event.paneId) detachedFocus = '';
@@ -3285,7 +3463,7 @@
         if (desktop) aliases = await call<string[]>('ssh_aliases').catch(() => []);
         if (data) {
           if (data.recoveryNotice) notice = data.recoveryNotice;
-          device = {
+          device = migrateClipboardPolicy({
             ...defaults(),
             ...data,
             voice: { ...defaults().voice, ...data.voice },
@@ -3298,7 +3476,7 @@
             motionPreferenceVersion: 1,
             inputMode: data.inputMode || 'toggle',
             terminal: { ...terminalDefaults, ...data.terminal },
-          };
+          });
           recovery = data.recovery || {};
           profiles = { ...recovery, [HOSTLESS]: device.localWorkspaces || blankProfile() };
         }
@@ -3430,6 +3608,7 @@
                 notice = 'Finish dictation and copy or discard retained text before closing.';
                 return;
               }
+              closeFailure = '';
               try {
                 const native: Pane[] = [];
                 for (const host of device.hosts.filter((h) => h.kind === 'powershell')) {
@@ -3441,10 +3620,14 @@
                   for (const session of sessions.filter((s) => s.running))
                     native.push({ hostId: host.id, sessionId: session.id } as Pane);
                 }
-                if (offerNativeClose(native, destroyApp)) return;
+                if (offerNativeClose(native, destroyApp)) {
+                  closingApp = true;
+                  return;
+                }
                 await destroyApp();
               } catch (e) {
-                fail(e);
+                // A failed check must never trap the user in the app.
+                closeFailure = String(e);
               }
             }),
           );
@@ -3510,7 +3693,31 @@
         }
       }
 
-      if (e.key === 'F11' && desktop) {
+      if (capturingAppShortcut) {
+        e.preventDefault();
+        e.stopImmediatePropagation();
+        if (e.key === 'Escape') {
+          capturingAppShortcut = null;
+          appShortcutStatus = '';
+          return;
+        }
+        const binding = keyboardShortcut(e);
+        if (binding) saveAppShortcut(capturingAppShortcut, binding);
+        return;
+      }
+      if (browserRequest && e.key === 'Escape') {
+        e.preventDefault();
+        e.stopImmediatePropagation();
+        void decideBrowserRequest(false);
+        return;
+      }
+      // Ctrl+letter inside a terminal is a control key for the shell or editor.
+      const inTerminal = !!(e.target as HTMLElement)?.closest?.('.xterm');
+      const appAction =
+        capturingShortcut || (inTerminal && terminalOwnsKey(e))
+          ? undefined
+          : appActionFor(e, device.appShortcuts, mac);
+      if (appAction === 'fullscreen' && desktop) {
         e.preventDefault();
         e.stopImmediatePropagation();
         void task(async () => {
@@ -3539,9 +3746,7 @@
         return;
       }
       if (
-        (e.ctrlKey || e.metaKey) &&
-        e.shiftKey &&
-        e.code === 'KeyF' &&
+        appAction === 'search' &&
         !modal &&
         !(e.target as HTMLElement)?.closest?.('.source-viewer')
       ) {
@@ -3582,7 +3787,7 @@
         if (!busy && !filesLocked && !broadcastBusy)
           modal = modal === 'changelog' ? changelogReturn : '';
       }
-      if ((e.ctrlKey || e.metaKey) && e.key === 'k' && !filesLocked && !broadcastBusy) {
+      if (appAction === 'command' && !filesLocked && !broadcastBusy) {
         e.preventDefault();
         modal = 'command';
       }
@@ -3750,7 +3955,7 @@
       <button
         class="icon"
         aria-label="Search terminals"
-        title="Search terminals (Ctrl+Shift+F)"
+        title={`Search terminals (${appShortcut(device.appShortcuts, 'search').label})`}
         onclick={() => openTerminalSearch()}><Search size={17} /></button
       >
       {#if modelsLoaded && !voiceReady}<button
@@ -4088,8 +4293,7 @@
                 style:--voice-pop-scale={box.width === 100 && box.height === 100 ? 1 : 1.012}
                 onfocusin={() => {
                   w.focused = id;
-                  (device.localFocus ||= {})[w.id] = id;
-                  persistDevice();
+                  setLocalFocus(w.id, id);
                 }}
               >
                 {#if voiceTarget === p.id && voiceListening}
@@ -4351,8 +4555,13 @@
                     settings={{
                       ...(device.terminal || terminalDefaults),
                       clipboard:
-                        device.clipboardByHost?.[p.hostId] || device.terminal?.clipboard || 'write',
+                        device.clipboardByHost?.[p.hostId] || device.terminal?.clipboard || 'notify',
                     }}
+                    onclipboard={(characters) =>
+                      (notice = `${p.name}: a program on the host copied ${characters} characters to your clipboard.`)}
+                    onpastesetting={setPasteConfirmation}
+                    watching={() =>
+                      detachedPanes.has(p.id) ? detachedFocus === p.id : document.hasFocus()}
                     floating={detachedPanes.has(p.id)}
                     onoutput={(value) => publishTerminal(p.id, { kind: 'output', ...value })}
                     onterminalfocus={() => {
@@ -4378,11 +4587,8 @@
                       if (host) await reconnectHost(host);
                     }}
                     onfocus={() => {
-                      if (w.focused !== p.id) {
-                        w.focused = p.id;
-                        (device.localFocus ||= {})[w.id] = p.id;
-                        persistDevice();
-                      }
+                      if (w.focused !== p.id) w.focused = p.id;
+                      setLocalFocus(w.id, p.id);
                     }}
                     onshell={() => {
                       p.sessionId = '';
@@ -4594,14 +4800,15 @@
         'documents',
         'upload',
       ].includes(modal)}
-      use:focusDialog={{ restore: restoreTerminalFocus }}
+      use:focusDialog={{ restore: restoreTerminalFocus, key: modal }}
       role="dialog"
       aria-modal="true"
-      aria-label={modal === 'feedback' ? supportContent.feedback.title : modal}
+      aria-labelledby="modal-title"
+      data-modal={modal}
       tabindex="-1"
     >
       <div class="modal-header">
-        <h2>
+        <h2 id="modal-title">
           {{
             host: 'Connect a machine',
             transcript: 'Review transcription',
@@ -4638,7 +4845,9 @@
             agents: 'Agents on this host',
             worktree: 'Create a worktree',
             workspace: 'Workspace options',
-          }[modal] || modal}
+            'listen-intro': 'Dictate into a terminal',
+            'terminal-host-connection': 'Terminal host connection',
+          }[modal] || 'Dialog'}
         </h2>
         <button
           class="icon"
@@ -4821,6 +5030,9 @@
             disabled={busy}
             onclick={() => void task(() => finishNativeClose('end'))}>End sessions</button
           >
+          {#if closingApp}<button disabled={busy} onclick={() => void task(closeAnyway)}
+              >Close anyway</button
+            >{/if}
           <button
             disabled={busy}
             onclick={() => {
@@ -5022,7 +5234,7 @@
           }}
         />
       {:else if modal === 'tmux-settings' && tmuxHost}
-        <TmuxSettings host={tmuxHost} appScrollback={device.terminal?.scrollback || 4000} />
+        <TmuxSettings host={tmuxHost} appScrollback={device.terminal?.scrollback || terminalDefaults.scrollback} />
       {:else if modal === 'pane-colors' && colorPane}
         {@const owner = workspaces.find((w) => w.panes.some((p) => p.id === colorPane?.id))}
         <p class="hint">
@@ -6025,7 +6237,9 @@
               <p class="hint">
                 Uses explicit terminal notifications or shell command-completion markers. Support
                 depends on the agent or shell integration; DazeDev does not infer completion from
-                inactivity. Alerts are limited to one every three seconds.
+                inactivity. "Command finished" shows when you are not watching that terminal or the
+                command ran for 10 seconds or more. Each terminal alerts at most once every three
+                seconds.
               </p>
               <div class="form-row">
                 <label
@@ -6048,6 +6262,10 @@
                   /></label
                 >
               </div>
+              <p class="hint">
+                Each open terminal keeps this many lines in memory, including terminals in other
+                workspaces. Default 10,000; up to 100,000.
+              </p>
               <div class="settings-checks">
                 <label class="check"
                   ><input
@@ -6078,20 +6296,55 @@
                   onchange={persistDevice}
                 />Screen reader terminal output</label
               >
+              <label class="check"
+                ><input
+                  type="checkbox"
+                  checked={device.terminal.confirmPaste !== false}
+                  onchange={(e) => setPasteConfirmation(e.currentTarget.checked)}
+                /> Ask before pasting text with line breaks</label
+              >
               <label
-                >Remote clipboard<select
+                >Remote copy (OSC 52)<select
                   bind:value={device.terminal.clipboard}
                   onchange={persistDevice}
                 >
-                  <option value="off">Off</option><option value="write">Allow remote copy</option
-                  ><option value="read-write">Allow remote copy and paste access</option>
+                  {@render clipboardOptions()}
                 </select></label
               >
               <p class="hint">
-                Copy: Ctrl+Shift+C. Paste: Ctrl+V or Ctrl+Shift+V. Search: Ctrl+Shift+F. Remote
-                paste access lets programs on the host read this device's clipboard.
+                Copy: Ctrl+Shift+C. Paste: Ctrl+V or Ctrl+Shift+V. Search: {appShortcut(
+                  device.appShortcuts,
+                  'search',
+                ).label}. Remote paste access lets programs on the host read this device's
+                clipboard.
               </p>
             </details>{/if}
+          <details class="settings-section settings-disclosure">
+            <summary>Keyboard shortcuts <span>App actions</span></summary>
+            <p class="hint">
+              Ctrl+letter shortcuts without Shift or Alt are left to the terminal while a terminal
+              has focus, so shell and editor keys such as Ctrl+K keep working there.
+            </p>
+            {#each appActions as action}
+              <div class="hotkey-record">
+                <label
+                  >{action.label}<input
+                    readonly
+                    value={appShortcut(device.appShortcuts, action.id).label}
+                  /></label
+                >
+                <button
+                  onclick={() => {
+                    capturingAppShortcut = action.id;
+                    appShortcutStatus = 'Press the new key combination. Escape cancels.';
+                  }}
+                  >{capturingAppShortcut === action.id ? 'Press keys…' : 'Change'}</button
+                >
+              </div>
+            {/each}
+            <button onclick={resetAppShortcuts}>Reset to defaults</button>
+            {#if appShortcutStatus}<p role="status" class="hint">{appShortcutStatus}</p>{/if}
+          </details>
           <details class="settings-section settings-disclosure">
             <summary>Connections <span>{device.hosts.length} hosts</span></summary>
             <p class="hint">
@@ -6120,14 +6373,13 @@
                 >Clipboard access for selected host<select
                   value={device.clipboardByHost?.[settingsHost] ||
                     device.terminal?.clipboard ||
-                    'write'}
+                    'notify'}
                   onchange={(e) => {
-                    (device.clipboardByHost ||= {})[settingsHost] = e.currentTarget.value as
-                      'off' | 'write' | 'read-write';
+                    (device.clipboardByHost ||= {})[settingsHost] = e.currentTarget
+                      .value as TerminalSettings['clipboard'];
                     persistDevice();
                   }}
-                  ><option value="off">Off</option><option value="write">Allow remote copy</option
-                  ><option value="read-write">Allow remote copy and paste access</option></select
+                  >{@render clipboardOptions()}</select
                 ></label
               >{/if}
           </details>
@@ -6297,28 +6549,49 @@
           </div>{/each}<button onclick={() => void task(() => refresh())}
           ><RefreshCw size={14} /> Refresh discovery</button
         >
-      {:else if modal === 'worktree'}<form
-          onsubmit={(e) => {
-            e.preventDefault();
-            void task(async () => {
-              if (!activePane?.repo) throw new Error('Select a repository terminal first.');
-              await rpc(activePane.hostId, 'worktree', {
-                path: activePane.repo,
-                branch,
-                destination,
-                identity: activePane.identity,
-              });
-              await refresh();
-              modal = 'repos';
-            });
-          }}
-        >
-          <label>Branch<input bind:value={branch} required /></label><label
-            >Worktree directory<input bind:value={destination} required /></label
+      {:else if modal === 'worktree'}{#if worktreeQuestion}<div
+            class="worktree-question"
+            role="group"
+            aria-labelledby="worktree-question-text"
           >
-          <p class="hint">Uses scripts/new-worktree.sh when the repository provides it.</p>
-          <button class="primary" disabled={busy}>Create worktree</button>
-        </form>{/if}
+            <p id="worktree-question-text">
+              This repository has {worktreeQuestion.script}. Run it to create the worktree?
+            </p>
+            <div class="row">
+              <button
+                class="primary"
+                disabled={busy}
+                onclick={() => void task(() => sendWorktree(true))}>Run script</button
+              >
+              <button disabled={busy} onclick={() => void task(() => sendWorktree(false))}
+                >Create without script</button
+              >
+              <button disabled={busy} onclick={() => (worktreeQuestion = null)}>Cancel</button>
+            </div>
+          </div>{:else}<form
+            onsubmit={(e) => {
+              e.preventDefault();
+              void task(async () => {
+                if (!activePane?.repo) throw new Error('Select a repository terminal first.');
+                worktreeRequest = {
+                  hostId: activePane.hostId,
+                  args: {
+                    path: activePane.repo,
+                    branch,
+                    destination,
+                    identity: activePane.identity,
+                  },
+                };
+                await sendWorktree();
+              });
+            }}
+          >
+            <label>Branch<input bind:value={branch} required /></label><label
+              >Worktree directory<input bind:value={destination} required /></label
+            >
+            <p class="hint">Asks first when the repository provides scripts/new-worktree.sh.</p>
+            <button class="primary" disabled={busy}>Create worktree</button>
+          </form>{/if}{/if}
     </div>
   </div>{/if}
 
@@ -6418,6 +6691,65 @@
         selection={dictionarySelection}
         ondone={() => (dictionarySelection = null)}
       />
+    </div>
+  </div>
+{/if}
+{#snippet clipboardOptions()}
+  <option value="off">Block</option><option value="notify">Allow and notify</option><option
+    value="write">Allow silently</option
+  ><option value="read-write">Allow, and let programs read this clipboard</option>
+{/snippet}
+{#if closeFailure}
+  <div class="modal-backdrop" role="presentation">
+    <div
+      class="modal"
+      role="alertdialog"
+      aria-modal="true"
+      aria-labelledby="close-failure-title"
+      tabindex="-1"
+      use:focusDialog
+    >
+      <h2 id="close-failure-title">DazeDev could not check everything before closing</h2>
+      <p class="inline-error">{closeFailure}</p>
+      <p class="hint">
+        Close anyway ends this window now. Remote tmux sessions keep running; local PowerShell
+        sessions may be left in the background.
+      </p>
+      <div class="row">
+        <button class="danger" onclick={() => void task(closeAnyway)}>Close anyway</button>
+        <button onclick={() => (closeFailure = '')}>Cancel</button>
+      </div>
+    </div>
+  </div>
+{/if}
+{#if browserRequest}
+  <div class="modal-backdrop" role="presentation">
+    <div
+      class="modal"
+      role="alertdialog"
+      aria-modal="true"
+      aria-labelledby="browser-request-title"
+      aria-describedby="browser-request-url"
+      tabindex="-1"
+      use:focusDialog={{ key: browserRequest.requestId }}
+    >
+      <h2 id="browser-request-title">
+        {device.hosts.find((h) => h.id === browserRequest.hostId)?.name || 'A connected host'} wants
+        to open
+      </h2>
+      <p id="browser-request-url" class="browser-request-url"><code>{browserRequest.url}</code></p>
+      <label class="check"
+        ><input type="checkbox" bind:checked={browserTrust} /> Allow links from this host until
+        DazeDev restarts</label
+      >
+      {#if browserRequests.length > 1}<p class="hint">
+          {browserRequests.length - 1} more {browserRequests.length === 2 ? 'request' : 'requests'}
+          waiting.
+        </p>{/if}
+      <div class="row">
+        <button class="primary" onclick={() => void decideBrowserRequest(true)}>Open</button>
+        <button onclick={() => void decideBrowserRequest(false)}>Don't open</button>
+      </div>
     </div>
   </div>
 {/if}

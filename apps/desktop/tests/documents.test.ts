@@ -17,10 +17,10 @@ it('quotes uploaded paths literally and preserves arbitrary file bytes', () => {
   expect(Uint8Array.from(atob(encodeChunk(data)), (c) => c.charCodeAt(0))).toEqual(data);
 });
 it('labels the original connection honestly when the nested destination is unknown', () => {
-  expect(hostLabel('Devbox', { ...unknownStatus, nestedSsh: true })).toContain(
+  expect(hostLabel('Workstation', { ...unknownStatus, nestedSsh: true })).toContain(
     'SSH destination unverified',
   );
-  expect(hostLabel('Devbox', unknownStatus)).toBe('Connection: Devbox');
+  expect(hostLabel('Workstation', unknownStatus)).toBe('Connection: Workstation');
 });
 
 import { previewKind } from '../src/lib/source-viewer';
@@ -33,4 +33,14 @@ it('offers rendered previews only for matching file types', () => {
 });
 it('quotes Windows paths for PowerShell without POSIX escapes or interpolation', () => {
   expect(shellPath("C:\\User's folder\\$image.png", true)).toBe("'C:\\User''s folder\\$image.png'");
+});
+it('shows remote Markdown images as a link placeholder and local image data inline', () => {
+  const remote = markdownPreview('![chart](https://example.com/chart.png?a=1&b=2)');
+  expect(remote).not.toContain('<img');
+  expect(remote).toContain('data-open-url="https://example.com/chart.png?a=1&amp;b=2"');
+  expect(remote).toContain('Open in browser');
+  const local = markdownPreview('![dot](data:image/png;base64,iVBORw0KGgo=)');
+  expect(local).toContain('<img src="data:image/png;base64,iVBORw0KGgo=" alt="dot">');
+  expect(markdownPreview('![x](data:text/html;base64,PHNjcmlwdD4=)')).not.toContain('<img');
+  expect(markdownPreview('![x](javascript:alert(1))')).not.toContain('<img');
 });

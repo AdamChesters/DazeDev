@@ -16,6 +16,17 @@ const escape = (text: string) =>
     /[&<>"']/g,
     (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' })[c]!,
   );
+// Images: local data shows inline; a remote URL becomes a placeholder with an
+// "Open in browser" button (data-open-url), never a network request.
+function images(text: string) {
+  return text.replace(/!\[([^\]]*)\]\(([^()\s]+)\)/g, (whole, alt: string, url: string) => {
+    if (/^data:image\/(png|jpeg|gif|webp|bmp|avif);base64,[a-z0-9+/=]+$/i.test(url))
+      return `<img src="${url}" alt="${alt}">`;
+    if (/^https?:\/\//i.test(url))
+      return `<span class="remote-image-ref">Remote image not loaded: <code>${url}</code> <button type="button" data-open-url="${url}">Open in browser</button></span>`;
+    return whole;
+  });
+}
 // A deliberately small, inert Markdown preview: no raw HTML, remote media or scripts.
 export function markdownPreview(source: string): string {
   let code = false;
@@ -31,7 +42,7 @@ export function markdownPreview(source: string): string {
       continue;
     }
     const heading = /^(#{1,6})\s+(.*)$/.exec(line);
-    const text = escape(heading?.[2] ?? line)
+    const text = images(escape(heading?.[2] ?? line))
       .replace(/`([^`]+)`/g, '<code>$1</code>')
       .replace(/\*\*([^*]+)\*\*/g, '<strong>$1</strong>');
     result.push(

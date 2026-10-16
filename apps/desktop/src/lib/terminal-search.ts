@@ -32,6 +32,20 @@ export function searchPattern(options: SearchOptions): RegExp | null {
   const escaped = options.query.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
   return new RegExp(options.regex ? options.query : escaped, options.matchCase ? 'g' : 'gi');
 }
+export function findLineMatches(lines: string[], options: SearchOptions, limit: number) {
+  const pattern = searchPattern(options);
+  const matches: { line: number; start: number; end: number }[] = [];
+  if (pattern)
+    for (let line = 0; line < lines.length && matches.length < limit; line++) {
+      pattern.lastIndex = 0;
+      for (const match of lines[line].matchAll(pattern)) {
+        if (!match[0].length) continue;
+        matches.push({ line, start: match.index!, end: match.index! + match[0].length });
+        if (matches.length >= limit) break;
+      }
+    }
+  return matches;
+}
 export function scopeTargets(targets: SearchTarget[], scope: SearchScope, origin: SearchTarget) {
   return targets.filter(
     (target) =>
@@ -95,107 +109,147 @@ function logicalLine(buffer: IBuffer, first: number, withPoints = false): Logica
   return { text, points, first, last: row };
 }
 
-// Markers live only for the current search and follow normal-buffer scrollback trims.
+type WorkerHit = { line: number; start: number; end: number };
+export interface SearchWorkerLike {
+  postMessage(message: unknown): void;
+  terminate(): void;
+  onmessage: ((event: MessageEvent) => void) | null;
+  onerror: ((event: unknown) => void) | null;
+}
+// One worker serves every terminal; searches run one at a time. A search that
+// runs too long (for example a catastrophic regular expression) ends the
+// worker, and the next search starts a fresh one.
+export class SearchWorkers {
+  private worker?: SearchWorkerLike;
+  private chain: Promise<unknown> = Promise.resolve();
+  constructor(
+    private create: () => SearchWorkerLike,
+    private timeout = 500,
+  ) {}
+  run(
+    lines: string[],
+    options: SearchOptions,
+    limit: number,
+    cancelled: () => boolean = () => false,
+  ): Promise<WorkerHit[]> {
+    const job = this.chain
+      .catch(() => {})
+      .then(() => (cancelled() ? [] : this.post(lines, options, limit)));
+    this.chain = job;
+    return job;
+  }
+  private post(lines: string[], options: SearchOptions, limit: number) {
+    return new Promise<WorkerHit[]>((resolve, reject) => {
+      const worker = (this.worker ||= this.create());
+      const timer = setTimeout(() => {
+        this.reset();
+        reject(new Error('Search timed out. Simplify the pattern or turn Regular expression off.'));
+      }, this.timeout);
+      worker.onmessage = (event) => {
+        clearTimeout(timer);
+        if (event.data.error) reject(new Error(event.data.error));
+        else resolve(event.data.matches);
+      };
+      worker.onerror = () => {
+        clearTimeout(timer);
+        this.reset();
+        reject(new Error('Search failed. Try a simpler pattern.'));
+      };
+      worker.postMessage({ lines, options, limit });
+    });
+  }
+  reset() {
+    this.worker?.terminate();
+    this.worker = undefined;
+  }
+}
+export const searchWorkers = new SearchWorkers(
+  () =>
+    new Worker(new URL('./terminal-search.worker.ts', import.meta.url), {
+      type: 'module',
+    }) as unknown as SearchWorkerLike,
+);
+
+interface StoredMatch {
+  buffer: IBuffer;
+  marker?: IMarker;
+  first: number;
+  text: string;
+  start: number;
+  end: number;
+}
+// Markers follow normal-buffer scrollback trims. A refresh keeps the previous
+// results usable until the next refresh, so the list can stay on screen while
+// new results are collected.
 export class LiveBufferSearch {
-  private matches = new Map<
-    string,
-    {
-      buffer: IBuffer;
-      marker?: IMarker;
-      first: number;
-      text: string;
-      start: number;
-      end: number;
-    }
-  >();
+  private matches = new Map<string, StoredMatch>();
+  private previous = new Map<string, StoredMatch>();
   private revision = 0;
-  private cancelWorker?: () => void;
-  constructor(private terminal: Terminal) {}
+  constructor(
+    private terminal: Terminal,
+    private workers: SearchWorkers = searchWorkers,
+  ) {}
   async collectAsync(options: SearchOptions, limit = 1000): Promise<BufferMatch[]> {
-    this.release();
-    const revision = this.revision;
-    if (!options.query) return [];
+    const revision = ++this.revision;
+    if (!options.query) {
+      this.release();
+      return [];
+    }
     searchPattern(options);
     const buffer = this.terminal.buffer.active;
     const lines: { text: string; first: number }[] = [];
     for (let row = 0; row < buffer.length; row++) {
       const line = logicalLine(buffer, row);
-      lines.push({text: line.text, first: line.first});
+      lines.push({ text: line.text, first: line.first });
       row = line.last;
       if (lines.length % 500 === 0) {
-        await new Promise(resolve => setTimeout(resolve, 0));
+        await new Promise((resolve) => setTimeout(resolve, 0));
         if (revision !== this.revision) return [];
       }
     }
-    const worker = new Worker(new URL('./terminal-search.worker.ts', import.meta.url), {type: 'module'});
-    const found = await new Promise<{line: number; start: number; end: number}[]>((resolve, reject) => {
-      const finish = (error?: Error, result: {line: number; start: number; end: number}[] = []) => {
-        clearTimeout(timer); worker.terminate(); this.cancelWorker = undefined;
-        if (error) reject(error); else resolve(result);
-      };
-      const timer = setTimeout(() => finish(new Error('Search timed out. Simplify the pattern or turn Regular expression off.')), 500);
-      this.cancelWorker = () => finish(undefined, []);
-      worker.onerror = () => finish(new Error('Search failed. Try a simpler pattern.'));
-      worker.onmessage = event => event.data.error ? finish(new Error(event.data.error)) : finish(undefined, event.data.matches);
-      worker.postMessage({lines: lines.map(line => line.text), options, limit});
-    });
+    const found = await this.workers.run(
+      lines.map((line) => line.text),
+      options,
+      limit,
+      () => revision !== this.revision,
+    );
     if (revision !== this.revision || buffer !== this.terminal.buffer.active) return [];
-    return found.map(hit => {
+    for (const match of this.previous.values()) match.marker?.dispose();
+    this.previous = this.matches;
+    this.matches = new Map();
+    return found.map((hit) => {
       const line = lines[hit.line];
       const id = crypto.randomUUID();
-      const marker = buffer.type === 'normal' ? this.terminal.registerMarker(line.first - buffer.baseY - buffer.cursorY) : undefined;
-      this.matches.set(id, {buffer, marker, first: line.first, text: line.text, start: hit.start, end: hit.end});
+      const marker =
+        buffer.type === 'normal'
+          ? this.terminal.registerMarker(line.first - buffer.baseY - buffer.cursorY)
+          : undefined;
+      this.matches.set(id, {
+        buffer,
+        marker,
+        first: line.first,
+        text: line.text,
+        start: hit.start,
+        end: hit.end,
+      });
       const from = Math.max(0, hit.start - 60);
-      return {id, from: hit.start - from, to: hit.end - from, text: line.text.slice(from, hit.end + 120)};
+      return {
+        id,
+        from: hit.start - from,
+        to: hit.end - from,
+        text: line.text.slice(from, hit.end + 120),
+      };
     });
   }
   release() {
     this.revision++;
-    this.cancelWorker?.();
-    for (const match of this.matches.values()) match.marker?.dispose();
+    for (const match of [...this.matches.values(), ...this.previous.values()])
+      match.marker?.dispose();
     this.matches.clear();
-  }
-  collect(options: SearchOptions, limit = 1000): BufferMatch[] {
-    this.release();
-    const pattern = searchPattern(options);
-    if (!pattern) return [];
-    const buffer = this.terminal.buffer.active;
-    const found: BufferMatch[] = [];
-    for (let row = 0; row < buffer.length && found.length < limit; row++) {
-      const line = logicalLine(buffer, row);
-      row = line.last;
-      pattern.lastIndex = 0;
-      for (const match of line.text.matchAll(pattern)) {
-        if (!match[0].length) continue;
-        const id = crypto.randomUUID();
-        const marker =
-          buffer.type === 'normal'
-            ? this.terminal.registerMarker(line.first - buffer.baseY - buffer.cursorY)
-            : undefined;
-        this.matches.set(id, {
-          buffer,
-          marker,
-          first: line.first,
-          text: line.text,
-          start: match.index!,
-          end: match.index! + match[0].length,
-        });
-        found.push({
-          id,
-          from: match.index! - Math.max(0, match.index! - 60),
-          to: match.index! - Math.max(0, match.index! - 60) + match[0].length,
-          text: line.text.slice(
-            Math.max(0, match.index! - 60),
-            match.index! + match[0].length + 120,
-          ),
-        });
-        if (found.length >= limit) break;
-      }
-    }
-    return found;
+    this.previous.clear();
   }
   reveal(id: string): boolean {
-    const match = this.matches.get(id);
+    const match = this.matches.get(id) || this.previous.get(id);
     if (!match || match.buffer !== this.terminal.buffer.active || match.marker?.isDisposed)
       return false;
     const row = match.marker?.line ?? match.first;

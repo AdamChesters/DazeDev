@@ -30,7 +30,7 @@ describe('host identity recovery', () => {
     expect(foreign.workspaces[0].panes[0].hostDetails).toBeUndefined();
   });
   it('shares connection labels without device credentials and preserves other hosts', () => {
-    const remote: Host = { id: 'new', name: 'Devbox', kind: 'tailscale', address: 'devbox.ts.net',
+    const remote: Host = { id: 'new', name: 'Workstation', kind: 'tailscale', address: 'workstation.example.net',
       user: 'ubuntu', port: 2222, socket: 'work', key: '/private/key', jump: 'private-jump', distro: '' };
     const saved = profile('old', 'linux:ubuntu:work');
     const pane = saved.workspaces[0].panes[0];
@@ -38,7 +38,7 @@ describe('host identity recovery', () => {
     const foreign = profile('foreign', 'different:ubuntu:work');
     expect(refreshHostIdentity(remote, { machine: 'linux', user: 'ubuntu' }, [saved, foreign])).toEqual(new Set([saved]));
     expect(refreshHostIdentity(remote, { machine: 'linux', user: 'ubuntu' }, [saved, foreign])).toEqual(new Set());
-    expect(pane.hostDetails).toEqual({ name: 'Devbox', kind: 'tailscale', address: 'devbox.ts.net',
+    expect(pane.hostDetails).toEqual({ name: 'Workstation', kind: 'tailscale', address: 'workstation.example.net',
       user: 'ubuntu', port: 2222, socket: 'work', future: true });
     expect(JSON.stringify(pane.hostDetails)).not.toContain('/private/key');
     expect(JSON.stringify(pane.hostDetails)).not.toContain('private-jump');

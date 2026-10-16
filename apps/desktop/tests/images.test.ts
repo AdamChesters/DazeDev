@@ -1,7 +1,7 @@
 import { it, expect, vi } from 'vitest';
 const { rpc } = vi.hoisted(() => ({ rpc: vi.fn() }));
 vi.mock('../src/lib/bridge', () => ({ rpc }));
-import { imageLinks, viewerLinks, imagePath, readHostImage } from '../src/lib/images';
+import { imageLinks, viewerLinks, imagePath, readHostImage, localImageSource } from '../src/lib/images';
 it('recognises image destinations without mistaking web URLs for host file paths', () => {
   expect(imagePath('https://example.com/a.PNG?version=1')).toBe(true);
   expect(imagePath('script.svg')).toBe(false);
@@ -26,10 +26,10 @@ it('assembles bounded image chunks from the selected host with a stable revision
     data: btoa(String.fromCharCode(...bytes.slice(offset, offset + 49152))),
   });
   rpc.mockResolvedValueOnce(base(0)).mockResolvedValueOnce(base(49152));
-  const image = await readHostImage('devbox', '/tmp/image.png');
+  const image = await readHostImage('host-1', '/tmp/image.png');
   expect(Uint8Array.from(atob(image.src.split(',')[1]), (c) => c.charCodeAt(0))).toEqual(bytes);
   expect(rpc.mock.calls[1]).toEqual([
-    'devbox',
+    'host-1',
     'image_read',
     { path: '/tmp/image.png', offset: 49152, revision: 'same' },
   ]);
@@ -252,4 +252,11 @@ it('does not steal a relative-looking filename from a hard-wrapped web URL', asy
   let links: any[] = [];
   provider.provideLinks(3, (value: any[]) => (links = value));
   expect(links).toEqual([]);
+});
+it('treats only image data and blob URLs as local image sources', () => {
+  expect(localImageSource('data:image/png;base64,AAAA')).toBe(true);
+  expect(localImageSource('blob:http://localhost/1')).toBe(true);
+  expect(localImageSource('https://example.com/a.png')).toBe(false);
+  expect(localImageSource('//example.com/a.png')).toBe(false);
+  expect(localImageSource('data:text/html,hi')).toBe(false);
 });

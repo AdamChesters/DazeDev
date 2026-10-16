@@ -65,20 +65,24 @@
   function release() {
     for (const controls of terminals.values()) controls.releaseSearch?.();
   }
-  async function collect() {
+  // A refresh (new output) keeps the current results until new ones arrive.
+  async function collect(refresh = false) {
     const requestRevision = ++revision;
     clearTimeout(debounce);
     debounce = undefined;
-    release();
-    hits = [];
-    active = -1;
-    error = '';
-    limited = false;
-    onnavigation(null);
+    if (!refresh) {
+      release();
+      hits = [];
+      active = -1;
+      error = '';
+      limited = false;
+      onnavigation(null);
+    }
     if (!query) return;
     try {
       searchPattern({ query, matchCase, regex });
       const result: SearchHit[] = [];
+      let more = false;
       for (const target of scopeTargets(targets, scope, origin)) {
         const matches =
           (await terminals
@@ -87,11 +91,15 @@
         if (disposed || requestRevision !== revision) return;
         result.push(...matches.map((match) => ({ ...target, ...match })));
         if (result.length > 1000) {
-          limited = true;
+          more = true;
           break;
         }
       }
+      if (refresh && compact) return;
       hits = result.slice(0, 1000);
+      limited = more;
+      active = -1;
+      error = '';
     } catch (e) {
       if (disposed || requestRevision !== revision) return;
       error = e instanceof Error ? e.message : 'Search failed.';
@@ -106,7 +114,7 @@
     error = '';
     onnavigation(null);
     clearTimeout(debounce);
-    debounce = setTimeout(collect, 150);
+    debounce = setTimeout(() => collect(), 150);
   }
   export function showResults() {
     compact = false;
@@ -176,10 +184,12 @@
         event as CustomEvent<{ paneId: string; invalidated: boolean }>
       ).detail;
       if (invalidated) prune((hit) => hit.paneId !== paneId);
+      // Output outside the current scope cannot change these results.
+      if (!scopeTargets(targets, scope, origin).some((target) => target.paneId === paneId)) return;
       if (query && !compact && !busy && !debounce && !refreshTimer) {
         refreshTimer = setTimeout(() => {
           refreshTimer = undefined;
-          if (!compact && !busy) collect();
+          if (!compact && !busy) void collect(true);
         }, 350);
       }
     };
@@ -251,7 +261,7 @@
           onclick={() => void step(1)}><ChevronRight size={15} /></button
         >
         <button onclick={showResults}>Results</button>
-      </div>{:else}<button onclick={collect}>Search</button>{/if}
+      </div>{:else}<button onclick={() => collect()}>Search</button>{/if}
     <button aria-label="Close search" title="Close search (Escape)" onclick={onclose}
       ><X size={15} /></button
     >
@@ -272,9 +282,9 @@
             }}>{label}</button
           >{/each}
       </div>
-      <label><input type="checkbox" bind:checked={matchCase} onchange={collect} />Match case</label>
+      <label><input type="checkbox" bind:checked={matchCase} onchange={() => collect()} />Match case</label>
       <label
-        ><input type="checkbox" bind:checked={regex} onchange={collect} />Regular expression</label
+        ><input type="checkbox" bind:checked={regex} onchange={() => collect()} />Regular expression</label
       >
     </div>
     <div class="context">

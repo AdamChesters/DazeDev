@@ -6,6 +6,7 @@
   import HtmlPreview from './HtmlPreview.svelte';
   import { previewKind } from '../lib/source-viewer';
   import { rpc } from '../lib/bridge';
+  import { openPreviewLink } from '../lib/preview-links';
   import type { Host, Inventory } from '../lib/types';
   import {
     markdownPreview,
@@ -433,7 +434,11 @@
     {editing ? 'Editing' : 'Read only'} · UTF-8 text, up to 512 KiB. Ctrl+F to find, Ctrl+G to go to a
     line. Tab moves to the next control.
   </p>
-  {#if preview && kind === 'markdown'}<article class="markdown-preview">
+  {#if preview && kind === 'markdown'}<!-- svelte-ignore a11y_click_events_have_key_events, a11y_no_noninteractive_element_interactions -->
+    <article
+      class="markdown-preview"
+      onclick={(event) => openPreviewLink(event, (e) => (error = String(e)))}
+    >
       {@html markdownPreview(draft)}
     </article>
   {:else if preview && kind === 'html'}<HtmlPreview source={draft} />

@@ -7,114 +7,50 @@ import 'monaco-editor/editor/contrib/folding/browser/folding';
 import 'monaco-editor/editor/contrib/links/browser/links';
 import 'monaco-editor/editor/contrib/wordOperations/browser/wordOperations';
 import 'monaco-editor/editor/contrib/tokenization/browser/tokenization';
-import { jsonDefaults } from 'monaco-editor/languages/features/json/register';
-import 'monaco-editor/languages/features/css/register';
-import 'monaco-editor/languages/features/html/register';
-import 'monaco-editor/languages/definitions/abap/register';
-import 'monaco-editor/languages/definitions/apex/register';
-import 'monaco-editor/languages/definitions/azcli/register';
-import 'monaco-editor/languages/definitions/bat/register';
-import 'monaco-editor/languages/definitions/bicep/register';
-import 'monaco-editor/languages/definitions/cameligo/register';
-import 'monaco-editor/languages/definitions/clojure/register';
-import 'monaco-editor/languages/definitions/coffee/register';
-import 'monaco-editor/languages/definitions/cpp/register';
-import 'monaco-editor/languages/definitions/csharp/register';
-import 'monaco-editor/languages/definitions/csp/register';
-import 'monaco-editor/languages/definitions/css/register';
-import 'monaco-editor/languages/definitions/cypher/register';
-import 'monaco-editor/languages/definitions/dart/register';
-import 'monaco-editor/languages/definitions/dockerfile/register';
-import 'monaco-editor/languages/definitions/ecl/register';
-import 'monaco-editor/languages/definitions/elixir/register';
-import 'monaco-editor/languages/definitions/flow9/register';
-import 'monaco-editor/languages/definitions/freemarker2/register';
-import 'monaco-editor/languages/definitions/fsharp/register';
-import 'monaco-editor/languages/definitions/go/register';
-import 'monaco-editor/languages/definitions/graphql/register';
-import 'monaco-editor/languages/definitions/handlebars/register';
-import 'monaco-editor/languages/definitions/hcl/register';
-import 'monaco-editor/languages/definitions/html/register';
-import 'monaco-editor/languages/definitions/ini/register';
-import 'monaco-editor/languages/definitions/java/register';
-import 'monaco-editor/languages/definitions/javascript/register';
-import 'monaco-editor/languages/definitions/julia/register';
-import 'monaco-editor/languages/definitions/kotlin/register';
-import 'monaco-editor/languages/definitions/less/register';
-import 'monaco-editor/languages/definitions/lexon/register';
-import 'monaco-editor/languages/definitions/liquid/register';
-import 'monaco-editor/languages/definitions/lua/register';
-import 'monaco-editor/languages/definitions/m3/register';
-import 'monaco-editor/languages/definitions/markdown/register';
-import 'monaco-editor/languages/definitions/mdx/register';
-import 'monaco-editor/languages/definitions/mips/register';
-import 'monaco-editor/languages/definitions/msdax/register';
-import 'monaco-editor/languages/definitions/mysql/register';
-import 'monaco-editor/languages/definitions/objective-c/register';
-import 'monaco-editor/languages/definitions/pascal/register';
-import 'monaco-editor/languages/definitions/pascaligo/register';
-import 'monaco-editor/languages/definitions/perl/register';
-import 'monaco-editor/languages/definitions/pgsql/register';
-import 'monaco-editor/languages/definitions/php/register';
-import 'monaco-editor/languages/definitions/pla/register';
-import 'monaco-editor/languages/definitions/postiats/register';
-import 'monaco-editor/languages/definitions/powerquery/register';
-import 'monaco-editor/languages/definitions/powershell/register';
-import 'monaco-editor/languages/definitions/protobuf/register';
-import 'monaco-editor/languages/definitions/pug/register';
-import 'monaco-editor/languages/definitions/python/register';
-import 'monaco-editor/languages/definitions/qsharp/register';
-import 'monaco-editor/languages/definitions/r/register';
-import 'monaco-editor/languages/definitions/razor/register';
-import 'monaco-editor/languages/definitions/redis/register';
-import 'monaco-editor/languages/definitions/redshift/register';
-import 'monaco-editor/languages/definitions/restructuredtext/register';
-import 'monaco-editor/languages/definitions/ruby/register';
-import 'monaco-editor/languages/definitions/rust/register';
-import 'monaco-editor/languages/definitions/sb/register';
-import 'monaco-editor/languages/definitions/scala/register';
-import 'monaco-editor/languages/definitions/scheme/register';
-import 'monaco-editor/languages/definitions/scss/register';
-import 'monaco-editor/languages/definitions/shell/register';
-import 'monaco-editor/languages/definitions/solidity/register';
-import 'monaco-editor/languages/definitions/sophia/register';
-import 'monaco-editor/languages/definitions/sparql/register';
-import 'monaco-editor/languages/definitions/sql/register';
-import 'monaco-editor/languages/definitions/st/register';
-import 'monaco-editor/languages/definitions/swift/register';
-import 'monaco-editor/languages/definitions/systemverilog/register';
-import 'monaco-editor/languages/definitions/tcl/register';
-import 'monaco-editor/languages/definitions/twig/register';
-import 'monaco-editor/languages/definitions/typescript/register';
-import 'monaco-editor/languages/definitions/typespec/register';
-import 'monaco-editor/languages/definitions/vb/register';
-import 'monaco-editor/languages/definitions/wgsl/register';
-import 'monaco-editor/languages/definitions/xml/register';
-import 'monaco-editor/languages/definitions/yaml/register';
-import EditorWorker from 'monaco-editor/editor/editor.worker?worker';
-import JsonWorker from 'monaco-editor/language/json/json.worker?worker';
-import CssWorker from 'monaco-editor/language/css/css.worker?worker';
-import HtmlWorker from 'monaco-editor/language/html/html.worker?worker';
+import { languageModules, languageTable, languageForPath } from './monaco-languages';
 
+// Workers start only when Monaco first asks for one.
 self.MonacoEnvironment = {
-  getWorker(_id, label) {
-    if (label === 'json') return new JsonWorker();
-    if (['css', 'scss', 'less'].includes(label)) return new CssWorker();
-    if (['html', 'handlebars', 'razor'].includes(label)) return new HtmlWorker();
-    return new EditorWorker();
+  async getWorker(_id, label) {
+    if (label === 'json')
+      return new (await import('monaco-editor/language/json/json.worker?worker')).default();
+    if (['css', 'scss', 'less'].includes(label))
+      return new (await import('monaco-editor/language/css/css.worker?worker')).default();
+    if (['html', 'handlebars', 'razor'].includes(label))
+      return new (await import('monaco-editor/language/html/html.worker?worker')).default();
+    return new (await import('monaco-editor/editor/editor.worker?worker')).default();
   },
 };
-// Viewing a repository must not fetch arbitrary $schema URLs.
-jsonDefaults.setDiagnosticsOptions({ validate: true, enableSchemaRequest: false });
 
-export function languageForPath(path: string) {
-  const name = path.split(/[/\\]/).at(-1) || '';
-  if (/\.(mdc|markdown)$/i.test(name) || /^\.(cursor|cline)rules$/i.test(name)) return 'markdown';
-  const languages = monaco.languages.getLanguages();
-  return (
-    languages.find((l) => l.filenames?.some((f) => f.toLowerCase() === name.toLowerCase()))?.id ||
-    languages.find((l) => l.extensions?.some((e) => name.toLowerCase().endsWith(e)))?.id ||
-    'plaintext'
-  );
+const loading = new Map<string, Promise<void>>();
+function once(key: string, load: () => Promise<unknown>) {
+  if (!loading.has(key))
+    loading.set(
+      key,
+      load().then(
+        () => {},
+        (error) => {
+          loading.delete(key);
+          throw error;
+        },
+      ),
+    );
+  return loading.get(key)!;
 }
-export { monaco };
+// Register a language (and its language service) the first time it is used.
+export async function loadLanguage(id: string): Promise<void> {
+  const entry = languageTable.find(([language]) => language === id);
+  if (!entry || !entry[1]) return;
+  if (entry[1] === 'json')
+    return once('json', async () => {
+      const { jsonDefaults } = await import('monaco-editor/languages/features/json/register');
+      // Viewing a repository must not fetch arbitrary $schema URLs.
+      jsonDefaults.setDiagnosticsOptions({ validate: true, enableSchemaRequest: false });
+    });
+  await once(entry[1], languageModules[entry[1]]);
+  if (['css', 'scss', 'less'].includes(id))
+    await once('css-service', () => import('monaco-editor/languages/features/css/register'));
+  if (['html', 'handlebars', 'razor'].includes(id))
+    await once('html-service', () => import('monaco-editor/languages/features/html/register'));
+}
+export { languageForPath, monaco };

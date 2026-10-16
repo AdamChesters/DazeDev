@@ -1,5 +1,5 @@
 import { expect, it } from 'vitest';
-import { terminalPresentation, unknownStatus, type PaneStatus } from '../src/lib/pane-status';
+import { sameStatus, terminalPresentation, unknownStatus, type PaneStatus } from '../src/lib/pane-status';
 
 const shell = { name: 'Terminal', agent: 'shell', model: '', shell: true };
 const tmux: PaneStatus = { attachment: 'tmux', nestedSsh: false, hostname: 'host', sessionId: '$3', stamp: '1:2:3', sessionName: 'work', agent: 'shell' };
@@ -22,4 +22,12 @@ it('preserves saved managed-pane names and uncertain nested SSH destinations', (
   expect(terminalPresentation(saved, tmux)).toEqual({ name: 'My named pane', type: 'claude', model: 'saved-model' });
   expect(terminalPresentation(shell, unknownStatus)).toEqual({ name: 'Terminal', type: 'shell', model: '' });
   expect(terminalPresentation(shell, { ...tmux, nestedSsh: true })).toEqual({ name: 'Terminal', type: 'shell', model: '' });
+});
+
+it('treats an identical status poll as unchanged so views do not update', () => {
+  expect(sameStatus(tmux, { ...tmux })).toBe(true);
+  expect(sameStatus(tmux, { ...tmux, sessionName: 'other' })).toBe(false);
+  expect(sameStatus(tmux, { ...tmux, paneDead: undefined })).toBe(true);
+  expect(sameStatus(unknownStatus, { ...unknownStatus, paneDead: false })).toBe(false);
+  expect(sameStatus(undefined, unknownStatus)).toBe(false);
 });
