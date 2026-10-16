@@ -32,7 +32,7 @@
     type WindowReply,
     type WindowTerminalState,
   } from '../lib/terminal-window';
-  import { handleLinkPresses, terminalKeyHandler } from '../lib/terminal-input';
+  import { WindowInputQueue, handleLinkPresses, terminalKeyHandler } from '../lib/terminal-input';
   import {
     PasteConfirmation,
     pasteEventHandler,
@@ -130,13 +130,32 @@
   let gapTimer: ReturnType<typeof setTimeout>;
   let disposed = false;
   let resizeFrame = 0;
+  // Size and ordinary input go straight to the PTY; the desktop app accepts
+  // them only from this pane's own window.
   const resizer = new ResizeSender((cols, rows) =>
-    request('resize', { cols, rows }).catch((error) => {
+    (viewState?.ready
+      ? call('terminal_window_resize', { paneId, cols, rows })
+      : Promise.resolve()
+    ).catch((error) => {
       fail(error);
       throw error;
     }),
   );
-  let inputChain = Promise.resolve();
+  const input = new WindowInputQueue(
+    {
+      direct: (data) => call('terminal_window_input', { paneId, data }),
+      binary: (data) => call('terminal_window_binary', { paneId, data }),
+      relay: async (data) => {
+        context = await request<string>('input', { data });
+      },
+    },
+    () => !!viewState?.ready,
+    (error) => {
+      // Never resend uncertain keystrokes after a timeout or connection loss.
+      fail(error);
+      if (viewState) viewState.ready = false;
+    },
+  );
   const stream = new TerminalStream();
   const requests = new WindowRequests(call);
   const colors = $derived(
@@ -329,20 +348,10 @@
         notice = 'Terminal is disconnected. Reconnect when ready.';
         return;
       }
-      inputChain = inputChain
-        .then(async () => {
-          if (!viewState?.ready)
-            throw new Error('Terminal input is paused. Reconnect before typing.');
-          context = await request<string>('input', { data: value });
-        })
-        .catch((error) => {
-          // Never resend uncertain keystrokes after a timeout or connection loss.
-          fail(error);
-          if (viewState) viewState.ready = false;
-        });
+      void input.input(value);
     });
     const binary = terminal.onBinary((value) => {
-      if (viewState?.ready) void request('binary', { data: btoa(value) }).catch(fail);
+      if (viewState?.ready) void input.binary(value);
     });
     terminal.attachCustomKeyEventHandler(
       terminalKeyHandler({

@@ -1,5 +1,6 @@
 import { copySelectedTerminalText } from './terminal-copy';
 import { selectionMouseDown } from './terminal-setup';
+import { terminalInputChangesContext } from './terminals';
 
 // Key and pointer handling shared by the workspace terminal and the detached
 // terminal window.
@@ -97,4 +98,51 @@ export function handleLinkPresses(options: LinkPressOptions): () => void {
     window.removeEventListener('mouseup', up, true);
     window.removeEventListener('blur', cancel);
   };
+}
+
+export interface WindowInputRoutes {
+  /** terminal_window_input: straight to the PTY from the terminal window. */
+  direct: (data: string) => Promise<unknown>;
+  /** terminal_window_binary: base64 bytes straight to the PTY. */
+  binary: (data: string) => Promise<unknown>;
+  /** The workspace window's 'input' request. */
+  relay: (data: string) => Promise<unknown>;
+}
+
+/**
+ * Input that changes the dictation context goes through the workspace window,
+ * which tracks the context epoch; other input goes straight to the PTY.
+ */
+export const relayedInput = (data: string) => terminalInputChangesContext(data);
+
+/**
+ * Input from a detached terminal window. Direct and relayed input share one
+ * queue, so keys arrive in the order typed. Input that fails is reported and
+ * never resent, and input is dropped until the view is ready again.
+ */
+export class WindowInputQueue {
+  private chain: Promise<void> = Promise.resolve();
+  constructor(
+    private routes: WindowInputRoutes,
+    private ready: () => boolean,
+    private failed: (error: unknown) => void,
+  ) {}
+  input(data: string): Promise<void> {
+    return this.enqueue(() =>
+      relayedInput(data) ? this.routes.relay(data) : this.routes.direct(data),
+    );
+  }
+  /** `data` is xterm's binary string; it is sent base64-encoded. */
+  binary(data: string): Promise<void> {
+    return this.enqueue(() => this.routes.binary(btoa(data)));
+  }
+  private enqueue(send: () => Promise<unknown>): Promise<void> {
+    this.chain = this.chain
+      .then(async () => {
+        if (!this.ready()) throw new Error('Terminal input is paused. Reconnect before typing.');
+        await send();
+      })
+      .catch((error) => this.failed(error));
+    return this.chain;
+  }
 }
