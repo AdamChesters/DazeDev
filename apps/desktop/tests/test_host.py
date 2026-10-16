@@ -4,7 +4,7 @@ ROOT=pathlib.Path(__file__).resolve().parents[1]
 spec=importlib.util.spec_from_file_location('host',ROOT/'src-tauri/resources/host.py');host=importlib.util.module_from_spec(spec);spec.loader.exec_module(host)
 class HostTests(unittest.TestCase):
  def setUp(self):
-  self.temp=tempfile.TemporaryDirectory();self.old=os.environ.get('XDG_CONFIG_HOME');os.environ['XDG_CONFIG_HOME']=self.temp.name;host.SOCKET='dazed-test-'+uuid.uuid4().hex
+  self.temp=tempfile.TemporaryDirectory();self.old=os.environ.get('XDG_CONFIG_HOME');os.environ['XDG_CONFIG_HOME']=self.temp.name;host.SOCKET='dazed-test-'+uuid.uuid4().hex;host.STATUS_TTL=0;host._snapshots.clear()
  def tearDown(self):
   subprocess.run(['tmux','-L',host.SOCKET,'kill-server'],capture_output=True)
   if self.old is None:os.environ.pop('XDG_CONFIG_HOME',None)
@@ -116,7 +116,7 @@ class HostTests(unittest.TestCase):
   self.assertNotIn(str(root/'node_modules/AGENTS.md'),files)
  def test_terminal_status_tracks_actual_client_and_nested_ssh(self):
   uid=os.getuid();snapshot=f'100 1 {uid} sh\n101 100 {uid} tmux\n200 1 {uid} bash\n201 200 {uid} ssh\n'
-  with patch.object(host,'run',return_value=snapshot),patch.object(host,'tmux',return_value='101\t$1\t200'),patch.object(host.shutil,'which',return_value='/bin/tmux'):
+  with patch.object(host,'run',return_value=snapshot),patch.object(host,'tmux',return_value='101\t$1\t200\t%1\t0\t1:2:3\tfixture'),patch.object(host.shutil,'which',return_value='/bin/tmux'):
    self.assertEqual(host.terminal_status({'pid':100})['attachment'],'unknown')
    self.assertTrue(host.terminal_status({'pid':100})['nestedSsh'])
    with patch.object(host,'run',return_value=snapshot.replace(f'201 200 {uid} ssh\n','')):
@@ -129,21 +129,19 @@ class HostTests(unittest.TestCase):
  def test_terminal_clone_resolves_live_session_and_stamp(self):
   uid=os.getuid()
   def tmux(*args,**kwargs):
-   if args[0]=='list-clients': return '101\t$9\t200'
-   self.assertEqual(args[0:4],('display-message','-p','-t','$9'))
-   if args[-1]=='#{session_name}': return 'manual-session'
-   return '99:88:77'
+   self.assertEqual(args[0],'list-clients')
+   return '101\t$9\t200\t%4\t0\t99:88:77\tmanual-session'
   with patch.object(host,'run',return_value=f'100 1 {uid} sh\n101 100 {uid} tmux\n200 1 {uid} bash\n'),patch.object(host,'tmux',side_effect=tmux),patch.object(host.shutil,'which',return_value='/bin/tmux'):
    status=host.terminal_status({'pid':100})
    self.assertEqual((status['attachment'],status['sessionId'],status['stamp']),('tmux','$9','99:88:77'))
-   self.assertEqual(status['sessionName'],'manual-session')
+   self.assertEqual(status['sessionName'],'manual-session');self.assertEqual(status['paneId'],'%4')
    self.assertEqual(status['agent'],'shell')
  def test_manual_tmux_status_labels_only_known_same_user_pane_agents(self):
   uid=os.getuid()
   snapshot=f'100 1 {uid} sh\n101 100 {uid} tmux\n200 1 {uid} bash\n201 200 {uid} codex\n202 200 {uid+1} claude\n'
   def tmux(*args,**kwargs):
-   if args[0]=='list-clients': return '101\t$9\t200'
-   return 'manual-codex' if args[-1]=='#{session_name}' else '99:88:77'
+   self.assertEqual(args[0],'list-clients')
+   return '101\t$9\t200\t%4\t0\t99:88:77\tmanual-codex'
   with patch.object(host,'run',return_value=snapshot),patch.object(host,'tmux',side_effect=tmux),patch.object(host.shutil,'which',return_value='/bin/tmux'):
    status=host.terminal_status({'pid':100})
    self.assertEqual((status['attachment'],status['sessionName'],status['agent']),('tmux','manual-codex','codex'))
@@ -153,6 +151,24 @@ class HostTests(unittest.TestCase):
     status=host.terminal_status({'pid':100})
     self.assertEqual(status['attachment'],'unknown');self.assertTrue(status['nestedSsh'])
     self.assertNotIn('sessionName',status);self.assertNotIn('agent',status)
+ def test_status_polls_share_one_process_and_one_tmux_snapshot(self):
+  uid=os.getuid();calls=[]
+  snapshot=f'100 1 {uid} sh\n101 100 {uid} tmux\n200 1 {uid} bash\n201 200 {uid} codex\n300 1 {uid} sh\n'
+  def run(*args,**kwargs): calls.append('ps');return snapshot
+  def tmux(*args,**kwargs): calls.append(args[0]);return '101\t$9\t200\t%4\t0\t99:88:77\tshared'
+  with patch.object(host,'STATUS_TTL',60),patch.object(host,'run',side_effect=run),patch.object(host,'tmux',side_effect=tmux),patch.object(host.shutil,'which',return_value='/bin/tmux'):
+   host._snapshots.clear()
+   import concurrent.futures
+   with concurrent.futures.ThreadPoolExecutor(8) as pool:
+    results=list(pool.map(host.terminal_status,[{'pid':100}]*10+[{'pid':300}]*10))
+   self.assertEqual(calls,['ps','list-clients'])
+   self.assertEqual({(r['attachment'],r['sessionName'],r['agent']) for r in results[:10]},{('tmux','shared','codex')})
+   self.assertEqual({r['attachment'] for r in results[10:]},{'plain'})
+   # A process newer than the snapshot forces one fresh read.
+   snapshot+=f'400 1 {uid} sh\n'
+   self.assertEqual(host.terminal_status({'pid':400})['attachment'],'plain')
+   self.assertEqual(calls,['ps','list-clients','ps'])
+  host._snapshots.clear()
  def test_plain_terminal_clone_reads_deepest_shell_directory(self):
   uid=os.getuid()
   with patch.object(host,'run',return_value=f'100 1 {uid} sh\n101 100 {uid} bash\n'),patch.object(host.shutil,'which',return_value=None),patch.object(host.os,'readlink',return_value="/tmp/space and ' quote") as readlink:

@@ -621,19 +621,46 @@ def documents(a):
             queue.extend(k for k in found if k not in old)
     return {'files':list(found.values()),'warnings':list(dict.fromkeys(warnings))}
 
-def terminal_status(a):
-    unknown={'attachment':'unknown','nestedSsh':False,'hostname':None}
-    pid=int(a['pid'])
-    if pid <= 0: return unknown
+# Status polls for many panes share one process and one tmux snapshot.
+STATUS_TTL = 1.0
+_snapshots = {}
+_snapshot_lock = threading.Lock()
+def cached_snapshot(key, load, fresh=False):
+    # One loader at a time; callers inside the TTL reuse its result.
+    with _snapshot_lock:
+        hit=_snapshots.get(key)
+        if hit and not fresh and time.monotonic()-hit[0] < STATUS_TTL: return hit[1]
+        value=load(); _snapshots[key]=(time.monotonic(),value)
+        return value
+def process_snapshot():
     # Read executable names, not command arguments (which may contain secrets).
     rows={};children={}
-    snapshot=run(['ps','-axo','pid=,ppid=,uid=,comm='],timeout=3)
-    for line in snapshot.splitlines():
+    for line in run(['ps','-axo','pid=,ppid=,uid=,comm='],timeout=3).splitlines():
         fields=line.split(None,3)
         if len(fields)!=4 or not all(n.isdigit() for n in fields[:3]): continue
         current,parent,owner=map(int,fields[:3])
         if owner != os.getuid(): continue
         rows[current]=P(fields[3]).name;children.setdefault(parent,[]).append(current)
+    return rows,children
+def client_snapshot():
+    if not shutil.which('tmux'): return []
+    clients=[]
+    raw=tmux('list-clients','-F','#{client_pid}\t#{session_id}\t#{pane_pid}\t#{pane_id}\t#{pane_dead}\t#{pid}:#{start_time}:#{session_created}\t#{session_name}',check=False,timeout=3)
+    for line in raw.splitlines():
+        fields=line.split('\t',6)
+        if len(fields)!=7 or not fields[0].isdigit(): continue
+        clients.append(dict(pid=int(fields[0]),session=fields[1],panePid=fields[2],
+            pane=fields[3] if re.fullmatch(r'%\d+',fields[3]) else None,dead=fields[4]=='1',
+            stamp=fields[5].strip() or None,name=fields[6].strip() or None))
+    return clients
+
+def terminal_status(a):
+    unknown={'attachment':'unknown','nestedSsh':False,'hostname':None}
+    pid=int(a['pid'])
+    if pid <= 0: return unknown
+    rows,children=cached_snapshot('ps',process_snapshot)
+    # A terminal newer than the shared snapshot forces one fresh read.
+    if pid not in rows: rows,children=cached_snapshot('ps',process_snapshot,fresh=True)
     if pid not in rows: return unknown
     def descend(root):
         seen=set();pending=[root]
@@ -643,21 +670,15 @@ def terminal_status(a):
             seen.add(current);pending.extend(children.get(current,[]))
         return seen
     seen=descend(pid); attached=False; session_id=None; stamp=None; session_name=None; agent=None; pane_id=None; pane_dead=False
-    if shutil.which('tmux'):
-        for line in tmux('list-clients','-F','#{client_pid}\t#{session_id}\t#{pane_pid}\t#{pane_id}\t#{pane_dead}',check=False,timeout=3).splitlines():
-            fields=line.split('\t')
-            if len(fields) in (3,5) and fields[0].isdigit() and int(fields[0]) in seen:
-                attached=True; session_id=fields[1]
-                if len(fields)==5:
-                    pane_id=fields[3] if re.fullmatch(r'%\d+',fields[3]) else None
-                    pane_dead=fields[4]=='1'
-                stamp=tmux('display-message','-p','-t',session_id,'#{pid}:#{start_time}:#{session_created}',check=False,timeout=3).strip() or None
-                session_name=tmux('display-message','-p','-t',session_id,'#{session_name}',check=False,timeout=3).strip() or None
-                if not pane_dead and fields[2].isdigit():
-                    pane_processes=descend(int(fields[2]));seen.update(pane_processes)
-                    # Only executable names from this pane determine its agent label.
-                    agents={rows[p] for p in pane_processes if rows.get(p) in AGENTS}
-                    agent=next(iter(agents)) if len(agents)==1 else 'shell'
+    for client in cached_snapshot(('tmux',SOCKET),client_snapshot):
+        if client['pid'] in seen:
+            attached=True; session_id=client['session']; pane_id=client['pane']; pane_dead=client['dead']
+            stamp=client['stamp']; session_name=client['name']
+            if not pane_dead and client['panePid'].isdigit():
+                pane_processes=descend(int(client['panePid']));seen.update(pane_processes)
+                # Only executable names from this pane determine its agent label.
+                agents={rows[p] for p in pane_processes if rows.get(p) in AGENTS}
+                agent=next(iter(agents)) if len(agents)==1 else 'shell'
     nested=any(rows.get(p) in ('ssh','mosh','mosh-client') for p in seen)
     if nested: return dict(unknown,nestedSsh=True)
     if not attached and any(rows.get(p, '').startswith('tmux') for p in seen): return unknown
