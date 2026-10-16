@@ -1,15 +1,12 @@
 package com.adamchesters.dazedev.mobile.ssh
 
+import com.adamchesters.dazedev.mobile.data.AuthMethod
+import com.adamchesters.dazedev.mobile.data.ConnectionProfile
 import com.jcraft.jsch.ChannelExec
 import com.jcraft.jsch.JSch
 import com.jcraft.jsch.JSchException
 import com.jcraft.jsch.Session
 import com.jcraft.jsch.UserInfo
-import com.adamchesters.dazedev.mobile.data.AuthMethod
-import com.adamchesters.dazedev.mobile.data.ConnectionProfile
-import java.io.File
-import java.nio.charset.StandardCharsets
-import java.util.Properties
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.TimeoutCancellationException
@@ -20,6 +17,9 @@ import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.withContext
 import kotlinx.coroutines.withTimeout
+import java.io.File
+import java.nio.charset.StandardCharsets
+import java.util.Properties
 
 data class ExecResult(
     val stdout: String,
@@ -35,7 +35,9 @@ data class ExecResult(
     }
 }
 
-class SshCommandException(message: String) : Exception(message)
+class SshCommandException(
+    message: String,
+) : Exception(message)
 
 class SshConnection(
     private val knownHostsFile: File,
@@ -64,50 +66,58 @@ class SshConnection(
         JschAlgorithms.install()
 
         val guard: GuardedHostKeys
-        val nextJsch = JSch().apply {
-            setKnownHosts(knownHostsFile.absolutePath)
-            guard = GuardedHostKeys(hostKeyRepository)
-            hostKeyRepository = guard
-            if (profile.authMethod == AuthMethod.PrivateKey) {
-                val key = requireNotNull(privateKey) { "Choose a private key file." }
-                val passphrase = secret.takeIf(String::isNotEmpty)?.toByteArray(StandardCharsets.UTF_8)
-                try {
-                    addIdentity("dazedev-mobile", key, null, passphrase)
-                } finally {
-                    passphrase?.fill(0)
+        val nextJsch =
+            JSch().apply {
+                setKnownHosts(knownHostsFile.absolutePath)
+                guard = GuardedHostKeys(hostKeyRepository)
+                hostKeyRepository = guard
+                if (profile.authMethod == AuthMethod.PrivateKey) {
+                    val key = requireNotNull(privateKey) { "Choose a private key file." }
+                    val passphrase = secret.takeIf(String::isNotEmpty)?.toByteArray(StandardCharsets.UTF_8)
+                    try {
+                        addIdentity("dazedev-mobile", key, null, passphrase)
+                    } finally {
+                        passphrase?.fill(0)
+                    }
                 }
             }
-        }
 
-        val passwordBytes = if (profile.authMethod == AuthMethod.Password) {
-            secret.toByteArray(StandardCharsets.UTF_8)
-        } else {
-            null
-        }
-        val nextSession = nextJsch.getSession(profile.username, profile.host, profile.port).apply {
-            passwordBytes?.let(::setPassword)
-            userInfo = PromptingUserInfo(
-                password = if (profile.authMethod == AuthMethod.Password) secret else "",
-                hostKeyPrompts = hostKeyPrompts,
-                guard = guard,
-                onBanner = onBanner,
-            )
-            setConfig(Properties().apply {
-                put("StrictHostKeyChecking", "ask")
-                put("HashKnownHosts", "yes")
-                put(
-                    "PreferredAuthentications",
-                    when (profile.authMethod) {
-                        // JSch always attempts SSH "none" before these fallback methods.
-                        AuthMethod.TailscaleSsh -> "none"
-                        AuthMethod.PrivateKey -> "publickey"
-                        AuthMethod.Password -> "password"
+        val passwordBytes =
+            if (profile.authMethod == AuthMethod.Password) {
+                secret.toByteArray(StandardCharsets.UTF_8)
+            } else {
+                null
+            }
+        val nextSession =
+            nextJsch.getSession(profile.username, profile.host, profile.port).apply {
+                passwordBytes?.let(::setPassword)
+                userInfo =
+                    PromptingUserInfo(
+                        password = if (profile.authMethod == AuthMethod.Password) secret else "",
+                        hostKeyPrompts = hostKeyPrompts,
+                        guard = guard,
+                        onBanner = onBanner,
+                    )
+                setConfig(
+                    Properties().apply {
+                        put("StrictHostKeyChecking", "ask")
+                        put("HashKnownHosts", "yes")
+                        put(
+                            "PreferredAuthentications",
+                            when (profile.authMethod) {
+                                // JSch always attempts SSH "none" before these fallback methods.
+                                AuthMethod.TailscaleSsh -> "none"
+
+                                AuthMethod.PrivateKey -> "publickey"
+
+                                AuthMethod.Password -> "password"
+                            },
+                        )
                     },
                 )
-            })
-            serverAliveInterval = SERVER_ALIVE_INTERVAL_MS
-            serverAliveCountMax = SERVER_ALIVE_COUNT_MAX
-        }
+                serverAliveInterval = SERVER_ALIVE_INTERVAL_MS
+                serverAliveCountMax = SERVER_ALIVE_COUNT_MAX
+            }
 
         try {
             nextSession.connect(CONNECT_TIMEOUT_MS)
@@ -127,11 +137,15 @@ class SshConnection(
         }
     }
 
-    suspend fun execute(command: String, timeoutMs: Long = COMMAND_TIMEOUT_MS): ExecResult =
+    suspend fun execute(
+        command: String,
+        timeoutMs: Long = COMMAND_TIMEOUT_MS,
+    ): ExecResult =
         withContext(Dispatchers.IO) {
             commandMutex.withLock {
-                val activeSession = session?.takeIf(Session::isConnected)
-                    ?: throw JSchException("SSH is not connected.")
+                val activeSession =
+                    session?.takeIf(Session::isConnected)
+                        ?: throw JSchException("SSH is not connected.")
                 val channel = activeSession.openChannel("exec") as ChannelExec
                 val stdout = BoundedOutputStream()
                 val stderr = BoundedOutputStream()
@@ -169,18 +183,25 @@ class SshConnection(
             }
         }
 
-    suspend fun openStream(command: String, pty: Boolean = false, cols: Int = 80, rows: Int = 24): ChannelExec = withContext(Dispatchers.IO) {
-        val active = session?.takeIf(Session::isConnected) ?: throw JSchException("SSH is not connected.")
-        (active.openChannel("exec") as ChannelExec).apply {
-            setCommand(command)
-            setPty(pty)
-            if (pty) setPtyType("xterm-256color", cols, rows, 0, 0)
+    suspend fun openStream(
+        command: String,
+        pty: Boolean = false,
+        cols: Int = 80,
+        rows: Int = 24,
+    ): ChannelExec =
+        withContext(Dispatchers.IO) {
+            val active = session?.takeIf(Session::isConnected) ?: throw JSchException("SSH is not connected.")
+            (active.openChannel("exec") as ChannelExec).apply {
+                setCommand(command)
+                setPty(pty)
+                if (pty) setPtyType("xterm-256color", cols, rows, 0, 0)
+            }
         }
-    }
 
-    suspend fun disconnect() = withContext(Dispatchers.IO) {
-        disconnectNow()
-    }
+    suspend fun disconnect() =
+        withContext(Dispatchers.IO) {
+            disconnectNow()
+        }
 
     fun disconnectNow() {
         hostKeyPrompts.cancel()

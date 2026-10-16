@@ -38,10 +38,13 @@ class TranscriptAccumulatorTest {
         assertEquals("hello", transcript.complete("  hello  "))
         assertEquals("hello", transcript.partial(""))
     }
+
     @Test fun reportsPendingWordsUntilTheLineCompletes() {
-        val t=TranscriptAccumulator()
+        val t = TranscriptAccumulator()
         assertFalse(t.hasPartial())
-        t.partial("hello wor");assertTrue(t.hasPartial())
-        t.complete("hello world");assertFalse(t.hasPartial())
+        t.partial("hello wor")
+        assertTrue(t.hasPartial())
+        t.complete("hello world")
+        assertFalse(t.hasPartial())
     }
 }
