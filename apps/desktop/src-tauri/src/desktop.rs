@@ -445,8 +445,7 @@ async fn update_download(
     let result = async {
         let release = state
             .update_release
-            .lock()
-            .unwrap()
+            .locked()
             .clone()
             .filter(|r| r.version == version)
             .ok_or("Check for updates again before downloading")?;
@@ -475,8 +474,7 @@ fn update_install(state: State<'_, AppState>, app: tauri::AppHandle) -> Result<(
     }
     let stage = state
         .update_stage
-        .lock()
-        .unwrap()
+        .locked()
         .clone()
         .ok_or("Download and verify the update first")?;
     crate::updates::launch_helper(state.data.parent().unwrap(), &stage)?;

@@ -315,8 +315,7 @@ impl Cleanup {
         while start.elapsed() < Duration::from_secs(120) {
             if service
                 .child
-                .lock()
-                .unwrap()
+                .locked()
                 .as_mut()
                 .ok_or("Cleanup stopped")?
                 .try_wait()
