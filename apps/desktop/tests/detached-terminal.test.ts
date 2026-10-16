@@ -154,3 +154,20 @@ describe('detached terminal paste', () => {
     expect(requests.filter((action) => action === 'paste')).toHaveLength(1);
   });
 });
+
+describe('detached terminal input', () => {
+  it('relays typed text and sends focus reports and size straight to the PTY', async () => {
+    const { term, requests } = await opened([{ sequence: 1, data: '', cols: 80, rows: 24 }]);
+    await waitFor(() => expect(term.focusCount).toBeGreaterThan(0));
+    term.input('x', true);
+    term.input('\x1b[I', true);
+    await waitFor(() => expect(calls('terminal_window_input')).toHaveLength(1));
+    expect(calls('terminal_window_input')[0]).toEqual({ paneId: 'p1', data: '\x1b[I' });
+    const inputs = calls('terminal_window_request').filter((args) => args.action === 'input');
+    expect(inputs.map((args) => args.args)).toEqual([{ data: 'x' }]);
+    await waitFor(() =>
+      expect(calls('terminal_window_resize')).toContainEqual({ paneId: 'p1', cols: 80, rows: 24 }),
+    );
+    expect(requests).not.toContain('resize');
+  });
+});

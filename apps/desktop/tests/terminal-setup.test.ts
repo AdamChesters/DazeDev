@@ -1,3 +1,4 @@
+import { readFileSync } from 'node:fs';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import {
   OptionalAddons,
@@ -6,29 +7,43 @@ import {
   clampScrollback,
   remoteClipboard,
   terminalOptions,
-  terminalTheme,
+  themeFromStyle,
 } from '../src/lib/terminal-setup';
 import { remoteClipboardWrite } from '../src/lib/terminals';
 
 afterEach(() => vi.useRealTimers());
 
 describe('shared terminal setup', () => {
-  it('gives every theme the same ANSI palette with its own cursor and selection colour', () => {
-    const blue = terminalTheme('blue');
-    const green = terminalTheme('green');
-    expect(blue.magenta).toBe(green.magenta);
-    expect(blue.brightWhite).toBe(green.brightWhite);
-    expect(blue.cursor).not.toBe(green.cursor);
-    expect(green.selectionBackground).toBe(`${green.cursor}44`);
+  it('reads the terminal colours from the theme tokens', () => {
+    const tokens: Record<string, string> = {
+      '--term-background': ' #151616',
+      '--term-cursor': '#39bdd7',
+      '--term-selection': '#39bdd744',
+      '--term-bright-magenta': '#e3c1ea',
+    };
+    expect(themeFromStyle((property) => tokens[property] || '')).toEqual({
+      background: '#151616',
+      cursor: '#39bdd7',
+      selectionBackground: '#39bdd744',
+      brightMagenta: '#e3c1ea',
+    });
+  });
+  it('defines every terminal colour for each theme in app.css', () => {
+    const css = readFileSync(new URL('../src/app.css', import.meta.url), 'utf8');
+    for (const name of ['black', 'red', 'bright-white', 'background', 'foreground', 'cursor'])
+      expect(css).toContain(`--term-${name}:`);
+    expect(css.match(/--term-selection: #[0-9a-f]{8};/g)).toHaveLength(3);
   });
   it('clamps font size and history in both new and existing terminals', () => {
-    const options = terminalOptions('blue', { fontSize: 99, scrollback: 5e6 }, undefined);
+    const options = terminalOptions({ fontSize: 99, scrollback: 5e6 }, undefined);
     expect(options.fontSize).toBe(32);
     expect(options.scrollback).toBe(100000);
     expect(clampScrollback(Number.NaN)).toBe(10000);
     const term = { options: { fontSize: 13, scrollback: 1000, screenReaderMode: false } };
     applyTerminalSettings(term as never, { fontSize: 2, scrollback: 50, screenReader: true });
     expect(term.options).toEqual({ fontSize: 8, scrollback: 100, screenReaderMode: true });
+    applyTerminalSettings(term as never, { fontSize: 13, scrollback: 50000 }, 20000);
+    expect(term.options.scrollback).toBe(20000);
   });
 });
 
@@ -60,7 +75,7 @@ describe('optional add-ons', () => {
     const loaded: unknown[] = [];
     const addons = new OptionalAddons((addon) => loaded.push(addon), {
       gpu: make('gpu'),
-      images: make('images'),
+      images: (limit: number) => Object.assign(make('images')(), { storageLimit: limit }),
       ligatures: make('ligatures'),
     });
     return { addons, made, loaded };
@@ -85,6 +100,15 @@ describe('optional add-ons', () => {
     expect(made).toHaveLength(1);
     addons.apply(settings, true);
     expect(made).toHaveLength(2);
+  });
+  it('creates the image cache with its budget share and follows later changes', () => {
+    const { addons, made } = setup();
+    addons.imageLimit = 8;
+    addons.apply({ gpu: false, images: true, ligatures: false });
+    const images = made.find((a) => a.kind === 'images') as unknown as { storageLimit: number };
+    expect(images.storageLimit).toBe(8);
+    addons.imageLimit = 4;
+    expect(images.storageLimit).toBe(4);
   });
   it('removes add-ons that are turned off and disposes everything on unmount', () => {
     const { addons, made } = setup();

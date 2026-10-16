@@ -1,24 +1,28 @@
 <script lang="ts">
   import { restoreLinkHoverOnReentry } from '../lib/link-hover';
   import { ReadinessDeadline } from '../lib/connection-health';
-  import { uploadClipboardFiles, readClipboardContent } from '../lib/clipboard-upload';
-  import { copySelectedTerminalText } from '../lib/terminal-copy';
+  import { uploadClipboardFiles } from '../lib/clipboard-upload';
+  import { handleLinkPresses, terminalKeyHandler } from '../lib/terminal-input';
+  import {
+    PasteConfirmation,
+    pasteEventHandler,
+    pasteFromClipboard,
+  } from '../lib/terminal-paste.svelte';
   import { commandFinishedAlert, terminalNotification } from '../lib/terminal-alerts';
   import {
     OptionalAddons,
     ResizeSender,
     applyTerminalSettings,
-    imageCacheMb,
+    clampScrollback,
     macPlatform as isMac,
     remoteClipboard,
-    selectionMouseDown,
     terminalOptions,
     terminalTheme,
   } from '../lib/terminal-setup';
-  import { needsPasteConfirmation } from '../lib/paste';
   import PasteConfirm from './PasteConfirm.svelte';
   import { onMount, tick } from 'svelte';
   import { AckBatcher, outputChannel } from '../lib/terminal-bytes';
+  import { terminalBudget, type BudgetMember } from '../lib/terminal-budget';
   import { diagnostic } from '../lib/diagnostics';
   import { Terminal } from '@xterm/xterm';
   import { FitAddon } from '@xterm/addon-fit';
@@ -104,8 +108,13 @@
     onprogress?: (value: { state: number; value: number }) => void;
   } = $props();
   $effect(() => {
-    const value = terminalTheme(theme);
-    if (addonsReady) term.options.theme = value;
+    void theme;
+    if (!addonsReady) return;
+    // The workspace sets the document theme in its own effect; read the
+    // colours once this round of effects has finished.
+    queueMicrotask(() => {
+      if (!dead) term.options.theme = terminalTheme();
+    });
   });
   let root: HTMLDivElement;
   let term: Terminal;
@@ -211,6 +220,14 @@
   let serializer: SerializeAddon;
   let addons: OptionalAddons | undefined;
   let addonsReady = $state(false);
+  let budget: BudgetMember | undefined;
+  let scrollbackLimit = Infinity;
+  // Hidden panes keep less history; the main view of a detached pane still
+  // feeds that window's snapshots, so it keeps a full share.
+  const budgetNeed = () => ({
+    hidden: !visible && !floating,
+    scrollback: clampScrollback(settings.scrollback),
+  });
   let linkMenu = $state<{ url: string; x: number; y: number } | null>(null);
   let hoverLink = '';
   const macPlatform = isMac();
@@ -313,30 +330,16 @@
       clipboardUploading = false;
     }
   }
-  async function pasteClipboard() {
-    const expected = uploadDestination();
-    const content = await readClipboardContent(navigator.clipboard);
-    if (!expected || uploadDestination() !== expected)
-      throw new Error('Terminal changed while reading the clipboard. Paste again.');
-    if (content.files.length) await pasteFiles(content.files);
-    else await pasteUserText(content.text);
-  }
-  let pasteRequest = $state<{ text: string; resolve: (accepted: boolean) => void } | null>(null);
-  function confirmPaste(text: string): Promise<boolean> {
-    if (!needsPasteConfirmation(text, settings.confirmPaste)) return Promise.resolve(true);
-    pasteRequest?.resolve(false);
-    return new Promise((resolve) => (pasteRequest = { text, resolve }));
-  }
-  function answerPaste(accepted: boolean, dontAsk = false) {
-    const request = pasteRequest;
-    pasteRequest = null;
-    if (accepted && dontAsk) onpastesetting(false);
-    request?.resolve(accepted);
-    term.focus();
-  }
+  const pasteClipboard = () =>
+    pasteFromClipboard(uploadDestination, { files: pasteFiles, text: pasteUserText });
+  const confirmation = new PasteConfirmation(
+    () => settings.confirmPaste,
+    () => onpastesetting(false),
+    () => term.focus(),
+  );
   // Clipboard text typed by the user: multi-line text asks first.
   async function pasteUserText(text: string) {
-    if (await confirmPaste(text)) await paste(text);
+    if (await confirmation.confirm(text)) await paste(text);
   }
   function uploadDestination() {
     return !dead && opened && remoteReady && !detached
@@ -411,7 +414,8 @@
   }
   $effect(() => {
     if (!addonsReady) return;
-    applyTerminalSettings(term, settings);
+    budget?.update(budgetNeed());
+    applyTerminalSettings(term, settings, scrollbackLimit);
     // WebGL is created when the view is first shown and kept while hidden.
     addons?.apply(settings, visible);
     fitted();
@@ -545,7 +549,7 @@
     }
     statusTimer = setTimeout(pollStatus, 500);
     term = new Terminal(
-      terminalOptions(theme, settings, {
+      terminalOptions(settings, {
         activate: followLink,
         hover: (_e, uri) => {
           hoverLink = uri;
@@ -611,65 +615,30 @@
     term.open(root);
     disposers.push(restoreLinkHoverOnReentry(term));
     let hoverFile = '';
-    let linkPress: { url: string; x: number; y: number; modified: boolean } | null = null;
-    const selectionEvents = new WeakSet<Event>();
-    const linkDown = (event: MouseEvent) => {
-      if (selectionEvents.has(event) || event.button !== 0) return;
-      const modified = macPlatform ? event.metaKey : event.ctrlKey;
-      if (
-        !modified &&
-        ((!hoverFile && !webUrl(hoverLink)) || term.modes.mouseTrackingMode === 'none')
-      )
-        return;
-      event.preventDefault();
-      event.stopImmediatePropagation();
-      if (modified || imagePath(hoverFile || hoverLink)) {
-        linkPress = {
-          url: hoverFile || (webUrl(hoverLink) ? hoverLink : ''),
-          x: event.clientX,
-          y: event.clientY,
-          modified,
-        };
-      }
-      if (modified) {
-        term.focus();
-      } else {
-        // Use xterm's selection override so link clicks never reach a remote TUI.
-        const selection = selectionMouseDown(event, macPlatform);
-        selectionEvents.add(selection);
-        event.target?.dispatchEvent(selection);
-      }
-    };
-    const linkUp = (event: MouseEvent) => {
-      if (!linkPress || event.button !== 0) return;
-      const pressed = linkPress;
-      linkPress = null;
-      const target = hoverFile || (webUrl(hoverLink) ? hoverLink : '');
-      if (
-        root.contains(event.target as Node) &&
-        target &&
-        (!pressed.url || target === pressed.url) &&
-        Math.hypot(event.clientX - pressed.x, event.clientY - pressed.y) < 5 &&
-        (macPlatform ? event.metaKey : event.ctrlKey) === pressed.modified
-      ) {
-        event.preventDefault();
-        event.stopImmediatePropagation();
-        if (imagePath(target) && (!pressed.modified || !webUrl(target))) onfile?.(target);
-        else if (hoverFile) onfile?.(hoverFile);
-        else void openLink(hoverLink);
-      }
-    };
-    const cancelLink = () => {
-      linkPress = null;
-    };
-    root.addEventListener('mousedown', linkDown, true);
-    window.addEventListener('mouseup', linkUp, true);
-    window.addEventListener('blur', cancelLink);
-    disposers.push(() => {
-      root.removeEventListener('mousedown', linkDown, true);
-      window.removeEventListener('mouseup', linkUp, true);
-      window.removeEventListener('blur', cancelLink);
-    });
+    const linkTarget = () => hoverFile || (webUrl(hoverLink) ? hoverLink : '');
+    disposers.push(
+      handleLinkPresses({
+        root,
+        mac: macPlatform,
+        modified: (event) => (macPlatform ? event.metaKey : event.ctrlKey),
+        intercept: (modified) =>
+          modified ||
+          ((!!hoverFile || !!webUrl(hoverLink)) && term.modes.mouseTrackingMode !== 'none'),
+        record: (modified) => (modified || imagePath(hoverFile || hoverLink) ? linkTarget() : null),
+        accept: (url) => {
+          const target = linkTarget();
+          return !!target && (!url || target === url);
+        },
+        open: (event) => {
+          const target = linkTarget();
+          const modified = macPlatform ? event.metaKey : event.ctrlKey;
+          if (imagePath(target) && (!modified || !webUrl(target))) onfile?.(target);
+          else if (hoverFile) onfile?.(hoverFile);
+          else void openLink(hoverLink);
+        },
+        focus: () => term.focus(),
+      }),
+    );
     if (onfile)
       registerViewerLinks(term, onfile, {
         hover: (path) => {
@@ -702,40 +671,32 @@
     );
     addons = new OptionalAddons((addon) => term.loadAddon(addon), {
       gpu: () => new WebglAddon(),
-      images: () => new ImageAddon({ storageLimit: imageCacheMb }),
+      images: (storageLimit) => new ImageAddon({ storageLimit }),
       ligatures: () => new LigaturesAddon(),
     });
+    budget = terminalBudget.add(budgetNeed(), (share) => {
+      scrollbackLimit = share.scrollback;
+      applyTerminalSettings(term, settings, scrollbackLimit);
+      if (addons) addons.imageLimit = share.imageMb;
+    });
+    disposers.push(() => budget?.remove());
     const progress = new ProgressAddon();
     term.loadAddon(progress);
     const progressListener = progress.onChange(onprogress);
     addonsReady = true;
-    term.attachCustomKeyEventHandler((e) => {
-      if (
-        copySelectedTerminalText(
-          e,
-          term.getSelection(),
-          (text) => navigator.clipboard.writeText(text),
-          reportClipboard,
-        )
-      )
-        return false;
-      if (e.type !== 'keydown' || !(e.ctrlKey || e.metaKey)) return true;
-      if (!e.altKey && e.code === 'KeyV') {
-        e.preventDefault();
-        void pasteClipboard().catch((e) => reportClipboard(String(e)));
-        return false;
-      }
-      return true;
-    });
-    const clipboardPaste = (event: ClipboardEvent) => {
-      const files = Array.from(event.clipboardData?.files || []);
-      const text = event.clipboardData?.getData('text/plain') || '';
-      if (!files.length && !needsPasteConfirmation(text, settings.confirmPaste)) return;
-      event.preventDefault();
-      event.stopImmediatePropagation();
-      if (files.length) void pasteFiles(files).catch((e) => reportClipboard(String(e)));
-      else void pasteUserText(text).catch((e) => reportClipboard(String(e)));
-    };
+    term.attachCustomKeyEventHandler(
+      terminalKeyHandler({
+        selection: () => term.getSelection(),
+        copy: (text) => navigator.clipboard.writeText(text),
+        report: reportClipboard,
+        paste: () => void pasteClipboard().catch((e) => reportClipboard(String(e))),
+      }),
+    );
+    const clipboardPaste = pasteEventHandler(
+      () => settings.confirmPaste,
+      { files: pasteFiles, text: pasteUserText },
+      (e) => reportClipboard(String(e)),
+    );
     root.addEventListener('paste', clipboardPaste, true);
     const input = term.onData((data) => {
       // The detached parser owns protocol replies while the primary view is inert.
@@ -884,7 +845,7 @@
       observer.disconnect();
       cancelAnimationFrame(fitFrame);
       resizer.dispose();
-      pasteRequest?.resolve(false);
+      confirmation.cancel();
       notifySearchUpdate(pane.id, true);
       terminals.delete(pane.id);
       binary.dispose();
@@ -961,10 +922,10 @@
       >
     </button>
   {/if}
-  {#if pasteRequest}<PasteConfirm
-      text={pasteRequest.text}
-      onpaste={(dontAsk) => answerPaste(true, dontAsk)}
-      oncancel={() => answerPaste(false)}
+  {#if confirmation.request}<PasteConfirm
+      text={confirmation.request.text}
+      onpaste={(dontAsk) => confirmation.answer(true, dontAsk)}
+      oncancel={() => confirmation.answer(false)}
     />{/if}
   {#if transcript}<div class="live-transcript" aria-live="off">
       <span>Transcribing</span>

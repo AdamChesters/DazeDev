@@ -3,36 +3,48 @@ import { remoteClipboardWrite, type TerminalSettings } from './terminals';
 
 // Shared by the workspace terminal and the detached terminal window, so both
 // render the same palette, font, limits and add-ons.
-export type TerminalTheme = 'blue' | 'charcoal' | 'green';
 export const terminalFont = '"Cascadia Code", "SFMono-Regular", Consolas, monospace';
-export const imageCacheMb = 32;
 export const maxScrollback = 100000;
-const palette = {
-  background: '#151616',
-  foreground: '#edede8',
-  black: '#151616',
-  red: '#ed9c92',
-  green: '#acd49e',
-  yellow: '#dcc28c',
-  blue: '#9cbce3',
-  magenta: '#d3a6dc',
-  cyan: '#8fd0d8',
-  white: '#d5d9d2',
-  brightBlack: '#858b83',
-  brightRed: '#f4b7af',
-  brightGreen: '#c4e4b8',
-  brightYellow: '#ead6ab',
-  brightBlue: '#bcd3ef',
-  brightMagenta: '#e3c1ea',
-  brightCyan: '#b2e1e6',
-  brightWhite: '#f6f6f2',
-};
-export function accentFor(theme: string | undefined): string {
-  return theme === 'green' ? '#b9d5ad' : theme === 'charcoal' ? '#c4c9cf' : '#39bdd7';
+const themeKeys = [
+  'background',
+  'foreground',
+  'cursor',
+  'selectionBackground',
+  'black',
+  'red',
+  'green',
+  'yellow',
+  'blue',
+  'magenta',
+  'cyan',
+  'white',
+  'brightBlack',
+  'brightRed',
+  'brightGreen',
+  'brightYellow',
+  'brightBlue',
+  'brightMagenta',
+  'brightCyan',
+  'brightWhite',
+] as const;
+const themeProperty = (key: string) =>
+  key === 'selectionBackground'
+    ? '--term-selection'
+    : `--term-${key.replace(/[A-Z]/g, (letter) => '-' + letter.toLowerCase())}`;
+/** The xterm theme from the --term-* custom properties; unset ones keep xterm's default. */
+export function themeFromStyle(read: (property: string) => string): ITheme {
+  const theme: Record<string, string> = {};
+  for (const key of themeKeys) {
+    const value = read(themeProperty(key)).trim();
+    if (value) theme[key] = value;
+  }
+  return theme as ITheme;
 }
-export function terminalTheme(theme: string | undefined): ITheme {
-  const accent = accentFor(theme);
-  return { ...palette, cursor: accent, selectionBackground: accent + '44' };
+/** The current theme's terminal colours, defined per theme in app.css. */
+export function terminalTheme(root?: Element): ITheme {
+  if (typeof document === 'undefined') return {};
+  const style = getComputedStyle(root || document.documentElement);
+  return themeFromStyle((property) => style.getPropertyValue(property));
 }
 export const clampFontSize = (value: number) =>
   Math.max(8, Math.min(32, Number.isFinite(value) ? value : 13));
@@ -40,7 +52,6 @@ export const clampScrollback = (value: number) =>
   Math.max(100, Math.min(maxScrollback, Number.isFinite(value) ? Math.round(value) : 10000));
 
 export function terminalOptions(
-  theme: string | undefined,
   settings: Pick<TerminalSettings, 'fontSize' | 'scrollback' | 'screenReader'>,
   linkHandler: ITerminalOptions['linkHandler'],
 ): ITerminalOptions {
@@ -55,15 +66,17 @@ export function terminalOptions(
     macOptionClickForcesSelection: true,
     allowProposedApi: true,
     linkHandler,
-    theme: terminalTheme(theme),
+    theme: terminalTheme(),
   };
 }
+/** `scrollbackLimit` is the terminal's share of the window's memory budget. */
 export function applyTerminalSettings(
   term: Pick<Terminal, 'options'>,
   settings: Pick<TerminalSettings, 'fontSize' | 'scrollback' | 'screenReader'>,
+  scrollbackLimit = Infinity,
 ) {
   const fontSize = clampFontSize(settings.fontSize);
-  const scrollback = clampScrollback(settings.scrollback);
+  const scrollback = Math.min(clampScrollback(settings.scrollback), scrollbackLimit);
   const screenReader = !!settings.screenReader;
   if (term.options.fontSize !== fontSize) term.options.fontSize = fontSize;
   if (term.options.scrollback !== scrollback) term.options.scrollback = scrollback;
@@ -74,17 +87,22 @@ type Addon = ITerminalAddon;
 interface GpuAddon extends Addon {
   onContextLoss(listener: () => void): unknown;
 }
+interface ImageCache extends Addon {
+  storageLimit: number;
+}
 export interface AddonFactories {
   gpu: () => GpuAddon;
-  images: () => Addon;
+  /** `limitMb` is the image cache size in MB. */
+  images: (limitMb: number) => ImageCache;
   ligatures: () => Addon;
 }
 // Loads optional add-ons on demand. WebGL stays loaded while the terminal is
 // hidden; it is only dropped on context loss, when turned off, or on dispose.
 export class OptionalAddons {
   private gpu?: GpuAddon;
-  private images?: Addon;
+  private images?: ImageCache;
   private ligatures?: Addon;
+  private imageLimitMb = 32;
   constructor(
     private load: (addon: Addon) => void,
     private create: AddonFactories,
@@ -109,7 +127,7 @@ export class OptionalAddons {
       this.gpu = undefined;
     }
     if (settings.images && !this.images) {
-      this.images = this.create.images();
+      this.images = this.create.images(this.imageLimitMb);
       this.load(this.images);
     } else if (!settings.images && this.images) {
       this.images.dispose();
@@ -122,6 +140,11 @@ export class OptionalAddons {
       this.ligatures.dispose();
       this.ligatures = undefined;
     }
+  }
+  /** The image cache's share of the window's memory budget. */
+  set imageLimit(limitMb: number) {
+    this.imageLimitMb = limitMb;
+    if (this.images && this.images.storageLimit !== limitMb) this.images.storageLimit = limitMb;
   }
   get hasGpu() {
     return !!this.gpu;
