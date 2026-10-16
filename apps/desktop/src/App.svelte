@@ -6,7 +6,7 @@
   import TerminalActionMenu from './components/TerminalActionMenu.svelte';
   import BroadcastDialog from './components/BroadcastDialog.svelte';
   import DictionarySettings from './components/DictionarySettings.svelte';
-  import { startDictionarySync } from './lib/dictionary-store';
+  import { dictionaryStore } from './lib/dictionary-store.svelte';
   import PaneActions from './components/PaneActions.svelte';
   import { needsChangelog } from './lib/repositories';
   import FilesDialog from './components/FilesDialog.svelte';
@@ -703,7 +703,7 @@
     ui.device.highlightMotion !== 'static' &&
       (ui.device.highlightMotion === 'animate' || !systemReducedMotion),
   );
-  onMount(startDictionarySync);
+  onMount(dictionaryStore.start);
   onMount(() => {
     const motionQuery = window.matchMedia('(prefers-reduced-motion: reduce)');
     const updateMotion = () => {

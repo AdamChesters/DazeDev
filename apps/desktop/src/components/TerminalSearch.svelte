@@ -3,7 +3,8 @@
   import { X, Search, ChevronLeft, ChevronRight } from '@lucide/svelte';
   import { terminals } from '../lib/terminals';
   import {
-    searchUpdates,
+    onSearchUpdate,
+    type SearchUpdate,
     scopeTargets,
     searchPattern,
     type SearchTarget,
@@ -179,10 +180,7 @@
   }
   onMount(() => {
     input.focus();
-    const changed = (event: Event) => {
-      const { paneId, invalidated } = (
-        event as CustomEvent<{ paneId: string; invalidated: boolean }>
-      ).detail;
+    const changed = ({ paneId, invalidated }: SearchUpdate) => {
       if (invalidated) prune((hit) => hit.paneId !== paneId);
       // Output outside the current scope cannot change these results.
       if (!scopeTargets(targets, scope, origin).some((target) => target.paneId === paneId)) return;
@@ -193,9 +191,9 @@
         }, 350);
       }
     };
-    searchUpdates.addEventListener('change', changed);
+    const unsubscribe = onSearchUpdate(changed);
     return () => {
-      searchUpdates.removeEventListener('change', changed);
+      unsubscribe();
       clearTimeout(refreshTimer);
       disposed = true;
       clearTimeout(debounce);

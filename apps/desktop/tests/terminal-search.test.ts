@@ -6,6 +6,8 @@ import {
   LiveBufferSearch,
   SearchWorkers,
   findLineMatches,
+  notifySearchUpdate,
+  onSearchUpdate,
   searchPattern,
   scopeTargets,
   type SearchOptions,
@@ -254,5 +256,24 @@ describe('bounded worker search', () => {
     } finally {
       workers.reset();
     }
+  });
+});
+
+describe('search updates', () => {
+  it('reaches every listener even when one throws, and stops after unsubscribe', () => {
+    const seen: string[] = [];
+    const error = vi.spyOn(console, 'error').mockImplementation(() => {});
+    const stopBad = onSearchUpdate(() => {
+      throw new Error('broken listener');
+    });
+    const stop = onSearchUpdate(({ paneId, invalidated }) => seen.push(`${paneId}:${invalidated}`));
+    notifySearchUpdate('a');
+    notifySearchUpdate('b', true);
+    stop();
+    stopBad();
+    notifySearchUpdate('c');
+    expect(seen).toEqual(['a:false', 'b:true']);
+    expect(error).toHaveBeenCalledTimes(2);
+    error.mockRestore();
   });
 });

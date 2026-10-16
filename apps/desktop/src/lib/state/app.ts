@@ -14,6 +14,11 @@ import type { VoiceModels } from './voice.svelte';
 // The app shell's state modules. App.svelte creates each module once and
 // fills this object; modules read each other through it at call time, so the
 // order they are created in does not matter.
+//
+// The terminal controller registry (lib/terminals.ts) stays a plain Map on
+// purpose: mounted Terminal components register imperative controls there
+// (paste, focus, search) and nothing renders from it, so it need not be
+// reactive.
 export interface App {
   ui: Shell;
   panes: Panes;

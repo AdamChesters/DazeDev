@@ -1,12 +1,11 @@
 import { tick } from 'svelte';
-import { get } from 'svelte/store';
 import { getCurrentWindow } from '@tauri-apps/api/window';
 import { appActions, appShortcut } from '../app-shortcuts';
 import { Capture } from '../audio';
 import { call, desktop } from '../bridge';
 import { diagnostic } from '../diagnostics';
 import { applyFinalDictionary } from '../dictionary';
-import { dictionaryState } from '../dictionary-store';
+import { dictionaryStore } from '../dictionary-store.svelte';
 import { RecordingTail } from '../recording-tail';
 import { ReviewHotkey } from '../review-hotkey';
 import { defaultCommandShortcut, defaultShortcut, sameShortcut, type Shortcut } from '../shortcut';
@@ -32,7 +31,7 @@ export type VoicePhaseEvent = {
   words?: number;
 };
 
-const dictionary = () => get(dictionaryState).dictionary;
+const dictionary = () => dictionaryStore.state.dictionary;
 
 // Voice capture for terminal dictation, IDE commands and broadcasts: the
 // recording itself, delivery to the terminal, held and recent dictation, and

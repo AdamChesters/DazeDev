@@ -1,14 +1,5 @@
 <script lang="ts">
-  import {
-    dictionaryState,
-    dictionaryStatus,
-    dictionaryAdoption,
-    saveEntry,
-    importDictionary,
-    setDictionaryHost,
-    syncDictionary,
-    loadDictionary,
-  } from '../lib/dictionary-store';
+  import { dictionaryStore as store } from '../lib/dictionary-store.svelte';
   import {
     ambiguousAliases,
     dictionaryConflicts,
@@ -33,8 +24,8 @@
     aliases = selection;
     preferred = selection;
   });
-  const ambiguous = $derived(ambiguousAliases($dictionaryState.dictionary));
-  const entries = $derived(Object.entries($dictionaryState.dictionary.entries));
+  const ambiguous = $derived(ambiguousAliases(store.state.dictionary));
+  const entries = $derived(Object.entries(store.state.dictionary.entries));
   async function run(work: () => Promise<void>) {
     busy = true;
     error = '';
@@ -48,7 +39,7 @@
   }
   function edit(key: string, v: DictionaryVersion) {
     id = key;
-    expected = entryRevision($dictionaryState.dictionary, key);
+    expected = entryRevision(store.state.dictionary, key);
     preferred = v.preferred;
     aliases = v.aliases.join('\n');
   }
@@ -60,7 +51,7 @@
   }
   function exportFile() {
     const url = URL.createObjectURL(
-      new Blob([JSON.stringify($dictionaryState.dictionary, null, 2)], {
+      new Blob([JSON.stringify(store.state.dictionary, null, 2)], {
         type: 'application/json',
       }),
     );
@@ -88,7 +79,7 @@
       onsubmit={(e) => {
         e.preventDefault();
         void run(async () => {
-          await saveEntry(
+          await store.saveEntry(
             id || crypto.randomUUID(),
             preferred,
             aliases.split('\n'),
@@ -127,7 +118,7 @@
       </div>
     </form>
     {#if error}<p role="alert">{error}</p>{/if}
-    {#if dictionaryConflicts($dictionaryState.dictionary)}<p role="status">
+    {#if dictionaryConflicts(store.state.dictionary)}<p role="status">
         Conflicting entries are paused. Choose a version, review it above, then save to resolve.
       </p>{/if}
     {#if ambiguous.length}<p role="status">
@@ -151,13 +142,13 @@
                     disabled={busy}
                     onclick={() =>
                       void run(() =>
-                        saveEntry(
+                        store.saveEntry(
                           key,
                           version.preferred,
                           version.aliases,
                           false,
                           !version.disabled,
-                          entryRevision($dictionaryState.dictionary, key),
+                          entryRevision(store.state.dictionary, key),
                         ),
                       )}>{version.disabled ? 'Enable' : 'Disable'}</button
                   >{/if}
@@ -168,13 +159,13 @@
                   disabled={busy}
                   onclick={() =>
                     void run(() =>
-                      saveEntry(
+                      store.saveEntry(
                         key,
                         version.preferred,
                         version.aliases,
                         true,
                         false,
-                        entryRevision($dictionaryState.dictionary, key),
+                        entryRevision(store.state.dictionary, key),
                       ),
                     )}>{versions.length > 1 ? 'Keep deleted' : 'Delete'}</button
                 >
@@ -197,7 +188,7 @@
               if (file)
                 void run(async () => {
                   if (file.size > 2_000_000) throw Error('Dictionary file is too large.');
-                  await importDictionary(JSON.parse(await file.text()));
+                  await store.import(JSON.parse(await file.text()));
                 });
               e.currentTarget.value = '';
             }}
@@ -207,9 +198,9 @@
       <label
         >Optional sync host
         <select
-          value={$dictionaryState.syncHost}
+          value={store.state.syncHost}
           disabled={busy}
-          onchange={(e) => void run(() => setDictionaryHost(e.currentTarget.value))}
+          onchange={(e) => void run(() => store.setHost(e.currentTarget.value))}
         >
           <option value="">This device only</option>
           {#each hosts as host}<option value={host.id}
@@ -221,30 +212,29 @@
         Uses your existing SSH connection and saves a private file in that host user’s home folder.
         Each device keeps an offline copy and backup. No DazeDev cloud account.
       </p>
-      {#if $dictionaryState.syncHost}<button
-          disabled={busy}
-          onclick={() => void run(() => syncDictionary())}>Check and sync</button
+      {#if store.state.syncHost}<button disabled={busy} onclick={() => void run(() => store.sync())}
+          >Check and sync</button
         >{/if}
     </details>
-    {#if $dictionaryAdoption}
+    {#if store.adoption}
       <div class="adoption">
         <strong>Use this saved dictionary?</strong>
         <p>
-          {Object.keys($dictionaryAdoption.entries).length} saved entries, including deletion records.
-          Your local entries will merge; competing edits remain visible for review.
+          {Object.keys(store.adoption.entries).length} saved entries, including deletion records. Your
+          local entries will merge; competing edits remain visible for review.
         </p>
-        <button disabled={busy} onclick={() => void run(() => syncDictionary(true))}
+        <button disabled={busy} onclick={() => void run(() => store.sync(true))}
           >Merge and enable sync on this device</button
         >
-        <button disabled={busy} onclick={() => void run(() => setDictionaryHost(''))}
+        <button disabled={busy} onclick={() => void run(() => store.setHost(''))}
           >Keep this device separate</button
         >
       </div>
     {/if}
-    <p role="status">{$dictionaryStatus}</p>
-    {#if $dictionaryStatus.startsWith('Dictionary could not load')}<button
+    <p role="status">{store.status}</p>
+    {#if store.status.startsWith('Dictionary could not load')}<button
         disabled={busy}
-        onclick={() => void run(() => loadDictionary(true))}>Retry loading</button
+        onclick={() => void run(() => store.load(true))}>Retry loading</button
       >
       <p>
         Retry after restoring the backup, or import a saved JSON dictionary. Damaged files are
