@@ -17,6 +17,7 @@ pub mod input;
 
 pub mod audio_queue;
 
+pub mod ssh;
 pub mod ssh_config;
 
 pub mod transcript;

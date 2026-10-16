@@ -7,7 +7,7 @@ use std::{
     io::{Read, Write},
     sync::{
         atomic::{AtomicBool, AtomicUsize, Ordering},
-        mpsc, Arc, Mutex,
+        mpsc, Arc, Mutex, OnceLock,
     },
     time::Duration,
 };
@@ -34,6 +34,9 @@ pub struct Host {
     pub socket: String,
     #[serde(default)]
     pub native_shell: Option<String>,
+    /// Use the system OpenSSH client instead of the built-in one.
+    #[serde(default)]
+    pub system_ssh: bool,
 }
 pub fn quote(s: &str) -> String {
     format!("'{}'", s.replace('\'', "'\"'\"'"))
@@ -83,11 +86,10 @@ fn tailscale_target_is_windows(status: &Value, address: &str) -> bool {
             .is_some_and(|os| os.eq_ignore_ascii_case("windows"))
 }
 
-fn check_tailscale_target(host: &Host) -> Result<(), String> {
-    if host.kind != "tailscale" {
-        return Ok(());
-    }
-    // Status is an optional local hint. Bound the probe and keep normal SSH errors if it is unavailable.
+const TAILSCALE_WINDOWS_TARGET: &str = "TAILSCALE_WINDOWS_TARGET: This Tailscale device runs Windows, which cannot serve Tailscale SSH. Connect to a WSL/Linux device with Tailscale SSH enabled, using its own tailnet name and Linux username. Ordinary SSH over Tailscale uses separate SSH credentials; DazeDev's remote host also needs Python 3 and tmux.";
+
+// Status is an optional local hint. Bound the probe and keep normal SSH errors if it is unavailable.
+fn tailscale_status() -> Option<Value> {
     let mut command = std::process::Command::new(tailscale_executable());
     command
         .args(["status", "--json"])
@@ -100,7 +102,7 @@ fn check_tailscale_target(host: &Host) -> Result<(), String> {
         command.creation_flags(0x08000000);
     }
     let Ok(mut child) = command.spawn() else {
-        return Ok(());
+        return None;
     };
     let stdout = child.stdout.take().unwrap();
     let (tx, rx) = mpsc::channel();
@@ -123,18 +125,13 @@ fn check_tailscale_target(host: &Host) -> Result<(), String> {
             }
         }
     };
-    if status.is_some_and(|s| s.success()) {
-        if let Ok((Ok(_), bytes)) = rx.recv_timeout(Duration::from_millis(100)) {
-            if bytes.len() <= 4 * 1024 * 1024 {
-                if let Ok(value) = serde_json::from_slice(&bytes) {
-                    if tailscale_target_is_windows(&value, &host.address) {
-                        return Err("TAILSCALE_WINDOWS_TARGET: This Tailscale device runs Windows, which cannot serve Tailscale SSH. Connect to a WSL/Linux device with Tailscale SSH enabled, using its own tailnet name and Linux username. Ordinary SSH over Tailscale uses separate SSH credentials; DazeDev's remote host also needs Python 3 and tmux.".into());
-                    }
-                }
-            }
-        }
+    if !status.is_some_and(|s| s.success()) {
+        return None;
     }
-    Ok(())
+    match rx.recv_timeout(Duration::from_millis(100)) {
+        Ok((Ok(_), bytes)) if bytes.len() <= 4 * 1024 * 1024 => serde_json::from_slice(&bytes).ok(),
+        _ => None,
+    }
 }
 pub fn command(host: &Host, remote: &str) -> Result<CommandBuilder, String> {
     for s in [
@@ -153,8 +150,11 @@ pub fn command(host: &Host, remote: &str) -> Result<CommandBuilder, String> {
                 return Err("Enter an SSH alias or hostname".into());
             }
             let mut c = CommandBuilder::new("ssh");
+            // `-e none`: a pasted "\n~." must not end the session.
             c.args([
                 "-tt",
+                "-e",
+                "none",
                 "-o",
                 "ServerAliveInterval=15",
                 "-o",
@@ -198,6 +198,8 @@ pub fn command(host: &Host, remote: &str) -> Result<CommandBuilder, String> {
             c.arg(format!("{}@{}", host.user, host.address));
             c.args([
                 "-tt",
+                "-e",
+                "none",
                 "-o",
                 "ServerAliveInterval=15",
                 "-o",
@@ -211,7 +213,8 @@ pub fn command(host: &Host, remote: &str) -> Result<CommandBuilder, String> {
             if !host.distro.is_empty() {
                 c.args(["-d", &host.distro]);
             }
-            c.args(["--", "sh", "-lc", remote]);
+            // `-e` runs sh directly; `--` would hand the line to the default shell.
+            c.args(["-e", "sh", "-lc", remote]);
             Ok(c)
         }
         "local" => {
@@ -227,48 +230,192 @@ pub fn command(host: &Host, remote: &str) -> Result<CommandBuilder, String> {
 }
 // Keep the host program out of argv: Windows limits the full command line,
 // including the arguments added by `tailscale ssh`, to 32,767 UTF-16 units.
-const HOST_LOADER: &str = "import base64,sys;print();print('DAZED:'+sys.argv[1]+':bootstrap',flush=True);exec(compile(base64.b64decode(sys.stdin.buffer.readline().strip(),validate=True),'<dazedev-host>','exec'))";
-fn bootstrap_command(socket: &str, nonce: &str) -> String {
+// The loader refuses Python older than 3.9 with a line the client can explain.
+const HOST_LOADER: &str = "import sys;v=sys.version_info;v<(3,9) and (print('DAZED:'+sys.argv[1]+':python:%d.%d'%v[:2],flush=True),sys.exit(3));import base64;print();print('DAZED:'+sys.argv[1]+':bootstrap',flush=True);exec(compile(base64.b64decode(sys.stdin.buffer.readline().strip(),validate=True),'<dazedev-host>','exec'))";
+/// The script that starts the host helper. It is sent as one line of input,
+/// never as an argument, so it is always run by /bin/sh.
+fn control_script(socket: &str, nonce: &str, endpoint: &str, desktop: &str) -> String {
     format!(
-        "stty -echo -icanon min 1 time 0 && export DAZED_TMUX_SOCKET={} && exec python3 -u -c {} {}",
+        "export DAZED_BROWSER_ENDPOINT={} DAZED_BROWSER_DESKTOP={}; export DAZED_TMUX_SOCKET={}; exec python3 -I -u -c {} {}",
+        quote(endpoint),
+        quote(desktop),
         quote(socket),
         quote(HOST_LOADER),
         quote(nonce)
     )
 }
+#[derive(Clone, Copy)]
+enum Boot {
+    /// Management channel without a terminal (built-in SSH).
+    Pipe,
+    /// Management channel inside a terminal (system OpenSSH).
+    TerminalControl,
+    /// Interactive terminal.
+    Pane,
+}
+/// A fixed command for the remote login shell. SSH servers run commands
+/// through the user's shell, which may be fish, nu or tcsh, so this only
+/// starts /bin/sh with a quoted body free of backslashes and inner quotes.
+/// That shell then reads the real POSIX script as its next input line.
+/// With a terminal, it first turns echo off and prints a marker, so the
+/// client sends the script only once it will not be echoed.
+fn boot_command(boot: Boot, nonce: &str) -> String {
+    match boot {
+        Boot::Pipe => "exec /bin/sh -c 'IFS= read -r l; eval \"$l\"'".into(),
+        Boot::TerminalControl => format!("exec /bin/sh -c 'stty -echo -icanon min 1 time 0 2>/dev/null; echo DZBOOT:{nonce}; IFS= read -r l; eval \"$l\"'"),
+        Boot::Pane => format!("exec /bin/sh -c 'stty -echo -icanon min 1 time 0 2>/dev/null; echo DZBOOT:{nonce}; IFS= read -r l; stty echo icanon 2>/dev/null; eval \"$l\"'"),
+    }
+}
+fn boot_marker(nonce: &str) -> String {
+    format!("DZBOOT:{nonce}")
+}
+/// Input to send when the remote side prints each marker line, in order.
 struct Bootstrap {
-    marker: String,
-    payload: Option<Vec<u8>>,
+    stages: std::collections::VecDeque<(String, Vec<u8>)>,
 }
 impl Bootstrap {
     fn new(nonce: &str, source: &[u8]) -> Self {
         Self {
-            marker: format!("DAZED:{nonce}:bootstrap"),
-            payload: Some((STANDARD.encode(source) + "\n").into_bytes()),
+            stages: [(
+                format!("DAZED:{nonce}:bootstrap"),
+                (STANDARD.encode(source) + "\n").into_bytes(),
+            )]
+            .into(),
         }
     }
+    /// First wait for the shell marker and send the script, then the source.
+    fn after_script(mut self, nonce: &str, script: &str) -> Self {
+        self.stages
+            .push_front((boot_marker(nonce), format!("{script}\n").into_bytes()));
+        self
+    }
     fn line(&mut self, line: &str) -> Option<Vec<u8>> {
-        if line == self.marker {
-            self.payload.take()
+        if self
+            .stages
+            .front()
+            .is_some_and(|(marker, _)| line == marker)
+        {
+            self.stages.pop_front().map(|(_, payload)| payload)
         } else {
             None
         }
     }
 }
+/// Input side of a terminal or management channel.
+trait Io: Send + Sync {
+    /// Write within a bounded time; a stalled peer returns an error.
+    fn write(&self, data: &[u8]) -> Result<(), String>;
+    fn resize(&self, cols: u16, rows: u16) -> Result<(), String>;
+    fn kill(&self);
+}
+impl<T: Io> Io for Arc<T> {
+    fn write(&self, data: &[u8]) -> Result<(), String> {
+        (**self).write(data)
+    }
+    fn resize(&self, cols: u16, rows: u16) -> Result<(), String> {
+        (**self).resize(cols, rows)
+    }
+    fn kill(&self) {
+        (**self).kill()
+    }
+}
+/// A local process in a pseudo-terminal (system OpenSSH, WSL or a local shell).
+struct ProcessIo {
+    writer: mpsc::SyncSender<(Vec<u8>, mpsc::Sender<Result<(), String>>)>,
+    master: Mutex<Box<dyn MasterPty + Send>>,
+    killer: Mutex<Box<dyn portable_pty::ChildKiller + Send + Sync>>,
+}
+impl Io for ProcessIo {
+    fn write(&self, data: &[u8]) -> Result<(), String> {
+        let (tx, rx) = mpsc::channel();
+        self.writer
+            .try_send((data.to_vec(), tx))
+            .map_err(|_| "Terminal input is unavailable".to_string())?;
+        rx.recv_timeout(Duration::from_secs(5))
+            .map_err(|_| "Terminal input timed out; reconnect this terminal".to_string())?
+    }
+    fn resize(&self, cols: u16, rows: u16) -> Result<(), String> {
+        lock(&self.master)
+            .resize(PtySize {
+                rows: rows.max(1),
+                cols: cols.max(1),
+                pixel_width: 0,
+                pixel_height: 0,
+            })
+            .map_err(|e| e.to_string())
+    }
+    fn kill(&self) {
+        let _ = lock(&self.killer).kill();
+    }
+}
+/// A terminal channel on a built-in SSH connection.
+struct SshPaneIo(crate::ssh::ChannelIo);
+impl Io for SshPaneIo {
+    fn write(&self, data: &[u8]) -> Result<(), String> {
+        self.0.write(data, Duration::from_secs(5))
+    }
+    fn resize(&self, cols: u16, rows: u16) -> Result<(), String> {
+        self.0.resize(cols, rows)
+    }
+    fn kill(&self) {
+        self.0.close()
+    }
+}
+/// The management channel of a built-in SSH connection. Input is refused
+/// until authentication completes and the channel opens.
+struct SshControlIo {
+    prompts: Arc<crate::ssh::Prompts>,
+    channel: OnceLock<crate::ssh::ChannelIo>,
+    session: OnceLock<Arc<crate::ssh::Session>>,
+    killed: AtomicBool,
+}
+impl Io for SshControlIo {
+    fn write(&self, data: &[u8]) -> Result<(), String> {
+        match self.channel.get() {
+            Some(channel) => channel.write(data, Duration::from_secs(5)),
+            None => Err("Host is still connecting".into()),
+        }
+    }
+    fn resize(&self, _cols: u16, _rows: u16) -> Result<(), String> {
+        Ok(())
+    }
+    fn kill(&self) {
+        self.killed.store(true, Ordering::Release);
+        self.prompts.close();
+        if let Some(channel) = self.channel.get() {
+            channel.close();
+        }
+    }
+}
+/// Lock a mutex even if another thread panicked while holding it.
+fn lock<T: ?Sized>(mutex: &Mutex<T>) -> std::sync::MutexGuard<'_, T> {
+    mutex.lock().unwrap_or_else(|e| e.into_inner())
+}
 struct Pty {
     pending: AtomicUsize,
     active: AtomicBool,
-    writer: mpsc::SyncSender<(Vec<u8>, mpsc::Sender<Result<(), String>>)>,
     writable: Arc<AtomicBool>,
-    master: Mutex<Box<dyn MasterPty + Send>>,
-    killer: Mutex<Box<dyn portable_pty::ChildKiller + Send + Sync>>,
+    io: Box<dyn Io>,
     exited: Mutex<Option<mpsc::Receiver<()>>>,
+}
+impl Pty {
+    fn new(io: Box<dyn Io>, writable: Arc<AtomicBool>) -> Arc<Self> {
+        Arc::new(Self {
+            pending: AtomicUsize::new(0),
+            active: AtomicBool::new(true),
+            writable,
+            io,
+            exited: Mutex::new(None),
+        })
+    }
 }
 struct Connection {
     pty: Arc<Pty>,
     pending: Mutex<HashMap<String, mpsc::Sender<Result<Value, String>>>>,
     ready: Mutex<bool>,
     browser: crate::browser::Requests,
+    /// Set for built-in SSH: authentication prompts are answered here.
+    prompts: Option<Arc<crate::ssh::Prompts>>,
 }
 struct NativeView {
     client: crate::local_sessions::Client,
@@ -294,6 +441,9 @@ pub struct Transport {
     native_views: Mutex<HashMap<String, Arc<NativeView>>>,
     browser_desktop: String,
     browser_endpoints: Mutex<HashMap<String, String>>,
+    /// Built-in SSH connections by host ID, with the settings they were made
+    /// with. Terminals and reconnects reuse a live one instead of logging in again.
+    sessions: Arc<Mutex<HashMap<String, (String, std::sync::Weak<crate::ssh::Session>)>>>,
 }
 impl Default for Transport {
     fn default() -> Self {
@@ -305,6 +455,7 @@ impl Default for Transport {
             native_views: Mutex::new(HashMap::new()),
             browser_desktop: uuid::Uuid::new_v4().simple().to_string(),
             browser_endpoints: Mutex::new(HashMap::new()),
+            sessions: Arc::new(Mutex::new(HashMap::new())),
         }
     }
 }
@@ -350,18 +501,16 @@ fn spawn(mut cmd: CommandBuilder) -> Result<(Arc<Pty>, Box<dyn Read + Send>), St
         // ConPTY can retain its read pipe after the child exits. Do not wait for EOF.
         let _ = exit_tx.send(());
     });
-    Ok((
-        Arc::new(Pty {
-            pending: AtomicUsize::new(0),
-            active: AtomicBool::new(true),
+    let pty = Pty::new(
+        Box::new(ProcessIo {
             writer: write_tx,
-            writable,
             master: Mutex::new(pair.master),
             killer: Mutex::new(killer),
-            exited: Mutex::new(Some(exit_rx)),
         }),
-        reader,
-    ))
+        writable,
+    );
+    *lock(&pty.exited) = Some(exit_rx);
+    Ok((pty, reader))
 }
 // The channel retains an early exit until the caller has installed its connection
 // and callback. EOF and child completion share the same active flag below.
@@ -407,19 +556,10 @@ fn write(pty: &Pty, data: &[u8]) -> Result<(), String> {
     if !pty.active.load(Ordering::Acquire) || !pty.writable.load(Ordering::Acquire) {
         return Err("Terminal is disconnected".into());
     }
-    let (tx, rx) = mpsc::channel();
-    let result = pty
-        .writer
-        .try_send((data.to_vec(), tx))
-        .map_err(|_| "Terminal input is unavailable".to_string())
-        .and_then(|_| {
-            rx.recv_timeout(Duration::from_secs(5))
-                .map_err(|_| "Terminal input timed out; reconnect this terminal".to_string())
-        })
-        .and_then(|r| r);
+    let result = pty.io.write(data);
     if result.is_err() {
         pty.writable.store(false, Ordering::Release);
-        let _ = pty.killer.lock().unwrap().kill();
+        pty.io.kill();
     }
     result
 }
@@ -514,6 +654,113 @@ impl ReplyFrames {
             .map_err(|e| format!("Invalid host response: {e}"))
     }
 }
+/// Look for the boot marker in held pane output. When found, return the
+/// output with the marker line removed and clear the buffer.
+fn pane_boot(held: &mut Vec<u8>, marker: &[u8]) -> Option<Vec<u8>> {
+    let start = held.windows(marker.len()).position(|w| w == marker)?;
+    let mut end = start + marker.len();
+    while end < held.len() && matches!(held[end], b'\r' | b'\n') {
+        end += 1;
+    }
+    let mut output = held[..start].to_vec();
+    output.extend_from_slice(&held[end..]);
+    held.clear();
+    Some(output)
+}
+/// Read the management channel: answer bootstrap markers, then decode
+/// replies and events until the channel ends.
+fn run_control(
+    conn: Arc<Connection>,
+    host_id: String,
+    nonce: String,
+    mut reader: Box<dyn Read + Send>,
+    mut bootstrap: Bootstrap,
+    sink: EventSink,
+) {
+    let prefix = format!("DAZED:{nonce}:");
+    let python = format!("{prefix}python:");
+    let boot = boot_marker(&nonce);
+    let mut buffer = Vec::new();
+    let mut terminal = ControlTerminal::default();
+    let mut frames = ReplyFrames::default();
+    let mut chunk = vec![0u8; 65536];
+    'read: loop {
+        let n = match reader.read(&mut chunk) {
+            Ok(0) | Err(_) => break,
+            Ok(n) => n,
+        };
+        if !conn.pty.active.load(Ordering::Acquire) {
+            break;
+        }
+        let (clean, replies) = terminal.feed(&chunk[..n]);
+        if !replies.is_empty() {
+            let _ = write(&conn.pty, &replies);
+        }
+        let text = String::from_utf8_lossy(&clean);
+        if !*lock(&conn.ready) && !text.contains(&prefix) && !text.contains(&boot) {
+            sink("host-output", json!({"hostId":host_id,"text":text}));
+        }
+        buffer.extend_from_slice(&clean);
+        let mut start = 0;
+        while let Some(offset) = buffer[start..].iter().position(|b| *b == b'\n') {
+            let end = start + offset;
+            let line = String::from_utf8_lossy(&buffer[start..end])
+                .trim()
+                .to_string();
+            start = end + 1;
+            // Wait for the remote loader, never send source into an SSH
+            // password/host-key prompt. Consume each marker only once.
+            if let Some(payload) = bootstrap.line(&line) {
+                if let Err(e) = write(&conn.pty, &payload) {
+                    sink("host-output", json!({"hostId":host_id,"text":e}));
+                    break 'read;
+                }
+                continue;
+            }
+            if let Some(version) = line.strip_prefix(&python) {
+                sink(
+                    "host-output",
+                    json!({"hostId":host_id,"text":format!("DazeDev needs Python 3.9 or newer on this host (found Python {version}).\n")}),
+                );
+                continue;
+            }
+            match frames.line(&line, &prefix) {
+                Ok(Some(v)) => {
+                    let id = v["id"].as_str().unwrap_or("");
+                    if v["event"] == "browser-open" {
+                        if conn.pty.active.load(Ordering::Acquire) && *lock(&conn.ready) {
+                            sink(
+                                "host-browser-open",
+                                json!({"hostId":host_id,"nonce":nonce,"id":id,"url":v["url"]}),
+                            );
+                        }
+                    } else if id == "ready" {
+                        if !host_ready(&conn, &host_id, v["result"].clone(), &sink) {
+                            break 'read;
+                        }
+                    } else if let Some(tx) = lock(&conn.pending).remove(id) {
+                        let _ = tx.send(if let Some(e) = v["error"].as_str() {
+                            Err(e.to_string())
+                        } else {
+                            Ok(v["result"].clone())
+                        });
+                    }
+                }
+                Ok(None) => {}
+                Err(e) => {
+                    sink("host-output", json!({"hostId":host_id,"text":e}));
+                    break 'read;
+                }
+            }
+        }
+        buffer.drain(..start);
+        if buffer.len() > 1_000_000 {
+            buffer.clear();
+        }
+    }
+    host_finished(&conn, &host_id, &sink);
+    conn.pty.io.kill();
+}
 impl Transport {
     pub fn set_native_root(&self, path: std::path::PathBuf) {
         *self.native_root.lock().unwrap() = Some(path);
@@ -548,151 +795,271 @@ impl Transport {
         Ok(())
     }
     pub fn shutdown(&self) {
-        let views: Vec<_> = self.native_views.lock().unwrap().keys().cloned().collect();
+        let views: Vec<_> = lock(&self.native_views).keys().cloned().collect();
         for id in views {
             self.close(&id);
         }
-        for (_, p) in self.terminals.lock().unwrap().drain() {
+        for (_, p) in lock(&self.terminals).drain() {
             p.active.store(false, Ordering::Release);
-            let _ = p.killer.lock().unwrap().kill();
+            p.io.kill();
         }
-        for (_, c) in self.connections.lock().unwrap().drain() {
+        for (_, c) in lock(&self.connections).drain() {
             c.pty.active.store(false, Ordering::Release);
-            let _ = c.pty.killer.lock().unwrap().kill();
+            c.pty.io.kill();
+        }
+        for (_, (_, session)) in lock(&self.sessions).drain() {
+            if let Some(session) = session.upgrade() {
+                session.close();
+            }
+        }
+    }
+    /// A live built-in SSH connection for this host, if one exists.
+    fn live_session(
+        &self,
+        host_id: &str,
+        settings: Option<&str>,
+    ) -> Option<Arc<crate::ssh::Session>> {
+        let sessions = lock(&self.sessions);
+        let (stored, session) = sessions.get(host_id)?;
+        if settings.is_some_and(|s| s != stored) {
+            return None;
+        }
+        session.upgrade().filter(|s| !s.is_closed())
+    }
+    /// Decide how to reach a host. `None` means use a local process
+    /// (system OpenSSH, `tailscale ssh`, WSL or a local shell).
+    fn ssh_target(
+        &self,
+        host: &Host,
+        tailscale: Option<&Value>,
+        sink: &EventSink,
+    ) -> Result<Option<(crate::ssh::Target, String)>, String> {
+        for s in [
+            &host.address,
+            &host.user,
+            &host.key,
+            &host.jump,
+            &host.socket,
+        ] {
+            checked(s)?;
+        }
+        if host.system_ssh || std::env::var_os("DAZEDEV_SYSTEM_SSH").is_some() {
+            return Ok(None);
+        }
+        match host.kind.as_str() {
+            "ssh" => {
+                if host.address.is_empty() || host.address.starts_with('-') {
+                    return Err("Enter an SSH alias or hostname".into());
+                }
+                let nonempty = |s: &str| (!s.is_empty()).then(|| s.to_owned());
+                let request = crate::ssh::config::Request {
+                    host: host.address.clone(),
+                    user: nonempty(&host.user),
+                    port: host.port,
+                    identity: nonempty(&host.key),
+                    jump: nonempty(&host.jump),
+                };
+                let resolved = crate::ssh::config::resolve(&request);
+                if let Some(reason) = &resolved.unsupported {
+                    sink(
+                        "host-output",
+                        json!({"hostId":host.id,"text":format!("Using the system OpenSSH client: {reason}.\n")}),
+                    );
+                    return Ok(None);
+                }
+                let settings = format!(
+                    "ssh|{}|{}|{}|{}|{}|{}",
+                    resolved.user,
+                    resolved.hostname,
+                    resolved.port,
+                    resolved.proxy_jump.join(","),
+                    resolved.proxy_command.as_deref().unwrap_or(""),
+                    host.key
+                );
+                Ok(Some((crate::ssh::Target::Ssh(resolved), settings)))
+            }
+            "tailscale" => {
+                let Some((ip, keys)) =
+                    tailscale.and_then(|status| crate::ssh::tailscale_peer(status, &host.address))
+                else {
+                    return Ok(None);
+                };
+                let settings = format!("tailscale|{}|{ip}", host.user);
+                Ok(Some((
+                    crate::ssh::Target::Tailscale {
+                        address: host.address.clone(),
+                        ip,
+                        user: host.user.clone(),
+                        keys,
+                    },
+                    settings,
+                )))
+            }
+            _ => Ok(None),
         }
     }
     pub fn connect(&self, host: Host, sink: EventSink) -> Result<(), String> {
-        check_tailscale_target(&host)?;
         self.disconnect(&host.id);
         if host.kind == "powershell" {
             if !cfg!(windows) {
                 return Err("Native PowerShell hosts require Windows".into());
             }
-            let root = self
-                .native_root
-                .lock()
-                .unwrap()
+            let root = lock(&self.native_root)
                 .clone()
                 .ok_or("Native session folder unavailable")?;
             let mut client = crate::local_sessions::Client::ensure(root, host.id.clone())?;
             client.shell = host.native_shell.unwrap_or_else(|| "powershell".into());
             let identity = client.request("ping", json!({}))?;
-            self.native_hosts
-                .lock()
-                .unwrap()
-                .insert(host.id.clone(), client);
+            lock(&self.native_hosts).insert(host.id.clone(), client);
             sink("host-ready", json!({"hostId":host.id,"identity":identity}));
             return Ok(());
         }
+        let tailscale = if host.kind == "tailscale" {
+            tailscale_status()
+        } else {
+            None
+        };
+        if tailscale
+            .as_ref()
+            .is_some_and(|status| tailscale_target_is_windows(status, &host.address))
+        {
+            return Err(TAILSCALE_WINDOWS_TARGET.into());
+        }
         let nonce = uuid::Uuid::new_v4().simple().to_string();
-        let endpoint = self
-            .browser_endpoints
-            .lock()
-            .unwrap()
+        let endpoint = lock(&self.browser_endpoints)
             .entry(host.id.clone())
             .or_insert_with(|| uuid::Uuid::new_v4().simple().to_string())
             .clone();
-        let script = format!(
-            "export DAZED_BROWSER_ENDPOINT={} DAZED_BROWSER_DESKTOP={}; {}",
-            quote(&endpoint),
-            quote(&self.browser_desktop),
-            bootstrap_command(&host.socket, &nonce)
-        );
+        let script = control_script(&host.socket, &nonce, &endpoint, &self.browser_desktop);
         let source = format!(
             "import base64\nBROWSER_SOURCE=base64.b64decode('{}').decode()\n{}",
             STANDARD.encode(include_bytes!("../resources/browser.py")),
             include_str!("../resources/host.py")
         );
-        let mut bootstrap = Bootstrap::new(&nonce, source.as_bytes());
-        let (pty, mut reader) = spawn(command(&host, &script)?)?;
+        let bootstrap = Bootstrap::new(&nonce, source.as_bytes());
+        if let Some((target, settings)) = self.ssh_target(&host, tailscale.as_ref(), &sink)? {
+            return self.connect_ssh(host, target, settings, nonce, script, bootstrap, sink);
+        }
+        let process_command = if matches!(host.kind.as_str(), "ssh" | "tailscale") {
+            boot_command(Boot::TerminalControl, &nonce)
+        } else {
+            // Raw, silent input: the source line is far longer than a
+            // canonical-mode terminal line and must not be echoed back.
+            format!("stty -echo -icanon min 1 time 0 && {script}")
+        };
+        let bootstrap = if matches!(host.kind.as_str(), "ssh" | "tailscale") {
+            bootstrap.after_script(&nonce, &script)
+        } else {
+            bootstrap
+        };
+        let (pty, reader) = spawn(command(&host, &process_command)?)?;
         let conn = Arc::new(Connection {
             pty,
             pending: Mutex::new(HashMap::new()),
             ready: Mutex::new(false),
             browser: crate::browser::Requests::new(nonce.clone()),
+            prompts: None,
         });
-        self.connections
-            .lock()
-            .unwrap()
-            .insert(host.id.clone(), conn.clone());
+        self.register(&host.id, conn.clone());
         let exited_conn = conn.clone();
         let exited_sink = sink.clone();
         let exited_id = host.id.clone();
         observe_exit(&conn.pty, move || {
             host_finished(&exited_conn, &exited_id, &exited_sink)
         });
+        std::thread::spawn(move || run_control(conn, host.id, nonce, reader, bootstrap, sink));
+        Ok(())
+    }
+    fn register(&self, host_id: &str, conn: Arc<Connection>) {
+        // A racing second connect must not leave the first one running.
+        if let Some(old) = lock(&self.connections).insert(host_id.to_owned(), conn) {
+            old.pty.active.store(false, Ordering::Release);
+            old.pty.io.kill();
+        }
+    }
+    #[allow(clippy::too_many_arguments)]
+    fn connect_ssh(
+        &self,
+        host: Host,
+        target: crate::ssh::Target,
+        settings: String,
+        nonce: String,
+        script: String,
+        bootstrap: Bootstrap,
+        sink: EventSink,
+    ) -> Result<(), String> {
+        let prompts = {
+            let sink = sink.clone();
+            let id = host.id.clone();
+            crate::ssh::Prompts::new(move |text| {
+                sink("host-output", json!({"hostId":id,"text":text}));
+            })
+        };
+        let control = Arc::new(SshControlIo {
+            prompts: prompts.clone(),
+            channel: OnceLock::new(),
+            session: OnceLock::new(),
+            killed: AtomicBool::new(false),
+        });
+        let conn = Arc::new(Connection {
+            pty: Pty::new(Box::new(control.clone()), Arc::new(AtomicBool::new(true))),
+            pending: Mutex::new(HashMap::new()),
+            ready: Mutex::new(false),
+            browser: crate::browser::Requests::new(nonce.clone()),
+            prompts: Some(prompts.clone()),
+        });
+        self.register(&host.id, conn.clone());
+        let reuse = self.live_session(&host.id, Some(&settings));
+        let sessions = self.sessions.clone();
         std::thread::spawn(move || {
-            let prefix = format!("DAZED:{nonce}:");
-            let mut buffer = Vec::new();
-            let mut terminal = ControlTerminal::default();
-            let mut frames = ReplyFrames::default();
-            let mut chunk = [0u8; 8192];
-            'read: loop {
-                let n = match reader.read(&mut chunk) {
-                    Ok(0) | Err(_) => break,
-                    Ok(n) => n,
-                };
-                if !conn.pty.active.load(Ordering::Acquire) {
-                    break;
-                }
-                let (clean, replies) = terminal.feed(&chunk[..n]);
-                if !replies.is_empty() {
-                    let _ = write(&conn.pty, &replies);
-                }
-                let text = String::from_utf8_lossy(&clean);
-                if !*conn.ready.lock().unwrap() && !text.contains(&prefix) {
-                    sink("host-output", json!({"hostId":host.id,"text":text}));
-                }
-                buffer.extend_from_slice(&clean);
-                while let Some(end) = buffer.iter().position(|b| *b == b'\n') {
-                    let line = String::from_utf8_lossy(&buffer[..end]).trim().to_string();
-                    buffer.drain(..=end);
-                    // Wait for the remote loader, never send source into an SSH
-                    // password/host-key prompt. Consume the marker only once.
-                    if let Some(payload) = bootstrap.line(&line) {
-                        if let Err(e) = write(&conn.pty, &payload) {
-                            sink("host-output", json!({"hostId":host.id,"text":e}));
-                            break 'read;
-                        }
-                        continue;
-                    }
-                    match frames.line(&line, &prefix) {
-                        Ok(Some(v)) => {
-                            let id = v["id"].as_str().unwrap_or("");
-                            if v["event"] == "browser-open" {
-                                if conn.pty.active.load(Ordering::Acquire)
-                                    && *conn.ready.lock().unwrap()
-                                {
-                                    sink(
-                                        "host-browser-open",
-                                        json!({"hostId":host.id,"nonce":nonce,"id":id,"url":v["url"]}),
-                                    );
-                                }
-                            } else if id == "ready" {
-                                if !host_ready(&conn, &host.id, v["result"].clone(), &sink) {
-                                    break 'read;
-                                }
-                            } else if let Some(tx) = conn.pending.lock().unwrap().remove(id) {
-                                let _ = tx.send(if let Some(e) = v["error"].as_str() {
-                                    Err(e.to_string())
-                                } else {
-                                    Ok(v["result"].clone())
-                                });
-                            }
-                        }
-                        Ok(None) => {}
-                        Err(e) => {
-                            sink("host-output", json!({"hostId":host.id,"text":e}));
-                            break 'read;
-                        }
-                    }
-                }
-                if buffer.len() > 1_000_000 {
-                    buffer.clear();
+            let fail = |text: String| {
+                sink("host-output", json!({"hostId":host.id,"text":text}));
+                host_finished(&conn, &host.id, &sink);
+            };
+            let open = |session: &Arc<crate::ssh::Session>| {
+                session.open(boot_command(Boot::Pipe, &nonce), None)
+            };
+            let mut opened = None;
+            if let Some(session) = reuse {
+                match open(&session) {
+                    Ok(channel) => opened = Some((session, channel)),
+                    Err(_) => session.close(),
                 }
             }
-            host_finished(&conn, &host.id, &sink);
-            let _ = conn.pty.killer.lock().unwrap().kill();
+            if opened.is_none() {
+                let connected = crate::ssh::runtime()
+                    .block_on(crate::ssh::Session::connect(target, prompts.clone()));
+                match connected {
+                    Ok(session) => {
+                        let session = Arc::new(session);
+                        lock(&sessions)
+                            .insert(host.id.clone(), (settings, Arc::downgrade(&session)));
+                        match open(&session) {
+                            Ok(channel) => opened = Some((session, channel)),
+                            Err(e) => return fail(format!("{e}\n")),
+                        }
+                    }
+                    Err(e) => {
+                        let e = e.strip_prefix(crate::ssh::SYSTEM_SSH).map_or(e.clone(), |reason| {
+                            format!("This connection needs the system OpenSSH client ({reason}). Turn on \"Use system OpenSSH\" for this host.\n")
+                        });
+                        return fail(e);
+                    }
+                }
+            }
+            let Some((session, (channel, reader))) = opened else {
+                return;
+            };
+            if control.killed.load(Ordering::Acquire) {
+                channel.close();
+                return;
+            }
+            let _ = control.session.set(session);
+            let _ = control.channel.set(channel);
+            if let Err(e) = write(&conn.pty, format!("{script}\n").as_bytes()) {
+                return fail(format!("{e}\n"));
+            }
+            run_control(conn, host.id, nonce, Box::new(reader), bootstrap, sink);
         });
         Ok(())
     }
@@ -786,18 +1153,19 @@ impl Transport {
         }
         let request = uuid::Uuid::new_v4().to_string();
         let (tx, rx) = mpsc::channel();
-        let mut pending = c.pending.lock().unwrap();
-        // Reserve and write in order: a health probe must never queue behind a long operation.
         let _ = idle_only; // Host control requests have an independent lane.
-        pending.insert(request.clone(), tx);
+                           // Register before writing so a fast reply is never lost. The lock is not
+                           // held during the write: each write is queued whole, so requests never
+                           // interleave, and the reader can deliver other replies meanwhile.
+        lock(&c.pending).insert(request.clone(), tx);
         let payload = STANDARD.encode(
-            serde_json::to_vec(&json!({"id":request,"method":method,"args":args})).unwrap(),
+            serde_json::to_vec(&json!({"id":request,"method":method,"args":args}))
+                .map_err(|e| e.to_string())?,
         ) + "\n";
         if let Err(e) = write(&c.pty, payload.as_bytes()) {
-            pending.remove(&request);
+            lock(&c.pending).remove(&request);
             return Err(e);
         }
-        drop(pending);
         let r = rx
             .recv_timeout(Duration::from_secs(
                 if matches!(
@@ -810,10 +1178,10 @@ impl Transport {
                 },
             ))
             .map_err(|_| "Host operation timed out; refresh before retrying".to_string());
-        c.pending.lock().unwrap().remove(&request);
+        lock(&c.pending).remove(&request);
         if r.is_err() && method == "ping" {
-            *c.ready.lock().unwrap() = false;
-            let _ = c.pty.killer.lock().unwrap().kill();
+            *lock(&c.ready) = false;
+            c.pty.io.kill();
         }
         r?
     }
@@ -825,8 +1193,15 @@ impl Transport {
             .get(id)
             .cloned()
             .ok_or("Not connected")?;
-        if *c.ready.lock().unwrap() {
+        if *lock(&c.ready) {
             return Err("Already authenticated".into());
+        }
+        if let Some(prompts) = &c.prompts {
+            return if prompts.answer(data.trim_end_matches(['\r', '\n'])) {
+                Ok(())
+            } else {
+                Err("Nothing is waiting for an answer".into())
+            };
         }
         // A terminal Enter key is CR. LF alone does not submit Windows console input.
         let response = format!("{}\r", data.trim_end_matches(['\r', '\n']));
@@ -838,10 +1213,10 @@ impl Transport {
         if let Some(c) = removed {
             c.pty.active.store(false, Ordering::Release);
             *c.ready.lock().unwrap() = false;
-            for (_, tx) in c.pending.lock().unwrap().drain() {
+            for (_, tx) in lock(&c.pending).drain() {
                 let _ = tx.send(Err("Host disconnected".into()));
             }
-            let _ = c.pty.killer.lock().unwrap().kill();
+            c.pty.io.kill();
         }
     }
     pub fn open(
@@ -910,10 +1285,10 @@ impl Transport {
             });
             // Fetch before registering so a failed attach never leaves a live view behind.
             let first = view.request("view_poll", json!({}))?;
-            self.native_views
-                .lock()
-                .unwrap()
-                .insert(id.clone(), view.clone());
+            if let Some(old) = lock(&self.native_views).insert(id.clone(), view.clone()) {
+                old.active.store(false, Ordering::Release);
+                let _ = old.request("view_detach", json!({}));
+            }
             let marker = ready_marker
                 .map(|m| format!("\x1b]777;dazedev-ready:{m}:{}\x07", descriptor["pid"]))
                 .unwrap_or_default();
@@ -1052,11 +1427,34 @@ impl Transport {
         } else {
             script
         };
-        let (pty, mut reader) = spawn(command(&host, &script)?)?;
-        self.terminals
-            .lock()
-            .unwrap()
-            .insert(id.clone(), pty.clone());
+        let remote = matches!(host.kind.as_str(), "ssh" | "tailscale");
+        let pane_nonce = uuid::Uuid::new_v4().simple().to_string();
+        let session = if remote && !host.system_ssh {
+            self.live_session(&host.id, None)
+        } else {
+            None
+        };
+        let (pty, mut reader): (Arc<Pty>, Box<dyn Read + Send>) = match session {
+            Some(session) => {
+                let (channel, reader) =
+                    session.open(boot_command(Boot::Pane, &pane_nonce), Some((120, 30)))?;
+                (
+                    Pty::new(
+                        Box::new(SshPaneIo(channel)),
+                        Arc::new(AtomicBool::new(true)),
+                    ),
+                    Box::new(reader),
+                )
+            }
+            None if remote => spawn(command(&host, &boot_command(Boot::Pane, &pane_nonce))?)?,
+            None => spawn(command(&host, &script)?)?,
+        };
+        // Remote panes print a marker once echo is off; then the script is sent.
+        let mut boot = remote.then(|| (boot_marker(&pane_nonce), format!("{script}\n")));
+        if let Some(old) = lock(&self.terminals).insert(id.clone(), pty.clone()) {
+            old.active.store(false, Ordering::Release);
+            old.io.kill();
+        }
         let exited_pty = pty.clone();
         let exited_sink = sink.clone();
         let exited_id = id.clone();
@@ -1065,27 +1463,52 @@ impl Transport {
         });
         std::thread::spawn(move || {
             let mut chunk = [0u8; 16384];
+            let mut held: Vec<u8> = Vec::new();
             loop {
-                match reader.read(&mut chunk) {
+                let n = match reader.read(&mut chunk) {
                     Ok(0) | Err(_) => break,
-                    Ok(n) if pty.active.load(Ordering::Acquire) => {
-                        // Only desktop consumers opt in; native probes have no renderer ACK.
-                        while flow && pty.pending.load(Ordering::Acquire) >= 262144 {
-                            if !pty.active.load(Ordering::Acquire) {
-                                return;
-                            }
-                            std::thread::sleep(Duration::from_millis(4));
-                        }
-                        if flow {
-                            pty.pending.fetch_add(n, Ordering::AcqRel);
-                        }
-                        sink(
-                            "terminal-output",
-                            json!({"id":id,"data":STANDARD.encode(&chunk[..n])}),
-                        );
-                    }
-                    Ok(_) => break,
+                    Ok(n) => n,
+                };
+                if !pty.active.load(Ordering::Acquire) {
+                    break;
                 }
+                let mut data = &chunk[..n];
+                let released;
+                if let Some((marker, line)) = &boot {
+                    held.extend_from_slice(data);
+                    match pane_boot(&mut held, marker.as_bytes()) {
+                        Some(output) => {
+                            if write(&pty, line.as_bytes()).is_err() {
+                                break;
+                            }
+                            boot = None;
+                            released = output;
+                        }
+                        None => {
+                            // Show prompts and banners now; keep a possible partial marker.
+                            let keep = held.len().min(marker.len());
+                            released = held.drain(..held.len() - keep).collect();
+                        }
+                    }
+                    data = &released;
+                }
+                if data.is_empty() {
+                    continue;
+                }
+                // Only desktop consumers opt in; native probes have no renderer ACK.
+                while flow && pty.pending.load(Ordering::Acquire) >= 262144 {
+                    if !pty.active.load(Ordering::Acquire) {
+                        return;
+                    }
+                    std::thread::sleep(Duration::from_millis(4));
+                }
+                if flow {
+                    pty.pending.fetch_add(data.len(), Ordering::AcqRel);
+                }
+                sink(
+                    "terminal-output",
+                    json!({"id":id,"data":STANDARD.encode(data)}),
+                );
             }
             terminal_finished(&pty, &id, &sink);
         });
@@ -1152,18 +1575,7 @@ impl Transport {
             .get(id)
             .cloned()
             .ok_or("Terminal is detached")?;
-        let r = p
-            .master
-            .lock()
-            .unwrap()
-            .resize(PtySize {
-                rows: rows.max(1),
-                cols: cols.max(1),
-                pixel_width: 0,
-                pixel_height: 0,
-            })
-            .map_err(|e| e.to_string());
-        r
+        p.io.resize(cols, rows)
     }
     pub fn close(&self, id: &str) {
         let native = self.native_views.lock().unwrap().remove(id);
@@ -1172,10 +1584,10 @@ impl Transport {
             let _ = v.request("view_detach", json!({}));
             return;
         }
-        let removed = self.terminals.lock().unwrap().remove(id);
+        let removed = lock(&self.terminals).remove(id);
         if let Some(p) = removed {
             p.active.store(false, Ordering::Release);
-            let _ = p.killer.lock().unwrap().kill();
+            p.io.kill();
         }
     }
 }
@@ -1185,13 +1597,33 @@ impl Drop for Transport {
             v.active.store(false, Ordering::Release);
             let _ = v.request("view_detach", json!({}));
         }
-        for p in self.terminals.get_mut().unwrap().values() {
+        for p in self
+            .terminals
+            .get_mut()
+            .unwrap_or_else(|e| e.into_inner())
+            .values()
+        {
             p.active.store(false, Ordering::Release);
-            let _ = p.killer.lock().unwrap().kill();
+            p.io.kill();
         }
-        for c in self.connections.get_mut().unwrap().values() {
+        for c in self
+            .connections
+            .get_mut()
+            .unwrap_or_else(|e| e.into_inner())
+            .values()
+        {
             c.pty.active.store(false, Ordering::Release);
-            let _ = c.pty.killer.lock().unwrap().kill();
+            c.pty.io.kill();
+        }
+        for (_, session) in self
+            .sessions
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .values()
+        {
+            if let Some(session) = session.upgrade() {
+                session.close();
+            }
         }
     }
 }
@@ -1200,23 +1632,23 @@ mod tests {
     #[test]
     fn tailscale_windows_detection_requires_one_matching_peer() {
         let peers = serde_json::json!({"Peer": {
-            "a": {"DNSName":"vm202.example.ts.net.","OS":"windows","TailscaleIPs":["100.64.0.2"]},
-            "b": {"DNSName":"vm202-wsl.example.ts.net.","OS":"linux","TailscaleIPs":["100.64.0.3"]}
+            "a": {"DNSName":"winbox.example.ts.net.","OS":"windows","TailscaleIPs":["100.64.0.2"]},
+            "b": {"DNSName":"winbox-wsl.example.ts.net.","OS":"linux","TailscaleIPs":["100.64.0.3"]}
         }});
         for address in [
-            "vm202.example.ts.net",
-            "VM202.EXAMPLE.TS.NET.",
-            "vm202",
+            "winbox.example.ts.net",
+            "WINBOX.EXAMPLE.TS.NET.",
+            "winbox",
             "100.64.0.2",
         ] {
             assert!(super::tailscale_target_is_windows(&peers, address));
         }
-        for address in ["vm202-wsl", "100.64.0.3", "unknown", "vm202.other.ts.net"] {
+        for address in ["winbox-wsl", "100.64.0.3", "unknown", "winbox.other.ts.net"] {
             assert!(!super::tailscale_target_is_windows(&peers, address));
         }
         assert!(!super::tailscale_target_is_windows(
             &serde_json::json!({}),
-            "vm202"
+            "winbox"
         ));
     }
     use super::*;
@@ -1349,9 +1781,34 @@ mod tests {
         broker.join().unwrap();
         std::fs::remove_dir_all(root).unwrap();
     }
+    struct RestoreRuntime(Option<std::ffi::OsString>, std::path::PathBuf);
+    impl Drop for RestoreRuntime {
+        fn drop(&mut self) {
+            match self.0.take() {
+                Some(value) => std::env::set_var("XDG_RUNTIME_DIR", value),
+                None => std::env::remove_var("XDG_RUNTIME_DIR"),
+            }
+            let _ = std::fs::remove_dir_all(&self.1);
+        }
+    }
     #[cfg(unix)]
     #[test]
     fn remote_browser_program_routes_over_authenticated_protocol_after_reconnect() {
+        // Keep the browser bridge in a private folder: the shared per-user
+        // folder may belong to a real DazeDev session on this machine.
+        // Short path: Unix socket names are limited to about 100 bytes.
+        let runtime = std::path::PathBuf::from("/tmp").join(format!(
+            "dz-{}",
+            &uuid::Uuid::new_v4().simple().to_string()[..12]
+        ));
+        std::fs::create_dir(&runtime).unwrap();
+        {
+            use std::os::unix::fs::PermissionsExt;
+            std::fs::set_permissions(&runtime, std::fs::Permissions::from_mode(0o700)).unwrap();
+        }
+        let old_runtime = std::env::var_os("XDG_RUNTIME_DIR");
+        std::env::set_var("XDG_RUNTIME_DIR", &runtime);
+        std::env::set_var("BROWSER", "/bin/true");
         let transport = Transport::default();
         let host: Host =
             serde_json::from_value(json!({"id":"browser-test","name":"test","kind":"local"}))
@@ -1360,15 +1817,29 @@ mod tests {
         let sink: EventSink = Arc::new(move |event, value| {
             let _ = events_tx.send((event.to_string(), value));
         });
+        let seen = std::cell::RefCell::new(String::new());
         let await_event = |wanted: &str| {
             let deadline = std::time::Instant::now() + Duration::from_secs(10);
             loop {
                 let (event, value) = events_rx
                     .recv_timeout(deadline.saturating_duration_since(std::time::Instant::now()))
-                    .expect("Browser fixture event timed out");
+                    .unwrap_or_else(|_| {
+                        panic!(
+                            "Browser fixture timed out waiting for {wanted}: {}",
+                            seen.borrow()
+                        )
+                    });
                 if event == wanted {
                     break value;
                 }
+                let text = match value["data"].as_str() {
+                    Some(data) => {
+                        String::from_utf8_lossy(&STANDARD.decode(data).unwrap_or_default())
+                            .into_owned()
+                    }
+                    None => value.to_string(),
+                };
+                seen.borrow_mut().push_str(&format!("[{event}] {text}\n"));
             }
         };
         transport.connect(host.clone(), sink.clone()).unwrap();
@@ -1440,6 +1911,7 @@ mod tests {
             }
         }
         let _ = std::fs::remove_file(metadata);
+        let _restore = RestoreRuntime(old_runtime, runtime.clone());
         for item in std::fs::read_dir(folder).unwrap().flatten() {
             if item.file_name().to_string_lossy().starts_with("tty-") {
                 if let Ok(bytes) = std::fs::read(item.path()) {
@@ -1501,6 +1973,7 @@ mod tests {
             pending: Mutex::new(HashMap::from([("pending".into(), reply_tx)])),
             ready: Mutex::new(true),
             browser: crate::browser::Requests::new("test".into()),
+            prompts: None,
         });
         let (tx, rx) = mpsc::channel();
         let sink: EventSink = Arc::new(move |name, _| {
@@ -1573,6 +2046,7 @@ mod tests {
                 pending: Mutex::new(HashMap::new()),
                 ready: Mutex::new(true),
                 browser: crate::browser::Requests::new("test".into()),
+                prompts: None,
             }),
         );
         let start = std::time::Instant::now();
@@ -1631,7 +2105,7 @@ mod tests {
             }
         });
         let result = rx.recv_timeout(Duration::from_secs(15));
-        let _ = pty.killer.lock().unwrap().kill();
+        pty.io.kill();
         result.expect("Windows console blocked before command output");
     }
     #[test]
@@ -1688,7 +2162,7 @@ mod tests {
             }
         });
         let result = rx.recv_timeout(Duration::from_secs(15));
-        let _ = pty.killer.lock().unwrap().kill();
+        pty.io.kill();
         assert_eq!(
             result.expect("Windows protocol read stalled").unwrap(),
             Some(json!({"id":"test","result":"x".repeat(10000)}))
@@ -1716,8 +2190,8 @@ mod tests {
         assert!(boot.line("DAZED:nonce:bootstrap").is_none());
     }
     #[test]
-    fn bootstrap_command_stays_short_for_ssh_and_tailscale() {
-        let script = bootstrap_command("test socket's name", "0123456789abcdef0123456789abcdef");
+    fn boot_command_stays_short_for_ssh_and_tailscale() {
+        let script = boot_command(Boot::TerminalControl, "0123456789abcdef0123456789abcdef");
         for kind in ["ssh", "tailscale"] {
             let host: Host = serde_json::from_value(json!({
                 "id":"test", "name":"Test", "kind":kind,
@@ -1794,7 +2268,7 @@ mod tests {
                 "1",
                 "127.0.0.1",
             ])
-            .arg(bootstrap_command("", "test"))
+            .arg(boot_command(Boot::TerminalControl, "test"))
             .stdin(std::process::Stdio::null())
             .stdout(std::process::Stdio::null())
             .stderr(std::process::Stdio::null())
@@ -1841,6 +2315,8 @@ mod tests {
                 "ssh",
                 "ubuntu@dev-box",
                 "-tt",
+                "-e",
+                "none",
                 "-o",
                 "ServerAliveInterval=15",
                 "-o",
@@ -1924,7 +2400,285 @@ mod tests {
             distro: "".into(),
             socket: "".into(),
             native_shell: None,
+            system_ssh: false,
         };
         assert!(command(&h, "true").is_err());
+    }
+
+    #[test]
+    fn bootstrap_sends_script_then_source_in_order() {
+        let mut boot = Bootstrap::new("n", b"source").after_script("n", "echo script");
+        assert!(boot.line("DAZED:n:bootstrap").is_none());
+        assert_eq!(boot.line("DZBOOT:n").unwrap(), b"echo script\n");
+        assert!(boot.line("DZBOOT:n").is_none());
+        assert!(boot.line("DAZED:n:bootstrap").is_some());
+    }
+    #[test]
+    fn pane_boot_strips_marker_line_and_keeps_surrounding_output() {
+        let mut held = b"banner\r\nDZBOOT:abc\r\nprompt$ ".to_vec();
+        assert_eq!(
+            pane_boot(&mut held, b"DZBOOT:abc").unwrap(),
+            b"banner\r\nprompt$ ".to_vec()
+        );
+        assert!(held.is_empty());
+        let mut partial = b"DZBO".to_vec();
+        assert!(pane_boot(&mut partial, b"DZBOOT:abc").is_none());
+    }
+    #[test]
+    fn boot_commands_are_safe_for_any_login_shell() {
+        // fish, nu and tcsh treat backslashes and nested quotes differently;
+        // keep the single-quoted body free of both.
+        for boot in [Boot::Pipe, Boot::TerminalControl, Boot::Pane] {
+            let command = boot_command(boot, "0123456789abcdef");
+            let body = command
+                .strip_prefix("exec /bin/sh -c '")
+                .and_then(|b| b.strip_suffix('\''))
+                .unwrap();
+            assert!(!body.contains('\'') && !body.contains('\\') && !body.contains('!'));
+        }
+    }
+    #[cfg(unix)]
+    #[test]
+    fn boot_command_runs_the_script_line_through_posix_sh() {
+        use std::process::{Command, Stdio};
+        for shell in ["/bin/sh", "/bin/bash", "/usr/bin/zsh"] {
+            if !std::path::Path::new(shell).exists() {
+                continue;
+            }
+            let mut child = Command::new(shell)
+                .args(["-c", &boot_command(Boot::Pipe, "x")])
+                .stdin(Stdio::piped())
+                .stdout(Stdio::piped())
+                .spawn()
+                .unwrap();
+            child
+                .stdin
+                .take()
+                .unwrap()
+                .write_all(b"v='a b'; [ -n \"${v#a}\" ] && printf 'posix:%s\\n' \"$v\"\n")
+                .unwrap();
+            let output = child.wait_with_output().unwrap();
+            assert_eq!(
+                String::from_utf8_lossy(&output.stdout),
+                "posix:a b\n",
+                "{shell}"
+            );
+        }
+    }
+    #[test]
+    fn loader_explains_old_python() {
+        assert!(HOST_LOADER.contains("v<(3,9)") && HOST_LOADER.contains(":python:"));
+        let script = control_script("sock", "nonce", "endpoint", "desktop");
+        assert!(script.contains("exec python3 -I -u -c "));
+    }
+
+    /// End-to-end check against a private OpenSSH server on loopback. It needs
+    /// /usr/sbin/sshd and changes HOME for the process, so it runs on request:
+    /// `cargo test --no-default-features --lib -- --ignored --test-threads=1 builtin_ssh`
+    #[cfg(unix)]
+    #[test]
+    #[ignore = "starts a private sshd and changes HOME"]
+    fn builtin_ssh_shares_one_login_for_control_and_terminals() {
+        use std::process::{Command, Stdio};
+        let sshd = std::path::Path::new("/usr/sbin/sshd");
+        if !sshd.exists() {
+            return;
+        }
+        let root = std::env::temp_dir().join(format!("dazedev-sshd-{}", uuid::Uuid::new_v4()));
+        let home = root.join("home");
+        std::fs::create_dir_all(home.join(".ssh")).unwrap();
+        for name in ["host_key", "client_key"] {
+            assert!(Command::new("ssh-keygen")
+                .args(["-q", "-t", "ed25519", "-N", "", "-C", "", "-f"])
+                .arg(root.join(name))
+                .status()
+                .unwrap()
+                .success());
+        }
+        std::fs::copy(root.join("client_key.pub"), root.join("authorized_keys")).unwrap();
+        let port = std::net::TcpListener::bind("127.0.0.1:0")
+            .unwrap()
+            .local_addr()
+            .unwrap()
+            .port();
+        let runtime_dir = root.join("runtime");
+        std::fs::create_dir(&runtime_dir).unwrap();
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            std::fs::set_permissions(&runtime_dir, std::fs::Permissions::from_mode(0o700)).unwrap();
+        }
+        std::fs::write(
+            root.join("sshd_config"),
+            format!(
+                "Port {port}\nListenAddress 127.0.0.1\nHostKey {}\nAuthorizedKeysFile {}\nPidFile {}\nUsePAM no\nStrictModes no\nPasswordAuthentication no\nKbdInteractiveAuthentication no\nPubkeyAuthentication yes\nSetEnv XDG_RUNTIME_DIR={}\n",
+                root.join("host_key").display(),
+                root.join("authorized_keys").display(),
+                root.join("sshd.pid").display(),
+                runtime_dir.display()
+            ),
+        )
+        .unwrap();
+        let log = std::fs::File::create(root.join("sshd.log")).unwrap();
+        let mut server = Command::new(sshd)
+            .args(["-D", "-e", "-f"])
+            .arg(root.join("sshd_config"))
+            .stdin(Stdio::null())
+            .stderr(log)
+            .spawn()
+            .unwrap();
+        let deadline = std::time::Instant::now() + Duration::from_secs(10);
+        while std::net::TcpStream::connect(("127.0.0.1", port)).is_err() {
+            assert!(std::time::Instant::now() < deadline, "sshd did not start");
+            std::thread::sleep(Duration::from_millis(50));
+        }
+        // Keep every file this test touches inside its own folder.
+        std::fs::write(
+            root.join("ssh_config"),
+            format!(
+                "UserKnownHostsFile {}\nGlobalKnownHostsFile /dev/null\nIdentityAgent none\nHashKnownHosts no\n",
+                home.join(".ssh/known_hosts").display()
+            ),
+        )
+        .unwrap();
+        crate::ssh::config::set_test_config(Some(root.join("ssh_config")));
+        let old_home = std::env::var_os("HOME");
+        std::env::set_var("HOME", &home);
+        std::env::remove_var("SSH_AUTH_SOCK");
+        let user = String::from_utf8(Command::new("id").arg("-un").output().unwrap().stdout)
+            .unwrap()
+            .trim()
+            .to_owned();
+        let host: Host = serde_json::from_value(json!({
+            "id":"builtin-ssh", "name":"test", "kind":"ssh", "address":"127.0.0.1",
+            "port":port, "user":user, "key":root.join("client_key").to_string_lossy(),
+            "socket":format!("dazedev-test-{}", uuid::Uuid::new_v4().simple())
+        }))
+        .unwrap();
+        let (tx, rx) = mpsc::channel();
+        let sink: EventSink = Arc::new(move |event, value| {
+            let _ = tx.send((event.to_string(), value));
+        });
+        let transport = Transport::default();
+        let wait = |wanted: &str, check: &dyn Fn(&Value) -> bool| {
+            let deadline = std::time::Instant::now() + Duration::from_secs(20);
+            loop {
+                let (event, value) = rx
+                    .recv_timeout(deadline.saturating_duration_since(std::time::Instant::now()))
+                    .unwrap_or_else(|_| panic!("timed out waiting for {wanted}"));
+                if event == wanted && check(&value) {
+                    return value;
+                }
+            }
+        };
+        let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+            transport.connect(host.clone(), sink.clone()).unwrap();
+            wait("host-output", &|v| {
+                v["text"]
+                    .as_str()
+                    .unwrap_or("")
+                    .contains("(yes/no/[fingerprint])")
+            });
+            transport.authenticate(&host.id, "yes").unwrap();
+            wait("host-ready", &|_| true);
+            transport.health(&host.id).unwrap();
+            let known = std::fs::read_to_string(home.join(".ssh/known_hosts")).unwrap();
+            assert!(known.starts_with(&format!("[127.0.0.1]:{port} ssh-ed25519 ")));
+            transport
+                .open_marked(
+                    "builtin-pane".into(),
+                    host.clone(),
+                    "".into(),
+                    None,
+                    sink.clone(),
+                    false,
+                    None,
+                )
+                .unwrap();
+            transport
+                .input("builtin-pane", "echo PANE-$((6*7))\r")
+                .unwrap();
+            let mut output = String::new();
+            let deadline = std::time::Instant::now() + Duration::from_secs(20);
+            while !output.contains("PANE-42") {
+                assert!(std::time::Instant::now() < deadline, "{output}");
+                if let Ok((event, value)) = rx.recv_timeout(Duration::from_millis(200)) {
+                    if event == "terminal-output" {
+                        output.push_str(&String::from_utf8_lossy(
+                            &STANDARD.decode(value["data"].as_str().unwrap()).unwrap(),
+                        ));
+                    }
+                }
+            }
+            assert!(
+                !output.contains("DZBOOT") && !output.contains("eval"),
+                "{output}"
+            );
+            // Reconnecting the management channel reuses the live login.
+            transport.connect(host.clone(), sink.clone()).unwrap();
+            wait("host-ready", &|_| true);
+            let log = std::fs::read_to_string(root.join("sshd.log")).unwrap();
+            assert_eq!(log.matches("Accepted publickey").count(), 1, "{log}");
+            transport.close("builtin-pane");
+            transport.disconnect(&host.id);
+            // An encrypted key is unlocked only after the server accepts it.
+            assert!(Command::new("ssh-keygen")
+                .args(["-q", "-t", "ed25519", "-N", "pass phrase", "-C", "", "-f"])
+                .arg(root.join("locked_key"))
+                .status()
+                .unwrap()
+                .success());
+            let mut keys = std::fs::read_to_string(root.join("authorized_keys")).unwrap();
+            keys.push_str(&std::fs::read_to_string(root.join("locked_key.pub")).unwrap());
+            std::fs::write(root.join("authorized_keys"), keys).unwrap();
+            let mut locked = host.clone();
+            locked.key = root.join("locked_key").to_string_lossy().into_owned();
+            let second = Transport::default();
+            second.connect(locked.clone(), sink.clone()).unwrap();
+            wait("host-output", &|v| {
+                v["text"]
+                    .as_str()
+                    .unwrap_or("")
+                    .contains("Enter passphrase for key")
+            });
+            second.authenticate(&locked.id, "wrong").unwrap();
+            wait("host-output", &|v| {
+                v["text"].as_str().unwrap_or("").contains("Bad passphrase")
+            });
+            second.authenticate(&locked.id, "pass phrase").unwrap();
+            wait("host-ready", &|_| true);
+            second.shutdown();
+            // A changed host key is refused without a prompt.
+            let mut entry = std::fs::read_to_string(home.join(".ssh/known_hosts")).unwrap();
+            let other = std::fs::read_to_string(root.join("client_key.pub")).unwrap();
+            entry = format!(
+                "{} {}\n",
+                entry.split_whitespace().next().unwrap(),
+                other.trim()
+            );
+            std::fs::write(home.join(".ssh/known_hosts"), entry).unwrap();
+            let third = Transport::default();
+            third.connect(host.clone(), sink.clone()).unwrap();
+            wait("host-output", &|v| {
+                v["text"]
+                    .as_str()
+                    .unwrap_or("")
+                    .contains("REMOTE HOST IDENTIFICATION HAS CHANGED")
+            });
+            wait("host-closed", &|_| true);
+            third.shutdown();
+        }));
+        transport.shutdown();
+        let _ = server.kill();
+        let _ = server.wait();
+        match old_home {
+            Some(h) => std::env::set_var("HOME", h),
+            None => std::env::remove_var("HOME"),
+        }
+        crate::ssh::config::set_test_config(None);
+        let _ = std::fs::remove_dir_all(&root);
+        if let Err(panic) = result {
+            std::panic::resume_unwind(panic);
+        }
     }
 }
