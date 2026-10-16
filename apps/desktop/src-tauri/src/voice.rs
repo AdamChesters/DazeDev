@@ -134,62 +134,17 @@ struct Vad {
     state: Vec<f32>,
     context: Vec<f32>,
 }
-// ort rc.10 keeps its environment in a Rust static (which is never dropped).
-// macOS ONNX Runtime must release that environment before its C++ logging mutex
-// is destroyed. Register once *after* native initialization, rather than freeing
-// the shared environment when a model is switched or an individual worker stops.
-fn register_ort_exit_cleanup() -> Result<(), String> {
-    #[cfg(target_os = "macos")]
-    {
-        use ort::AsPointer;
-        use std::{ffi::c_void, sync::OnceLock};
-        static REGISTERED: OnceLock<Result<(), String>> = OnceLock::new();
-        return REGISTERED
-            .get_or_init(|| {
-                unsafe extern "C" {
-                    static __dso_handle: u8;
-                    fn __cxa_atexit(
-                        callback: unsafe extern "C" fn(*mut c_void),
-                        argument: *mut c_void,
-                        image: *const c_void,
-                    ) -> i32;
-                }
-                unsafe extern "C" fn release_environment(environment: *mut c_void) {
-                    // All Voice workers are joined before exit. The rc.10 Rust static
-                    // has no destructor, so this is the single ReleaseEnv invocation.
-                    unsafe {
-                        (ort::api().ReleaseEnv)(environment.cast());
-                    }
-                }
-                let environment = ort::environment::get_environment().map_err(|e| e.to_string())?;
-                let result = unsafe {
-                    __cxa_atexit(
-                        release_environment,
-                        environment.ptr().cast_mut().cast(),
-                        std::ptr::addr_of!(__dso_handle).cast(),
-                    )
-                };
-                if result == 0 {
-                    Ok(())
-                } else {
-                    Err("Could not register safe voice runtime shutdown".into())
-                }
-            })
-            .clone();
-    }
-    #[cfg(not(target_os = "macos"))]
-    Ok(())
-}
-
 impl Vad {
     fn load(path: &Path) -> Result<Self, String> {
+        // Microsoft's runtime builds send usage telemetry unless told not to.
+        // Applies once, before the first session creates the environment.
+        let _ = ort::init().with_telemetry(false).commit();
         let session = OrtSession::builder()
             .map_err(|e| e.to_string())?
             .with_intra_threads(1)
             .map_err(|e| e.to_string())?
             .commit_from_file(path)
             .map_err(|e| e.to_string())?;
-        register_ort_exit_cleanup()?;
         Ok(Self {
             session,
             state: vec![0.; 256],

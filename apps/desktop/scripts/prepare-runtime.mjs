@@ -9,26 +9,26 @@ const variants = {
   'win32-x64': [
     'win-cpu-x64.zip',
     '917f39c076402c421224824607397af20f53625a60defc20e8dd22446bf4c5d7',
-    'win-x64-1.22.0.zip',
-    '174c616efc0271194488642a72f1a514e01487da4dfe84c49296d66e40ebe0da',
+    'win-x64-1.23.2.zip',
+    '0b38df9af21834e41e73d602d90db5cb06dbd1ca618948b8f1d66d607ac9f3cd',
   ],
   'linux-x64': [
     'ubuntu-x64.tar.gz',
     '9abf88aea48a55d0f80edb1ee20220b186848cca0b4e919d71518cfd7ca67443',
-    'linux-x64-1.22.0.tgz',
-    '8344d55f93d5bc5021ce342db50f62079daf39aaafb5d311a451846228be49b3',
+    'linux-x64-1.23.2.tgz',
+    '1fa4dcaef22f6f7d5cd81b28c2800414350c10116f5fdd46a2160082551c5f9b',
   ],
   'darwin-arm64': [
     'macos-arm64.tar.gz',
     '033c845c1df9bf945ff37bb193238b40910b2244be3e1e637b2ceb5878f1a6f5',
-    'osx-arm64-1.22.0.tgz',
-    'cab6dcbd77e7ec775390e7b73a8939d45fec3379b017c7cb74f5b204c1a1cc07',
+    'osx-arm64-1.23.2.tgz',
+    'b4d513ab2b26f088c66891dbbc1408166708773d7cc4163de7bdca0e9bbb7856',
   ],
   'darwin-x64': [
     'macos-x64.tar.gz',
     '03430a394d0a169a5e6d8f01c09f48cf58eb026af6fc95940a4a528e2e50cf38',
-    'osx-x86_64-1.22.0.tgz',
-    'e4ec94a7696de74fb1b12846569aa94e499958af6ffa186022cfde16c9d617f0',
+    'osx-x86_64-1.23.2.tgz',
+    'd10359e16347b57d9959f7e80a225a5b4a66ed7d7e007274a15cae86836485a6',
   ],
 };
 const variant = variants[platform];
@@ -42,9 +42,9 @@ const runtimes = [
     sha: variant[1],
   },
   {
-    name: 'ONNX Runtime 1.22.0',
+    name: 'ONNX Runtime 1.23.2',
     url:
-      'https://github.com/microsoft/onnxruntime/releases/download/v1.22.0/onnxruntime-' +
+      'https://github.com/microsoft/onnxruntime/releases/download/v1.23.2/onnxruntime-' +
       variant[2],
     sha: variant[3],
   },

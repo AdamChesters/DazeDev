@@ -35,8 +35,8 @@ reqwest = { version = "0.13", default-features = false, features = ["blocking", 
 # reqwest uses ring through rustls, matching the pinned ring above.
 rustls = { version = "0.23", default-features = false, features = ["ring", "std", "tls12"] }
 transcribe-cpp = { version = "=0.2.3", default-features = false, optional = true }
-ort = { version = "=2.0.0-rc.10", optional = true, default-features = false, features = ["std", "ndarray", "load-dynamic"] }
-ndarray = { version = "0.16", optional = true }
+ort = { version = "=2.0.0-rc.13", optional = true, default-features = false, features = ["std", "ndarray", "load-dynamic", "api-23"] }
+ndarray = { version = "0.17", optional = true }
 semver = "1"
 ed25519-dalek = "2"
 zip = { version = "2", default-features = false, features = ["deflate"] }
