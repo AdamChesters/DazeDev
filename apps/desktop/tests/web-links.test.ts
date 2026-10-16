@@ -1,38 +1,42 @@
 import { describe, expect, it } from 'vitest';
 import type { Terminal } from '@xterm/xterm';
+import { Terminal as Headless } from '@xterm/headless';
 import { wrappedWebLinks } from '../src/lib/web-links';
 
-function terminal(rows: { text: string; wrapped?: boolean }[], cols = 40): Terminal {
-  return {
-    cols,
-    buffer: {
-      active: {
-        length: rows.length,
-        getLine: (y: number) =>
-          rows[y] && {
-            length: cols,
-            isWrapped: !!rows[y].wrapped,
-            translateToString: () => rows[y].text,
-            getCell: (x: number) => ({ getWidth: () => 1, getChars: () => rows[y].text[x] || '' }),
-          },
-      },
-    },
-  } as unknown as Terminal;
+// Rows are written to a real xterm buffer. A row marked `wrapped` continues the
+// previous row by soft-wrapping, so the previous row must fill the width. Text
+// wider than `cols` soft-wraps as it would in the terminal.
+async function terminal(
+  rows: { text: string; wrapped?: boolean }[],
+  cols = 40,
+  scrollback = 1000,
+  height = rows.length,
+): Promise<Terminal> {
+  const term = new Headless({ cols, rows: height, scrollback, allowProposedApi: true });
+  let data = '';
+  rows.forEach((row, y) => {
+    if (y && !row.wrapped) data += '\r\n';
+    else if (y && rows[y - 1].text.length < cols)
+      throw new Error(`row ${y - 1} must fill the width to wrap`);
+    data += row.text;
+  });
+  await new Promise<void>((resolve) => term.write(data, resolve));
+  return term as unknown as Terminal;
 }
 const url = 'https://server.examplex-tests.invalid:8443/?v=069.3';
 describe('complete wrapped web links', () => {
-  it('retains a long URL on every soft-wrapped row', () => {
+  it('retains a long URL on every soft-wrapped row', async () => {
     const full = 'https://example.com/' + 'a'.repeat(3000);
     const text = 'URL: ' + full;
     const rows = Array.from({ length: Math.ceil(text.length / 40) }, (_, y) => ({
       text: text.slice(y * 40, (y + 1) * 40),
       wrapped: y > 0,
     }));
-    const term = terminal(rows);
+    const term = await terminal(rows);
     for (let y = 1; y <= rows.length; y++) expect(wrappedWebLinks(term, y)[0].text).toBe(full);
   });
-  it('recovers a hostname split by the renderer at a hyphen, from either row', () => {
-    const term = terminal(
+  it('recovers a hostname split by the renderer at a hyphen, from either row', async () => {
+    const term = await terminal(
       [{ text: '  https://server.examplex-' }, { text: '  tests.invalid:8443/?v=069.3' }],
       30,
     );
@@ -42,8 +46,8 @@ describe('complete wrapped web links', () => {
       expect(link.range).toEqual({ start: { x: 3, y: 1 }, end: { x: 29, y: 2 } });
     }
   });
-  it('does not join complete URLs or unrelated output lines', () => {
-    const term = terminal([
+  it('does not join complete URLs or unrelated output lines', async () => {
+    const term = await terminal([
       { text: 'https://example.com/path' },
       { text: 'other.example.com/private' },
     ]);
@@ -51,14 +55,14 @@ describe('complete wrapped web links', () => {
     expect(wrappedWebLinks(term, 2)).toEqual([]);
     expect(
       wrappedWebLinks(
-        terminal([{ text: 'https://example-' }, { text: 'output continued' }], 20),
+        await terminal([{ text: 'https://example-' }, { text: 'output continued' }], 20),
         1,
       )[0].text,
     ).toBe('https://example-');
   });
-  it('recovers the reported renderer break in a URL filename, from either row', () => {
+  it('recovers the reported renderer break in a URL filename, from either row', async () => {
     const full = 'https://server.examplex-tests.invalid:8443/assets/brain-social-card.jpg?v=086.1';
-    const term = terminal(
+    const term = await terminal(
       [
         { text: 'The social image (https://server.examplex-tests.invalid:8443/assets/brain-' },
         { text: 'social-card.jpg?v=086.1) now uses the blended viewer defaults.' },
@@ -71,36 +75,36 @@ describe('complete wrapped web links', () => {
       expect(link.range).toEqual({ start: { x: 19, y: 1 }, end: { x: 23, y: 2 } });
     }
   });
-  it('does not append unrelated prose to a path ending in a hyphen', () => {
-    const term = terminal(
+  it('does not append unrelated prose to a path ending in a hyphen', async () => {
+    const term = await terminal(
       [{ text: 'https://example.com/brain-' }, { text: 'continued in another paragraph.' }],
       30,
     );
     expect(wrappedWebLinks(term, 1)[0].text).toBe('https://example.com/brain-');
     expect(wrappedWebLinks(term, 2)).toEqual([]);
   });
-  it('recovers a filename break after the URL prefix has already soft-wrapped', () => {
+  it('recovers a filename break after the URL prefix has already soft-wrapped', async () => {
     const first = 'The social image (https://server.examplex-tests.invalid:8443/assets/brain-';
     const rows = Array.from({ length: Math.ceil(first.length / 40) }, (_, y) => ({
       text: first.slice(y * 40, (y + 1) * 40),
       wrapped: y > 0,
     }));
     rows.push({ text: 'social-card.jpg?v=086.1) now uses the defaults.', wrapped: false });
-    const term = terminal(rows);
+    const term = await terminal(rows);
     for (const y of [1, 2, 3])
       expect(wrappedWebLinks(term, y)[0].text).toBe(
         'https://server.examplex-tests.invalid:8443/assets/brain-social-card.jpg?v=086.1',
       );
   });
-  it('does not open a truncated URL when the complete line exceeds the scan budget', () => {
+  it('does not open a truncated URL when the complete line exceeds the scan budget', async () => {
     const rows = Array.from({ length: 1700 }, (_, y) => ({
       text: y === 0 ? 'https://example.com/' + 'a'.repeat(20) : 'a'.repeat(40),
       wrapped: y > 0,
     }));
-    expect(wrappedWebLinks(terminal(rows), 1)).toEqual([]);
+    expect(wrappedWebLinks(await terminal(rows), 1)).toEqual([]);
   });
-  it('recovers the actual native snapshot rows without soft-wrap markers', () => {
-    const term = terminal(
+  it('recovers the actual native snapshot rows without soft-wrap markers', async () => {
+    const term = await terminal(
       [
         { text: 'The social image (https://server.examplex' },
         { text: '-tests.invalid:8443/assets/brain-' },
@@ -116,8 +120,8 @@ describe('complete wrapped web links', () => {
   });
   it.each(['social-card?v=086.1', 'social-card.jpg?v=086.1'])(
     'recovers native printed-space padding before %s',
-    (suffix) => {
-      const term = terminal(
+    async (suffix) => {
+      const term = await terminal(
         [
           { text: 'The social image (https://server.examplex' },
           { text: '-tests.invalid:8443/assets/brain-        ', wrapped: true },
@@ -133,25 +137,32 @@ describe('complete wrapped web links', () => {
       }
     },
   );
-  it('does not treat printed-space padding as a full-width URL continuation', () => {
-    const term = terminal([
+  it('does not treat printed-space padding as a full-width URL continuation', async () => {
+    const term = await terminal([
       { text: 'https://example.com/path'.padEnd(40, ' ') },
       { text: 'other.example.com/private' },
     ]);
     expect(wrappedWebLinks(term, 1)[0].text).toBe('https://example.com/path');
     expect(wrappedWebLinks(term, 2)).toEqual([]);
   });
-  it('retains URLs across multiple full-width snapshot rows', () => {
+  it('retains URLs across multiple full-width snapshot rows', async () => {
     const full = 'https://example.com/' + 'a'.repeat(140);
     const rows = Array.from({ length: Math.ceil(full.length / 40) }, (_, y) => ({
       text: full.slice(y * 40, (y + 1) * 40),
     }));
-    const term = terminal(rows);
+    const term = await terminal(rows);
     for (let y = 1; y <= rows.length; y++) expect(wrappedWebLinks(term, y)[0].text).toBe(full);
   });
-  it('does not recover a URL whose beginning has been evicted from scrollback', () => {
-    expect(wrappedWebLinks(terminal([{ text: 'https://example.com', wrapped: true }]), 1)).toEqual(
-      [],
+  it('does not recover a URL whose beginning has been evicted from scrollback', async () => {
+    // Only the wrapped tail of the line is left in a one-row buffer without scrollback.
+    const term = await terminal(
+      [{ text: 'x'.repeat(40) }, { text: 'https://example.com', wrapped: true }],
+      40,
+      0,
+      1,
     );
+    expect(term.buffer.active.length).toBe(1);
+    expect(term.buffer.active.getLine(0)!.isWrapped).toBe(true);
+    expect(wrappedWebLinks(term, 1)).toEqual([]);
   });
 });
