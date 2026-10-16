@@ -344,6 +344,8 @@ mod tests {
                         }
                         Err(e) => panic!("loopback accept: {e}"),
                     };
+                    // Windows hands accepted sockets the listener's non-blocking mode.
+                    stream.set_nonblocking(false).unwrap();
                     stream
                         .set_read_timeout(Some(Duration::from_secs(2)))
                         .unwrap();
