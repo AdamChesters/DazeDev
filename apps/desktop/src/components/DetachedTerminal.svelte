@@ -6,6 +6,7 @@
   import SourceViewer from './SourceViewer.svelte';
   import { previewKind } from '../lib/source-viewer';
   import { markdownPreview, type DocumentText } from '../lib/documents';
+  import { openPreviewLink } from '../lib/preview-links';
   import ImageViewer from './ImageViewer.svelte';
   import { imagePath, registerViewerLinks, readHostImage, type ViewedImage } from '../lib/images';
   import { onMount } from 'svelte';
@@ -752,7 +753,10 @@
       {#if previewKind(viewedDocument.path) === 'html'}
         <HtmlPreview source={viewedDocument.text} />
       {:else if previewKind(viewedDocument.path) === 'markdown'}
-        <article>{@html markdownPreview(viewedDocument.text)}</article>
+        <!-- svelte-ignore a11y_click_events_have_key_events, a11y_no_noninteractive_element_interactions -->
+        <article onclick={(event) => openPreviewLink(event, fail)}>
+          {@html markdownPreview(viewedDocument.text)}
+        </article>
       {:else}
         <SourceViewer
           path={viewedDocument.path}

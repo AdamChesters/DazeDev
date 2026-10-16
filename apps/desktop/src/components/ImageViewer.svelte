@@ -1,6 +1,8 @@
 <script lang="ts">
+  import { localImageSource } from '../lib/images';
+  import RemoteImage from './RemoteImage.svelte';
   let { src, path }: { src: string; path: string } = $props();
-  let viewport: HTMLDivElement;
+  let viewport = $state<HTMLDivElement>();
   let naturalWidth = $state(0),
     naturalHeight = $state(0),
     width = $state(1),
@@ -36,7 +38,7 @@
     dragging = true;
     lastX = event.clientX;
     lastY = event.clientY;
-    viewport.setPointerCapture(event.pointerId);
+    viewport?.setPointerCapture(event.pointerId);
   }
   function move(event: PointerEvent) {
     if (!dragging) return;
@@ -47,6 +49,7 @@
   }
 </script>
 
+{#if !localImageSource(src)}<RemoteImage url={src} />{:else}
 {#if error}<p role="alert">{error}</p>{/if}
 <!-- The image surface supports wheel zoom, pointer pan and keyboard controls. -->
 <!-- svelte-ignore a11y_no_noninteractive_tabindex, a11y_no_noninteractive_element_interactions -->
@@ -98,6 +101,7 @@
       (error = 'The image could not be displayed. Check the file or link and try again.')}
   />
 </div>
+{/if}
 
 <style>
   .image-viewport {

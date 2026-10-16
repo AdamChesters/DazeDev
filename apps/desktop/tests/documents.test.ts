@@ -34,3 +34,13 @@ it('offers rendered previews only for matching file types', () => {
 it('quotes Windows paths for PowerShell without POSIX escapes or interpolation', () => {
   expect(shellPath("C:\\User's folder\\$image.png", true)).toBe("'C:\\User''s folder\\$image.png'");
 });
+it('shows remote Markdown images as a link placeholder and local image data inline', () => {
+  const remote = markdownPreview('![chart](https://example.com/chart.png?a=1&b=2)');
+  expect(remote).not.toContain('<img');
+  expect(remote).toContain('data-open-url="https://example.com/chart.png?a=1&amp;b=2"');
+  expect(remote).toContain('Open in browser');
+  const local = markdownPreview('![dot](data:image/png;base64,iVBORw0KGgo=)');
+  expect(local).toContain('<img src="data:image/png;base64,iVBORw0KGgo=" alt="dot">');
+  expect(markdownPreview('![x](data:text/html;base64,PHNjcmlwdD4=)')).not.toContain('<img');
+  expect(markdownPreview('![x](javascript:alert(1))')).not.toContain('<img');
+});
