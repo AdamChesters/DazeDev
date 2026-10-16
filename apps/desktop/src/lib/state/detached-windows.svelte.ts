@@ -149,11 +149,6 @@ export class DetachedWindows {
       } else if (action === 'search-step')
         await deps.search.step(Number(args.direction) < 0 ? -1 : 1);
       else if (action === 'search-close') deps.search.close();
-      else if (action === 'input') {
-        await terminal.input?.(String(args.data || ''));
-        result = terminal.context();
-      } else if (action === 'binary') await terminal.binary?.(String(args.data || ''));
-      else if (action === 'resize') await terminal.resize?.(Number(args.cols), Number(args.rows));
       else if (action === 'paste') {
         // The terminal window already asked about multi-line text.
         await terminal.paste(

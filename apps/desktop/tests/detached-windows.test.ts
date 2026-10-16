@@ -93,14 +93,24 @@ describe('DetachedWindows', () => {
     expect(failing.windows.panes.has('a')).toBe(false);
   });
 
-  it('answers input requests with the terminal context', async () => {
+  it('answers paste requests with the terminal context', async () => {
     const { windows, deps, terminal } = setup();
     windows.panes.set('a', 'w');
-    await windows.request({ paneId: 'a', requestId: 'r1', action: 'input', args: { data: 'ls' } });
-    expect(terminal.input).toHaveBeenCalledWith('ls');
+    await windows.request({ paneId: 'a', requestId: 'r1', action: 'paste', args: { text: 'ls' } });
+    expect(terminal.paste).toHaveBeenCalledWith('ls', false, '', 'clipboard');
     expect(replies(deps.call)).toEqual([
       { paneId: 'a', value: { requestId: 'r1', result: 'ctx' } },
     ]);
+  });
+
+  it('rejects the input, binary and resize relays that windows no longer send', async () => {
+    const { windows, deps } = setup();
+    windows.panes.set('a', 'w');
+    for (const action of ['input', 'binary', 'resize'])
+      await windows.request({ paneId: 'a', requestId: action, action, args: { data: 'x' } });
+    const answers = replies(deps.call);
+    expect(answers).toHaveLength(3);
+    expect(answers.every((reply) => 'error' in (reply.value as object))).toBe(true);
   });
 
   it('routes snapshot, search and paste requests', async () => {
@@ -132,7 +142,7 @@ describe('DetachedWindows', () => {
 
   it('reports an error for a pane that is not detached', async () => {
     const { windows, deps } = setup();
-    await windows.request({ paneId: 'a', requestId: 'r1', action: 'input', args: {} });
+    await windows.request({ paneId: 'a', requestId: 'r1', action: 'paste', args: {} });
     expect(replies(deps.call)).toEqual([
       {
         paneId: 'a',
