@@ -108,8 +108,13 @@
     onprogress?: (value: { state: number; value: number }) => void;
   } = $props();
   $effect(() => {
-    const value = terminalTheme(theme);
-    if (addonsReady) term.options.theme = value;
+    void theme;
+    if (!addonsReady) return;
+    // The workspace sets the document theme in its own effect; read the
+    // colours once this round of effects has finished.
+    queueMicrotask(() => {
+      if (!dead) term.options.theme = terminalTheme();
+    });
   });
   let root: HTMLDivElement;
   let term: Terminal;
@@ -544,7 +549,7 @@
     }
     statusTimer = setTimeout(pollStatus, 500);
     term = new Terminal(
-      terminalOptions(theme, settings, {
+      terminalOptions(settings, {
         activate: followLink,
         hover: (_e, uri) => {
           hoverLink = uri;

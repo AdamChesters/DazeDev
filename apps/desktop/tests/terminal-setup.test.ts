@@ -1,3 +1,4 @@
+import { readFileSync } from 'node:fs';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import {
   OptionalAddons,
@@ -6,23 +7,35 @@ import {
   clampScrollback,
   remoteClipboard,
   terminalOptions,
-  terminalTheme,
+  themeFromStyle,
 } from '../src/lib/terminal-setup';
 import { remoteClipboardWrite } from '../src/lib/terminals';
 
 afterEach(() => vi.useRealTimers());
 
 describe('shared terminal setup', () => {
-  it('gives every theme the same ANSI palette with its own cursor and selection colour', () => {
-    const blue = terminalTheme('blue');
-    const green = terminalTheme('green');
-    expect(blue.magenta).toBe(green.magenta);
-    expect(blue.brightWhite).toBe(green.brightWhite);
-    expect(blue.cursor).not.toBe(green.cursor);
-    expect(green.selectionBackground).toBe(`${green.cursor}44`);
+  it('reads the terminal colours from the theme tokens', () => {
+    const tokens: Record<string, string> = {
+      '--term-background': ' #151616',
+      '--term-cursor': '#39bdd7',
+      '--term-selection': '#39bdd744',
+      '--term-bright-magenta': '#e3c1ea',
+    };
+    expect(themeFromStyle((property) => tokens[property] || '')).toEqual({
+      background: '#151616',
+      cursor: '#39bdd7',
+      selectionBackground: '#39bdd744',
+      brightMagenta: '#e3c1ea',
+    });
+  });
+  it('defines every terminal colour for each theme in app.css', () => {
+    const css = readFileSync(new URL('../src/app.css', import.meta.url), 'utf8');
+    for (const name of ['black', 'red', 'bright-white', 'background', 'foreground', 'cursor'])
+      expect(css).toContain(`--term-${name}:`);
+    expect(css.match(/--term-selection: #[0-9a-f]{8};/g)).toHaveLength(3);
   });
   it('clamps font size and history in both new and existing terminals', () => {
-    const options = terminalOptions('blue', { fontSize: 99, scrollback: 5e6 }, undefined);
+    const options = terminalOptions({ fontSize: 99, scrollback: 5e6 }, undefined);
     expect(options.fontSize).toBe(32);
     expect(options.scrollback).toBe(100000);
     expect(clampScrollback(Number.NaN)).toBe(10000);

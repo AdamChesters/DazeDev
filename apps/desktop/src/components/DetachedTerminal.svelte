@@ -284,7 +284,7 @@
       document.documentElement.dataset.theme = viewState.theme;
       if (appliedTheme !== viewState.theme) {
         appliedTheme = viewState.theme;
-        terminal.options.theme = terminalTheme(viewState.theme);
+        terminal.options.theme = terminalTheme();
       }
       budget?.update({ hidden: false, scrollback: clampScrollback(viewState.settings.scrollback) });
       applyTerminalSettings(terminal, viewState.settings, scrollbackLimit);
@@ -309,7 +309,7 @@
         : '';
     };
     terminal = new Terminal(
-      terminalOptions(undefined, terminalDefaults, {
+      terminalOptions(terminalDefaults, {
         activate: followLink,
         hover: (_event, url) => hoverLink(url),
         leave: () => hoverLink(''),
