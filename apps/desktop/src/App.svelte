@@ -1,7 +1,6 @@
 <script lang="ts">
   import TerminalSearch from './components/TerminalSearch.svelte';
   import type { SearchTarget, SearchHit, SearchNavigation } from './lib/terminal-search';
-  import { SvelteMap } from 'svelte/reactivity';
   import type { WindowTerminalState } from './lib/terminal-window';
   import { MixedHostRecovery, type HostRecovery } from './lib/mixed-host-recovery';
   import { refreshHostIdentity } from './lib/host-identity';
@@ -22,13 +21,12 @@
   let dictionarySelection = $state<string | null>(null);
 
   import PaneActions from './components/PaneActions.svelte';
-  import RepoPicker from './components/RepoPicker.svelte';
   import { needsChangelog } from './lib/repositories';
   import FilesDialog from './components/FilesDialog.svelte';
   import ViewerWindow from './components/ViewerWindow.svelte';
   import Licenses from './components/Licenses.svelte';
   import { hostLabel, terminalPresentation, unknownStatus, type PaneStatus } from './lib/pane-status';
-  import { diagnostic, exportDiagnostics } from './lib/diagnostics';
+  import { diagnostic } from './lib/diagnostics';
   import { onMount, tick, untrack } from 'svelte';
   import { AlertThrottle } from './lib/terminal-alerts';
   import {
@@ -46,11 +44,9 @@
     type AppAction,
   } from './lib/app-shortcuts';
   import { macPlatform } from './lib/terminal-setup';
-  import { sessionNameError } from './lib/session-name';
-  import { recommendVoice, accelerationAdvice, type VoiceHardware } from './lib/hardware';
   import { fade } from 'svelte/transition';
   import HighlightEffect from './components/HighlightEffect.svelte';
-  import { recordingHighlights, recordingHighlight } from './lib/highlights';
+  import { recordingHighlight } from './lib/highlights';
   import { getCurrentWindow } from '@tauri-apps/api/window';
   import {
     Plus,
@@ -59,49 +55,34 @@
     Mic,
     Settings,
     ChevronDown,
-    ChevronRight,
     Columns2,
     Rows2,
     Maximize2,
     Minimize2,
     X,
-    RefreshCw,
     Command,
     ArrowUpRight,
     FolderGit2,
-    GitBranch,
-    SlidersHorizontal,
     Search,
     Download,
-    Trash2,
     PanelLeftClose,
     PanelLeftOpen,
-    Square,
-    Check,
     Send,
-    MoveHorizontal,
-    MoreHorizontal,
-    Unplug,
     Radio,
     LayoutGrid,
-    Headphones,
     Palette,
     Upload,
   } from '@lucide/svelte';
   import {
     defaultPrompt,
-    promptVariables,
     renderPrompt,
-    unknownVariables,
     type PromptValues,
   } from './lib/prompt';
   import {
     terminals,
     terminalDefaults,
     deliverDictation,
-    type TerminalSettings,
   } from './lib/terminals';
-  import ColorPicker from './components/ColorPicker.svelte';
   import { tabColors, retainedPaneColors } from './lib/colors';
   import TmuxSettings from './components/TmuxSettings.svelte';
   import Brand from './components/Brand.svelte';
@@ -130,7 +111,6 @@
     type Profile,
     type Inventory,
     type Session,
-    type ModelInfo,
     defaults,
     blankProfile,
     uid,
@@ -169,27 +149,59 @@
     tabSelections,
   } from './lib/terminal-tabs';
   import { call, on, rpc, desktop } from './lib/bridge';
-  import { parseCommand, commandCatalogue, type Action } from './lib/commands';
+  import { parseCommand, type Action } from './lib/commands';
   import { reviewCommand, consumeReview, type CommandReview } from './lib/command-review';
-  import {
-    connectionDeadline,
-    HOST_HEALTH_TIMEOUT,
-    ConnectionOperations,
-  } from './lib/connection-health';
-  import { UpdateCheck, pollUpdates, canPresentUpdate } from './lib/update-checks';
+  import { pollUpdates, canPresentUpdate } from './lib/update-checks';
+  import { Updates, type UpdateInfo } from './lib/state/updates.svelte';
   import { version as appVersion } from '../package.json';
   import { Capture } from './lib/audio';
   import { VoiceCaptureKeys } from './lib/voice-capture-keys';
   import { RecordingTail } from './lib/recording-tail';
   import {
-    modelDescriptions,
-    requiredVoiceModels,
     voiceStackReady,
-    listMicrophones,
   } from './lib/voice-setup';
-  import { changelog, mergeChangelog, releaseHeading, type ReleaseEntry } from './lib/changelog';
+  import { changelog, mergeChangelog, type ReleaseEntry } from './lib/changelog';
   import { releaseVersion } from './lib/release-version';
   import { focusDialog } from './lib/focus';
+  import { DeviceStore } from './lib/state/device-store.svelte';
+  import { VoiceModels } from './lib/state/voice.svelte';
+  import { Connections } from './lib/state/connections.svelte';
+  import { DetachedWindows } from './lib/state/detached-windows.svelte';
+  import Agents from './components/modals/Agents.svelte';
+  import BrowserRequest from './components/modals/BrowserRequest.svelte';
+  import Changelog from './components/modals/Changelog.svelte';
+  import CloseFailure from './components/modals/CloseFailure.svelte';
+  import CloseNative from './components/modals/CloseNative.svelte';
+  import CloseTerminal from './components/modals/CloseTerminal.svelte';
+  import CommandDialog from './components/modals/CommandDialog.svelte';
+  import DeleteHost from './components/modals/DeleteHost.svelte';
+  import DestroySession from './components/modals/DestroySession.svelte';
+  import HostColors from './components/modals/HostColors.svelte';
+  import HostForm from './components/modals/HostForm.svelte';
+  import HostlessConnect from './components/modals/HostlessConnect.svelte';
+  import Launch from './components/modals/Launch.svelte';
+  import ListenIntro from './components/modals/ListenIntro.svelte';
+  import NewSession from './components/modals/NewSession.svelte';
+  import PaneColors from './components/modals/PaneColors.svelte';
+  import PaneHost from './components/modals/PaneHost.svelte';
+  import PaneRepo from './components/modals/PaneRepo.svelte';
+  import RenameSession from './components/modals/RenameSession.svelte';
+  import RepoCollision from './components/modals/RepoCollision.svelte';
+  import Repos from './components/modals/Repos.svelte';
+  import Sessions from './components/modals/Sessions.svelte';
+  import TerminalHostConnection from './components/modals/TerminalHostConnection.svelte';
+  import UpdatePrompt from './components/modals/UpdatePrompt.svelte';
+  import VoiceSetup from './components/modals/VoiceSetup.svelte';
+  import WorkspaceOptions from './components/modals/WorkspaceOptions.svelte';
+  import Worktree from './components/modals/Worktree.svelte';
+  import AppearanceSection from './components/modals/settings/AppearanceSection.svelte';
+  import ConnectionsSection from './components/modals/settings/ConnectionsSection.svelte';
+  import HostPreferencesSection from './components/modals/settings/HostPreferencesSection.svelte';
+  import ShortcutsSection from './components/modals/settings/ShortcutsSection.svelte';
+  import TerminalSection from './components/modals/settings/TerminalSection.svelte';
+  import UpdatesSection from './components/modals/settings/UpdatesSection.svelte';
+  import VoiceHotkeysSection from './components/modals/settings/VoiceHotkeysSection.svelte';
+  import VoiceModelsSection from './components/modals/settings/VoiceModelsSection.svelte';
   let device = $state<Device>({
       ...defaults(),
       inputMode: 'toggle',
@@ -198,10 +210,62 @@
     }),
     profiles = $state<Record<string, Profile>>({}),
     inventories = $state<Record<string, Inventory>>({}),
-    connections = $state<Record<string, string>>({}),
-    logs = $state<Record<string, string>>({}),
-    saveState = $state<Record<string, string>>({}),
     terminalState = $state<Record<string, string>>({});
+  const net = new Connections({
+    desktop,
+    hosts: () => device.hosts,
+    call: (name, args) => call(name, args),
+    onready: (hostId, hostNotice) => {
+      // A native host can report that older sessions keep an old broker running.
+      if (hostNotice) {
+        const name = device.hosts.find((h) => h.id === hostId)?.name || 'Host';
+        notice = `${name}: ${hostNotice}`;
+      }
+      void joined(hostId);
+    },
+  });
+  const connections = net.connections,
+    logs = net.logs,
+    hostAttempts = net.attempts,
+    reconnectHosts = net.reconnect;
+  const deviceStore = new DeviceStore({
+    device: () => device,
+    profiles: () => profiles,
+    enabled: () => mounted,
+    connected: (hostId) => connections[hostId] === 'Connected',
+    saveDevice: (value) => call('device_save', { value }),
+    saveProfile: (hostId, profile) =>
+      rpc<Profile>(hostId, 'profile_save', { profile, revision: profile.revision }),
+    ondevicefail: fail,
+    onprofilefail: (e) => {
+      error = String(e);
+    },
+  });
+  const voiceModels = new VoiceModels({
+    desktop,
+    call: (name, args) => call(name, args),
+    device: () => device,
+    voiceStatus: () => voiceStatus,
+    persist: () => persistDevice(),
+    resetBackend: () => {
+      voiceBackend = '';
+    },
+    notice: (message) => {
+      notice = message;
+    },
+    fail: (e) => fail(e),
+    mediaDevices: () => navigator.mediaDevices,
+  });
+  const downloadProgress = voiceModels.downloadProgress;
+  const {
+    loadModels,
+    changeModel: changeVoiceModel,
+    selectModel: selectVoiceModel,
+    removeModel,
+    downloadModel,
+    setup: setupVoice,
+    refreshMicrophones,
+  } = voiceModels;
   let modal = $state(''),
     error = $state(''),
     notice = $state(''),
@@ -209,10 +273,7 @@
     maximize = $state(''),
     search = $state(''),
     newHost = $state<Host>(hostDefaults()),
-    sessions = $state<Session[]>([]),
-    models = $state<ModelInfo[]>([]),
-    downloadProgress = $state<Record<string, string>>({}),
-    microphones = $state<MediaDeviceInfo[]>([]);
+    sessions = $state<Session[]>([]);
   let form = $state({
       hostId: '',
       name: '',
@@ -267,11 +328,53 @@
   let repoContext = '';
   let repoChoices = $state<Repo[]>([]);
   let repoWarnings = $state<string[]>([]);
-  let detachedFocus = $state('');
   function appHasFocus() {
-    return document.hasFocus() || !!detachedFocus;
+    return document.hasFocus() || !!detached.focus;
   }
-  const detachedPanes = new SvelteMap<string, string>();
+  const detached = new DetachedWindows({
+    desktop,
+    call: (name, args) => call(name, args),
+    appWindow: getCurrentWindow,
+    terminal: (paneId) => terminals.get(paneId),
+    workspaces: () => workspaces,
+    windowState,
+    title: (pane, owner) =>
+      `${owner.name} / ${terminalPresentation(pane, paneStatus[pane.id]).name} - DazeDev`,
+    busy: () => !!modal || dictationActive,
+    selectWorkspace,
+    focusPane: (owner, paneId) => {
+      owner.focused = paneId;
+      setLocalFocus(owner.id, paneId);
+      if (device.activeWorkspace !== owner.id || device.activeHost !== owner.hostId) {
+        device.activeWorkspace = owner.id;
+        device.activeHost = owner.hostId;
+        persistDevice();
+      }
+    },
+    search: {
+      open: openTerminalSearch,
+      results: () => searchPanel?.showResults(),
+      step: (direction) => searchPanel?.step(direction),
+      close: closeTerminalSearch,
+    },
+    disablePasteConfirmation: () => setPasteConfirmation(false),
+    reconnect: async (hostId) => {
+      const host = device.hosts.find((h) => h.id === hostId);
+      if (host) await reconnectHost(host);
+    },
+    paneAction: async (action, pane) => {
+      if (action === 'repo') await chooseRepo(pane);
+      if (action === 'tmux') await showSessions(pane);
+      if (action === 'host') showHostConnection(pane);
+      if (action === 'model') await agentMenu(pane);
+      if (action === 'close') closePane(pane);
+    },
+    onopen: () => {
+      paneMenu = null;
+    },
+    onfail: fail,
+  });
+  const detachedPanes = detached.panes;
   function windowState(pane: Pane, workspace: Workspace): WindowTerminalState {
     return {
       pane: $state.snapshot(pane),
@@ -295,148 +398,9 @@
       metadata: paneStatus[pane.id],
     };
   }
-  function publishTerminal(paneId: string, value: unknown) {
-    if (detachedPanes.has(paneId))
-      void call('terminal_window_publish', { paneId, value }).catch(() => {});
-  }
   $effect(() => {
-    for (const [id] of detachedPanes) {
-      const owner = workspaces.find((w) => w.panes.some((p) => p.id === id));
-      const pane = owner?.panes.find((p) => p.id === id);
-      if (!owner || !pane) {
-        detachedPanes.delete(id);
-        void call('terminal_window_close', { paneId: id }).catch(fail);
-      } else publishTerminal(id, { kind: 'state', state: windowState(pane, owner) });
-    }
+    detached.sync();
   });
-  async function detachTerminal(pane: Pane, x?: number, y?: number, dragging = false) {
-    if (!desktop) throw new Error('Terminal windows are available in the desktop app.');
-    if (dictationActive || modal)
-      throw new Error('Finish the current action before moving this terminal.');
-    const owner = workspaces.find((w) => w.panes.some((p) => p.id === pane.id));
-    if (!owner || !terminals.get(pane.id)) throw new Error('Wait for the terminal to be ready.');
-    detachedPanes.set(pane.id, owner.id);
-    try {
-      await call('terminal_window_open', {
-        paneId: pane.id,
-        workspaceId: owner.id,
-        title: `${owner.name} / ${terminalPresentation(pane, paneStatus[pane.id]).name} - DazeDev`,
-        x: x ?? null,
-        y: y ?? null,
-        dragging,
-      });
-      paneMenu = null;
-    } catch (error) {
-      detachedPanes.delete(pane.id);
-      throw error;
-    }
-  }
-  async function dockTerminal(id: string) {
-    const owner = workspaces.find((w) => w.panes.some((p) => p.id === id));
-    detachedPanes.delete(id);
-    await call('terminal_window_close', { paneId: id });
-    if (owner) {
-      selectWorkspace(owner);
-      owner.focused = id;
-    }
-    await tick();
-    terminals.get(id)?.focus?.();
-  }
-  async function windowRequest(event: {
-    paneId: string;
-    requestId: string;
-    action: string;
-    args: Record<string, unknown>;
-  }) {
-    const { paneId, requestId, action, args } = event;
-    const owner = workspaces.find((w) => w.panes.some((p) => p.id === paneId));
-    const pane = owner?.panes.find((p) => p.id === paneId);
-    const terminal = terminals.get(paneId);
-    try {
-      if (!detachedPanes.has(paneId) || !owner || !pane || !terminal)
-        throw new Error('Terminal window is no longer attached.');
-      let result: unknown = null;
-      if (action === 'snapshot')
-        result = { state: windowState(pane, owner), snapshot: await terminal.snapshot?.() };
-      else if (action === 'search-open' || action === 'search-results') {
-        if (action === 'search-results') searchPanel?.showResults();
-        else openTerminalSearch(paneId);
-        await getCurrentWindow().show();
-        await getCurrentWindow().setFocus();
-      } else if (action === 'search-step')
-        await searchPanel?.step(Number(args.direction) < 0 ? -1 : 1);
-      else if (action === 'search-close') closeTerminalSearch();
-      else if (action === 'input') {
-        await terminal.input?.(String(args.data || ''));
-        result = terminal.context();
-      } else if (action === 'binary') await terminal.binary?.(String(args.data || ''));
-      else if (action === 'resize') await terminal.resize?.(Number(args.cols), Number(args.rows));
-      else if (action === 'paste') {
-        // The terminal window already asked about multi-line text.
-        await terminal.paste(String(args.text || ''), false, String(args.context || ''), 'clipboard');
-        result = terminal.context();
-      } else if (action === 'paste-confirm-off') {
-        setPasteConfirmation(false);
-      } else if (action === 'reconnect') {
-        terminal.resume?.();
-        const host = device.hosts.find((h) => h.id === pane.hostId);
-        if (host) await reconnectHost(host);
-      } else if (action === 'recover') {
-        if (!terminal.recover) throw new Error('Terminal recovery is unavailable. Return to the workspace and retry.');
-        await terminal.recover();
-      } else if (action === 'focus') {
-        owner.focused = paneId;
-        setLocalFocus(owner.id, paneId);
-        if (device.activeWorkspace !== owner.id || device.activeHost !== owner.hostId) {
-          device.activeWorkspace = owner.id;
-          device.activeHost = owner.hostId;
-          persistDevice();
-        }
-      } else if (action === 'dock') {
-        await call('terminal_window_publish', { paneId, value: { requestId, result: null } });
-        await dockTerminal(paneId);
-        return;
-      } else if (action === 'key') {
-        const options = {
-          key: String(args.key || ''),
-          code: String(args.code || ''),
-          ctrlKey: !!args.ctrlKey,
-          altKey: !!args.altKey,
-          shiftKey: !!args.shiftKey,
-          metaKey: !!args.metaKey,
-          repeat: !!args.repeat,
-        };
-        window.dispatchEvent(
-          new KeyboardEvent(args.type === 'keyup' ? 'keyup' : 'keydown', options),
-        );
-      } else if (action === 'pointer') {
-        window.dispatchEvent(
-          new PointerEvent(args.type === 'pointerup' ? 'pointerup' : 'pointerdown', {
-            button: Number(args.button),
-          }),
-        );
-      } else if (['repo', 'tmux', 'host', 'model', 'close'].includes(action)) {
-        if (modal || dictationActive)
-          throw new Error('Finish the current action in the workspace window first.');
-        selectWorkspace(owner);
-        owner.focused = paneId;
-        await getCurrentWindow().show();
-        await getCurrentWindow().unminimize();
-        await getCurrentWindow().setFocus();
-        if (action === 'repo') await chooseRepo(pane);
-        if (action === 'tmux') await showSessions(pane);
-        if (action === 'host') showHostConnection(pane);
-        if (action === 'model') await agentMenu(pane);
-        if (action === 'close') closePane(pane);
-      } else throw new Error('Unsupported terminal window action.');
-      await call('terminal_window_publish', { paneId, value: { requestId, result } });
-    } catch (error) {
-      await call('terminal_window_publish', {
-        paneId,
-        value: { requestId, error: String(error) },
-      }).catch(() => {});
-    }
-  }
   let terminalReturnFocus = '';
   function restoreTerminalFocus() {
     const id = terminalReturnFocus;
@@ -632,10 +596,6 @@
     if (maximize === target.id) maximize = replacement.id;
     modal = '';
   }
-  let revisionTimers: Record<string, ReturnType<typeof setTimeout>> = {};
-  let saveChains: Record<string, Promise<void>> = {};
-  let changeSeq: Record<string, number> = {};
-  let deviceTimer: ReturnType<typeof setTimeout>;
   let colorPane = $state<Pane | null>(null);
   let colorHost = $state<Host | null>(null);
   let tmuxHost = $state<Host | null>(null);
@@ -648,35 +608,25 @@
     migration: '',
     updateSupported: true,
   });
-  let availableUpdate = $state<{ version: string; notes: string; size: number } | null>(null);
-  let updateStatus = $state(''),
-    updateBusy = $state(false),
-    updateProgress = $state(0),
-    updatePrompt = $state(false);
-  const updateCheck = new UpdateCheck<{ version: string; notes: string; size: number } | null>();
-  let updateState = $state<
-    'unchecked' | 'checking' | 'current' | 'available' | 'error' | 'installing'
-  >('unchecked');
-  let updateReturn = '';
-  let automaticUpdatePending = $state(false);
-  const updateLabel = $derived(
-    !desktop || !clientInfo.updateSupported
-      ? 'Manual updates'
-      : updateState === 'checking'
-        ? 'Checking…'
-        : updateState === 'installing'
-          ? 'Installing…'
-          : updateState === 'error'
-            ? 'Check failed'
-            : availableUpdate
-              ? 'Update available'
-              : updateState === 'current'
-                ? 'Up to date'
-                : 'Not checked',
-  );
-  let modelsLoaded = $state(false),
-    microphoneError = $state(''),
-    microphoneLoading = $state(false);
+  const updates = new Updates({
+    desktop,
+    supported: () => clientInfo.updateSupported,
+    modal: () => modal,
+    setModal: (value) => {
+      modal = value;
+    },
+    canPresent: () => updateCanPresent,
+    voiceBusy: () => voiceStatus !== 'idle' || !!dictation.trim() || !!heldDictation,
+    check: () => call<UpdateInfo | null>('update_check'),
+    download: (version) => call('update_download', { version }),
+    install: () => call('update_install'),
+    saveDevice: () => deviceStore.saveNow(),
+    onerror: (message) => {
+      error = message;
+    },
+  });
+  const { open: openUpdates, close: closeUpdates, check: checkUpdates, install: installUpdate } =
+    updates;
   let changelogReturn = $state('settings');
   let releaseHistory = $state<ReleaseEntry[]>(changelog);
   let releaseFilter = $state<'all' | 'desktop' | 'mobile'>('all');
@@ -706,8 +656,7 @@
     feedbackSent = false;
     feedbackBusy = true;
     try {
-      clearTimeout(deviceTimer);
-      await call('device_save', { value: { ...$state.snapshot(device), recovery } });
+      await deviceStore.saveNow();
       await call('feedback_send', {
         feedback: { ...$state.snapshot(device.feedbackContact), message: feedbackMessage },
       });
@@ -720,7 +669,6 @@
       feedbackBusy = false;
     }
   }
-  const voiceReady = $derived(modelsLoaded && voiceStackReady(device.voice, models));
   $effect(() => {
     document.documentElement.dataset.theme = device.theme || 'blue';
     document.documentElement.dataset.highlightMotion = device.highlightMotion || 'animate';
@@ -748,113 +696,13 @@
         });
     }
   }
-  async function respond(hostId: string, value: string) {
-    const attempt = hostAttempts.get(hostId);
-    logs[hostId] = '';
-    try {
-      await call('host_auth', { hostId, data: value });
-    } catch (e) {
-      if (hostAttempts.get(hostId) === attempt) throw e;
-    }
-  }
-  async function refreshMicrophones(requestPermission = true) {
-    microphoneError = '';
-    microphoneLoading = true;
-    try {
-      if (!navigator.mediaDevices)
-        throw new Error('Microphone access is unavailable in this window.');
-      microphones = await listMicrophones(navigator.mediaDevices, requestPermission);
-    } catch (e) {
-      microphoneError = `Microphone access: ${String(e)}. Allow microphone access in Windows privacy settings, then refresh.`;
-    } finally {
-      microphoneLoading = false;
-    }
-  }
-  async function setupVoice() {
-    for (const id of requiredVoiceModels(device.voice)) {
-      if (models.find((m) => m.id === id)?.installed) continue;
-      downloadProgress[id] = 'Starting';
-      try {
-        await call('model_download', { id });
-      } finally {
-        delete downloadProgress[id];
-        await loadModels();
-      }
-    }
-    device.voiceSetupDismissed = true;
-    persistDevice();
-    notice = 'Voice stack ready to go.';
+  function respond(hostId: string, value: string) {
+    return net.respond(hostId, value);
   }
   let sessionPane = $state<Pane | null>(null);
   let sessionHost = $state('');
   let sessionStep = $state(0);
   let nameError = $state('');
-  let hardware = $state<VoiceHardware | null>(null);
-  let hardwareError = $state('');
-  let switchingVoice = $state(false);
-  const recommendation = $derived(hardware ? recommendVoice(hardware) : null);
-  let voiceCacheLoading = $state(false);
-  let voiceCacheTask: Promise<void> | undefined;
-  let voiceCacheSignature = '';
-  async function configureVoiceCache() {
-    if (!desktop || voiceStatus !== 'idle') return;
-    if (voiceCacheTask) return voiceCacheTask;
-    // Preload by default so the first dictation does not wait for model loads.
-    const retain = device.voice.keepLoaded ?? true;
-    const installed = (id: string) => models.some((m) => m.id === id && m.installed);
-    if (retain && (!installed(device.voice.model) || !installed('silero'))) return;
-    const options = {
-      model: device.voice.model,
-      backend: device.voice.backend,
-      cleanup: device.voice.cleanup && installed('s1-mini'),
-      retain,
-    };
-    const signature = JSON.stringify(options);
-    if (signature === voiceCacheSignature) return;
-    voiceCacheLoading = true;
-    try {
-      voiceCacheTask = call<void>('voice_cache', options);
-      await voiceCacheTask;
-      voiceCacheSignature = signature;
-    } finally {
-      voiceCacheTask = undefined;
-      voiceCacheLoading = false;
-    }
-  }
-  async function changeVoiceModel() {
-    switchingVoice = true;
-    try {
-      await call('voice_release');
-      voiceCacheSignature = '';
-      voiceBackend = '';
-      persistDevice();
-      await configureVoiceCache();
-    } catch (e) {
-      fail(e);
-    } finally {
-      switchingVoice = false;
-    }
-  }
-  async function selectVoiceModel(id: string) {
-    if (switchingVoice || voiceCacheLoading || voiceStatus !== 'idle') return;
-    switchingVoice = true;
-    try {
-      if (!models.find((m) => m.id === id)?.installed) {
-        downloadProgress[id] = 'Starting';
-        await call('model_download', { id });
-        await loadModels();
-      }
-      await call('voice_release');
-      voiceCacheSignature = '';
-      device.voice.model = id;
-      voiceBackend = '';
-      persistDevice();
-      await configureVoiceCache();
-    } finally {
-      delete downloadProgress[id];
-      switchingVoice = false;
-    }
-  }
   let sessionOperation = $state('');
   let stageWidth = $state(1200);
   let draggingPane = $state('');
@@ -881,11 +729,7 @@
   }
   const updateCanPresent = $derived(canPresentUpdate(modal, voiceStatus, !!draggingPane));
   $effect(() => {
-    if (automaticUpdatePending && updateCanPresent && updateState === 'available') {
-      automaticUpdatePending = false;
-      updateReturn = '';
-      updatePrompt = true;
-    }
+    updates.presentPending();
   });
   let dropTarget = $state<{ id: string; edge: Edge | 'center' } | null>(null);
   let paneMenu = $state<{ pane: Pane; x: number; y: number; selection?: string } | null>(null);
@@ -1423,7 +1267,7 @@
         restore();
         const pane = workspace.panes.find((pane) => pane.id === group[0]);
         if (pane)
-          void detachTerminal(pane, event.screenX - 120, event.screenY - 24, true).catch(fail);
+          void detached.detach(pane, event.screenX - 120, event.screenY - 24, true).catch(fail);
         return;
       }
       locate(event);
@@ -1725,9 +1569,7 @@
   let launchFromCommand = $state(false);
   let launchChooseRepo = $state(false);
   let launchWorkspaceId = '';
-  let recovery: Record<string, Profile> = {};
   let mounted = false;
-  let profileBlocked: Record<string, boolean> = {};
   const workspaces = $derived(Object.values(profiles).flatMap((p) => p.workspaces));
   const workspaceLayouts = $derived(
     Object.fromEntries(
@@ -1864,7 +1706,7 @@
       await getCurrentWindow().setFocus();
     }
     if (detachedPanes.has(hit.paneId))
-      publishTerminal(hit.paneId, {
+      detached.publish(hit.paneId, {
         kind: 'search-selection',
         selection: controls.searchSelection?.(),
       });
@@ -1872,7 +1714,7 @@
   }
   function publishSearchNavigation(value: SearchNavigation | null, hit?: SearchHit) {
     for (const [id] of detachedPanes)
-      publishTerminal(id, {
+      detached.publish(id, {
         kind: 'search-navigation',
         navigation: id === hit?.paneId ? value : null,
       });
@@ -1955,19 +1797,8 @@
       busy = --pendingTasks > 0;
     }
   }
-  // Debounced; skips the write when nothing in the saved file changed.
-  let lastDeviceSave = '';
   function persistDevice() {
-    if (!mounted) return;
-    clearTimeout(deviceTimer);
-    deviceTimer = setTimeout(() => {
-      const value = { ...$state.snapshot(device), recovery };
-      const text = JSON.stringify(value);
-      if (text === lastDeviceSave) return;
-      void call('device_save', { value }).then(() => {
-        lastDeviceSave = text;
-      }, fail);
-    }, 180);
+    deviceStore.persist();
   }
   function setPasteConfirmation(confirm: boolean) {
     device.terminal = { ...(device.terminal || terminalDefaults), confirmPaste: confirm };
@@ -1975,46 +1806,7 @@
     if (!confirm) notice = 'Multi-line paste no longer asks first. Change this in Settings > Terminal.';
   }
   function saved(hostId: string) {
-    if (hostId === HOSTLESS) {
-      device.localWorkspaces = $state.snapshot(profiles[HOSTLESS]);
-      persistDevice();
-      return;
-    }
-    recovery[hostId] = $state.snapshot(profiles[hostId]);
-    changeSeq[hostId] = (changeSeq[hostId] || 0) + 1;
-    if (saveState[hostId] !== 'Conflict') saveState[hostId] = 'Pending';
-    persistDevice();
-    clearTimeout(revisionTimers[hostId]);
-    revisionTimers[hostId] = setTimeout(() => flush(hostId), 250);
-  }
-  function flush(hostId: string) {
-    saveChains[hostId] = (saveChains[hostId] || Promise.resolve()).then(async () => {
-      if (connections[hostId] !== 'Connected' || profileBlocked[hostId]) {
-        saveState[hostId] = 'Saved on this device';
-        return;
-      }
-      if (saveState[hostId] === 'Conflict') return;
-      const snapshot = $state.snapshot(profiles[hostId]);
-      const seq = changeSeq[hostId];
-      try {
-        const result = await rpc<Profile>(hostId, 'profile_save', {
-          profile: snapshot,
-          revision: snapshot.revision,
-        });
-        profiles[hostId].revision = result.revision;
-        if (changeSeq[hostId] === seq) {
-          delete recovery[hostId];
-          saveState[hostId] = 'Saved';
-        } else {
-          recovery[hostId] = $state.snapshot(profiles[hostId]);
-          saveState[hostId] = 'Pending';
-        }
-        persistDevice();
-      } catch (e) {
-        saveState[hostId] = String(e).includes('CONFLICT') ? 'Conflict' : 'Save failed';
-        error = String(e);
-      }
-    });
+    deviceStore.saved(hostId);
   }
   function updateWorkspace(w: Workspace) {
     const p = profiles[w.hostId];
@@ -2153,89 +1945,17 @@
     modal = '';
     if (connections[host.id] !== 'Connected') await connect(host);
   }
-  const reconnectHosts = new Set<string>();
-  const hostOperations = new ConnectionOperations();
-  const checkingHosts = new Map<string, symbol>();
-  const nextConnect = new Map<string, number>();
-  async function disconnectHost(hostId: string) {
-    reconnectHosts.delete(hostId);
-    hostAttempts.delete(hostId);
-    checkingHosts.delete(hostId);
-    connections[hostId] = 'Disconnected';
-    delete logs[hostId];
-    await hostOperations.run(hostId, () => call('host_disconnect', { hostId }));
+  function disconnectHost(hostId: string) {
+    return net.disconnect(hostId);
   }
-  async function checkConnections(onlyHost?: string) {
-    if (!desktop) return;
-    await Promise.all(
-      device.hosts.map(async (h) => {
-        if (onlyHost && h.id !== onlyHost) return;
-        if (!reconnectHosts.has(h.id) || checkingHosts.has(h.id)) return;
-        if (connections[h.id] === 'Connecting') {
-          if (Date.now() < (nextConnect.get(h.id) || 0) + 105000) return;
-          // Invalidate the stalled attempt before replacing its management channel.
-          hostAttempts.delete(h.id);
-          connections[h.id] = 'Disconnected';
-        }
-        if (!onlyHost && Date.now() < (nextConnect.get(h.id) || 0)) return;
-        const check = Symbol();
-        const attempt = hostAttempts.get(h.id);
-        const current = () => reconnectHosts.has(h.id) && hostAttempts.get(h.id) === attempt;
-        checkingHosts.set(h.id, check);
-        try {
-          if (connections[h.id] === 'Connected') {
-            try {
-              await connectionDeadline(
-                call('host_health', { hostId: h.id }),
-                HOST_HEALTH_TIMEOUT,
-                'Host did not respond to its health check.',
-              );
-              return;
-            } catch (e) {
-              if (!current()) return;
-              connections[h.id] = 'Disconnected';
-              logs[h.id] = String(e);
-            }
-          }
-          if (current()) await connect(h);
-        } catch (e) {
-          if (checkingHosts.get(h.id) === check) logs[h.id] = String(e);
-        } finally {
-          if (checkingHosts.get(h.id) === check) checkingHosts.delete(h.id);
-        }
-      }),
-    );
+  function checkConnections(onlyHost?: string) {
+    return net.check(onlyHost);
   }
-  async function reconnectHost(h: Host) {
-    // Explicit retry also replaces an attempt stuck at Connecting.
-    // Replace management only. Healthy terminal PTYs keep running independently.
-    hostAttempts.delete(h.id);
-    checkingHosts.delete(h.id);
-    connections[h.id] = 'Disconnected';
-    await connect(h);
+  function reconnectHost(h: Host) {
+    return net.reconnectHost(h);
   }
-  const hostAttempts = new SvelteMap<string, string>();
-  async function connect(h: Host) {
-    if (connections[h.id] === 'Connecting') return;
-    reconnectHosts.add(h.id);
-    nextConnect.set(h.id, Date.now() + 15000);
-    connections[h.id] = 'Connecting';
-    diagnostic('host.connect', h.id);
-    logs[h.id] = '';
-    const attempt = uid();
-    hostAttempts.set(h.id, attempt);
-    try {
-      await hostOperations.run(h.id, () => {
-        if (hostAttempts.get(h.id) !== attempt || !reconnectHosts.has(h.id))
-          return Promise.resolve();
-        return call('host_connect', { host: h, attempt });
-      });
-    } catch (e) {
-      if (hostAttempts.get(h.id) === attempt) {
-        connections[h.id] = 'Disconnected';
-        logs[h.id] = String(e);
-      }
-    }
+  function connect(h: Host) {
+    return net.connect(h);
   }
   async function refresh(id = device.activeHost) {
     const attempt = hostAttempts.get(id);
@@ -2302,21 +2022,22 @@
       let profile: Profile;
       try {
         profile = rebindOwner(await rpc<Profile>(id, 'profile_load'), id);
-        profileBlocked[id] = false;
+        deviceStore.blocked[id] = false;
       } catch (e) {
-        profileBlocked[id] = true;
+        deviceStore.blocked[id] = true;
         profile = profiles[id] || blankProfile();
         error = `Host configuration unavailable: ${e}. Changes will be saved on this device.`;
-        saveState[id] = 'Saved on this device';
+        deviceStore.saveState[id] = 'Saved on this device';
       }
       if (!currentAttempt()) return;
+      const recovery = deviceStore.recovery;
       if (recovery[id]) {
         if (recovery[id].revision === profile.revision) {
           replaceProfile(id, recovery[id]);
           saved(id);
         } else {
           replaceProfile(id, recovery[id]);
-          saveState[id] = 'Conflict';
+          deviceStore.saveState[id] = 'Conflict';
           error =
             'This host has newer workspace changes. Your local recovery copy is preserved. Reload the host profile in settings to use the remote version.';
         }
@@ -2547,9 +2268,18 @@
     modal = '';
     await done?.();
   }
+  function cancelNativeClose() {
+    nativeCloseDone = null;
+    modal = '';
+  }
+  function confirmPendingClose() {
+    const action = pendingClose;
+    pendingClose = null;
+    modal = '';
+    action?.();
+  }
   async function destroyApp() {
-    clearTimeout(deviceTimer);
-    await call('device_save', { value: { ...$state.snapshot(device), recovery } });
+    await deviceStore.saveNow();
     await call('app_close');
   }
   let closeFailure = $state('');
@@ -2573,8 +2303,7 @@
   });
   async function closeAnyway() {
     closeFailure = '';
-    clearTimeout(deviceTimer);
-    await call('device_save', { value: { ...$state.snapshot(device), recovery } }).catch(() => {});
+    await deviceStore.saveNow().catch(() => {});
     await call('app_close');
   }
   function closePane(p: Pane, confirmed = false) {
@@ -2660,7 +2389,7 @@
     if (viewers.some((v) => v.locked && (owned.has(v.workspaceId) || v.pane.hostId === h.id)))
       throw new Error('Save or discard viewer edits before removing this host.');
     viewers = viewers.filter((v) => !owned.has(v.workspaceId) && v.pane.hostId !== h.id);
-    clearTimeout(revisionTimers[h.id]);
+    deviceStore.cancel(h.id);
     if (
       workspaces.some((w) => w.panes.some((p) => p.id === voiceTarget && p.hostId === h.id)) &&
       voiceStatus !== 'idle'
@@ -2669,17 +2398,13 @@
     for (const p of workspaces.flatMap((w) => w.panes).filter((p) => p.hostId === h.id))
       await call('terminal_close', { id: p.id });
     await disconnectHost(h.id);
-    await saveChains[h.id];
+    await deviceStore.settled(h.id);
     const removedActive = profiles[h.id]?.workspaces.some((w) => w.id === device.activeWorkspace);
     delete profiles[h.id];
-    delete recovery[h.id];
+    deviceStore.forget(h.id);
     delete inventories[h.id];
     delete connections[h.id];
     delete logs[h.id];
-    delete saveState[h.id];
-    delete profileBlocked[h.id];
-    delete changeSeq[h.id];
-    delete saveChains[h.id];
     device.hosts = device.hosts.filter((x) => x.id !== h.id);
     if (device.collapsedHosts) delete device.collapsedHosts[h.id];
     if (removedActive) device.activeWorkspace = workspaces[0]?.id || '';
@@ -2771,6 +2496,10 @@
       model: form.model,
       effort: form.effort,
     });
+  }
+  function useSharedWorkingCopy() {
+    acknowledgedRepo = form.repo;
+    void task(createSession);
   }
   async function attach(s: Session, options: Partial<Pane> = {}) {
     const target = sessionPane;
@@ -3018,7 +2747,7 @@
     if (mode === 'dictation' && voiceStatus === 'idle' && !device.listenOnboarded) {
       listenIntroTarget = target;
       modal = 'listen-intro';
-      if (desktop && detachedFocus) {
+      if (desktop && detached.focus) {
         await getCurrentWindow().show();
         await getCurrentWindow().unminimize();
         await getCurrentWindow().setFocus();
@@ -3038,7 +2767,7 @@
       await call('voice_stop');
       return;
     }
-    if (voiceStatus !== 'idle' || switchingVoice || filesLocked) return;
+    if (voiceStatus !== 'idle' || voiceModels.switching || filesLocked) return;
     if (mode === 'dictation' && !target) throw new Error('Select a terminal first.');
     voiceMode = mode;
     finishWithoutSubmit = false;
@@ -3076,8 +2805,8 @@
     let startedCapture: Capture | undefined;
     try {
       // A hotkey during startup warmup waits for it instead of being discarded.
-      if (voiceCacheTask) voicePreparing = 'Waiting for voice models…';
-      await voiceCacheTask?.catch(() => {});
+      if (voiceModels.cacheTask) voicePreparing = 'Waiting for voice models…';
+      await voiceModels.cacheTask?.catch(() => {});
       if (recordingId !== startedRecording || !appHasFocus()) return;
       mark('preload-wait-complete');
       if (mode === 'dictation') {
@@ -3269,93 +2998,37 @@
     await refresh();
     modal = 'repos';
   }
-  function openUpdates() {
-    automaticUpdatePending = false;
-    updateReturn = ['settings', 'support'].includes(modal) ? modal : '';
-    modal = '';
-    updatePrompt = true;
+  async function createWorktree() {
+    if (!activePane?.repo) throw new Error('Select a repository terminal first.');
+    worktreeRequest = {
+      hostId: activePane.hostId,
+      args: {
+        path: activePane.repo,
+        branch,
+        destination,
+        identity: activePane.identity,
+      },
+    };
+    await sendWorktree();
   }
-  function closeUpdates() {
-    updatePrompt = false;
-    modal = updateReturn;
-    updateReturn = '';
+  async function loadGithubRepos() {
+    githubRepos = (
+      await rpc<{ full_name: string; description: string }[][]>(
+        device.activeHost,
+        'github_repos',
+        { identity: form.identity },
+      )
+    ).flat();
   }
-  async function checkUpdates(manual = false, settingsOpening = false) {
-    if (!desktop || !clientInfo.updateSupported || updateState === 'installing') return;
-    const origin = modal;
-    const originPrompt = updatePrompt;
-    try {
-      await updateCheck.run(async () => {
-        updateBusy = true;
-        updateState = 'checking';
-        updateStatus = 'Checking for updates…';
-        try {
-          availableUpdate = await call('update_check');
-          updateState = availableUpdate ? 'available' : 'current';
-          if (!availableUpdate) automaticUpdatePending = false;
-          updateStatus = availableUpdate
-            ? `Version ${releaseVersion(availableUpdate.version)} is available.`
-            : 'You are up to date.';
-        } catch (e) {
-          updateState = 'error';
-          automaticUpdatePending = false;
-          updateStatus = availableUpdate
-            ? `Unable to refresh updates: ${e}. Version ${releaseVersion(availableUpdate.version)} was previously found.`
-            : String(e);
-        } finally {
-          updateBusy = false;
-        }
-        return availableUpdate;
-      });
-      if (availableUpdate && updateState === 'available') {
-        // Each actual Settings opening can remind the user; Later returns without reopening it.
-        if (settingsOpening && modal === 'settings') openUpdates();
-        else if (manual) {
-          // A completed request must not replace a dialog opened after it started.
-          if (
-            modal === origin &&
-            updatePrompt === originPrompt &&
-            (modal === 'settings' || (originPrompt && updateCanPresent))
-          )
-            openUpdates();
-        } else if (!settingsOpening) automaticUpdatePending = true;
-      }
-    } catch (e) {
-      updateState = 'error';
-      updateStatus = String(e);
-    }
-  }
-  async function installUpdate() {
-    if (!availableUpdate || updateBusy) return;
-    if (voiceStatus !== 'idle' || dictation.trim() || heldDictation)
-      throw new Error('Finish dictation and send, copy or discard held text before updating.');
-    updateBusy = true;
-    updateState = 'installing';
-    updateProgress = 0;
-    updateStatus = 'Downloading and verifying…';
-    try {
-      await call('update_download', { version: availableUpdate.version });
-      clearTimeout(deviceTimer);
-      await call('device_save', { value: { ...$state.snapshot(device), recovery } });
-      if (voiceStatus !== 'idle' || dictation.trim() || heldDictation)
-        throw new Error(
-          'Finish dictation before restarting to install. The downloaded update is retained.',
-        );
-      updateStatus = 'Restarting to install…';
-      await call('update_install');
-    } catch (e) {
-      updateStatus = String(e);
-      error = updateStatus;
-      updateState = 'error';
-      updateBusy = false;
-    }
-  }
-  async function loadModels() {
-    models = await call<ModelInfo[]>('model_list');
-    modelsLoaded = true;
-    await configureVoiceCache().catch((e) => {
-      notice = `Voice preload failed; recording can retry: ${e}`;
+  async function cloneRepo(repo: string) {
+    const root = profiles[device.activeHost].preferences.roots[0];
+    if (!root) throw new Error('Set a repository root in host settings.');
+    await rpc(device.activeHost, 'clone', {
+      repo,
+      root,
+      identity: form.identity,
     });
+    await refresh();
   }
   async function openSettings() {
     modal = 'settings';
@@ -3365,16 +3038,44 @@
     guidance = profiles[settingsHost]?.preferences.guidance || '';
     promptTemplate = profiles[settingsHost]?.preferences.promptTemplate ?? defaultPrompt;
     await loadModels();
-    if (desktop && !hardware)
-      void call<VoiceHardware>('voice_hardware')
-        .then((v) => {
-          hardware = v;
-          hardwareError = '';
-        })
-        .catch((e) => {
-          hardwareError = String(e);
-        });
+    voiceModels.detectHardware();
     void refreshMicrophones();
+  }
+  function saveHostPreferences() {
+    profiles[settingsHost].preferences.roots = roots
+      .split('\n')
+      .map((x) => x.trim())
+      .filter(Boolean);
+    profiles[settingsHost].preferences.guidance = guidance;
+    profiles[settingsHost].preferences.promptTemplate = promptTemplate;
+    saved(settingsHost);
+    notice = 'Host preferences queued for saving.';
+  }
+  async function reloadHostProfile() {
+    const recovery = deviceStore.recovery;
+    const local = $state.snapshot(profiles[settingsHost] || recovery[settingsHost]);
+    if (local) {
+      (device.profileBackups ||= {})[settingsHost] = [
+        local,
+        ...(device.profileBackups?.[settingsHost] || []),
+      ].slice(0, 3);
+      await call('device_save', { value: deviceStore.value() });
+    }
+    const backup = JSON.stringify(local, null, 2);
+    const url = URL.createObjectURL(new Blob([backup], { type: 'application/json' }));
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = 'dazedev-workspace-recovery.json';
+    a.click();
+    setTimeout(() => URL.revokeObjectURL(url), 1000);
+    replaceProfile(
+      settingsHost,
+      rebindOwner(await rpc<Profile>(settingsHost, 'profile_load'), settingsHost),
+    );
+    deviceStore.blocked[settingsHost] = false;
+    delete recovery[settingsHost];
+    deviceStore.saveState[settingsHost] = 'Restored';
+    persistDevice();
   }
   let systemReducedMotion = $state(false);
   const highlightMotionAllowed = $derived(
@@ -3414,16 +3115,12 @@
       on<{ paneId: string; requestId: string; action: string; args: Record<string, unknown> }>(
         'terminal-window-request',
         (event) => {
-          void windowRequest(event);
+          void detached.request(event);
         },
       ),
-      on<{ paneId: string; focused: boolean }>('terminal-window-focus', (event) => {
-        if (event.focused && detachedPanes.has(event.paneId)) detachedFocus = event.paneId;
-        else if (detachedFocus === event.paneId) {
-          detachedFocus = '';
-          window.dispatchEvent(new Event('blur'));
-        }
-      }),
+      on<{ paneId: string; focused: boolean }>('terminal-window-focus', (event) =>
+        detached.focused(event.paneId, event.focused),
+      ),
       on<{ requestId: string; hostId: string; url: string }>('browser-open-request', (request) => {
         if (
           typeof request?.requestId === 'string' &&
@@ -3441,10 +3138,7 @@
           })().catch(() => {});
         }
       }),
-      on<{ paneId: string }>('terminal-window-closed', (event) => {
-        detachedPanes.delete(event.paneId);
-        if (detachedFocus === event.paneId) detachedFocus = '';
-      }),
+      on<{ paneId: string }>('terminal-window-closed', (event) => detached.closed(event.paneId)),
     ])
       void subscription.then((stop) => {
         if (mounted) unsub.push(stop);
@@ -3477,36 +3171,25 @@
             inputMode: data.inputMode || 'toggle',
             terminal: { ...terminalDefaults, ...data.terminal },
           });
-          recovery = data.recovery || {};
-          profiles = { ...recovery, [HOSTLESS]: device.localWorkspaces || blankProfile() };
+          deviceStore.recovery = data.recovery || {};
+          profiles = {
+            ...deviceStore.recovery,
+            [HOSTLESS]: device.localWorkspaces || blankProfile(),
+          };
         }
         const listeners = await Promise.all([
           on<{ done: number; total: number }>(
             'update-progress',
-            (v) => (updateProgress = Math.round((v.done / v.total) * 100)),
+            (v) => (updates.progress = Math.round((v.done / v.total) * 100)),
           ),
           on<{ hostId: string; attempt: string; identity?: { notice?: string } }>(
             'host-ready',
-            (v) => {
-              if (hostAttempts.get(v.hostId) !== v.attempt || !reconnectHosts.has(v.hostId)) return;
-              // A native host can report that older sessions keep an old broker running.
-              if (v.identity?.notice) {
-                const name = device.hosts.find((h) => h.id === v.hostId)?.name || 'Host';
-                notice = `${name}: ${v.identity.notice}`;
-              }
-              void joined(v.hostId);
-            },
+            (v) => net.ready(v),
           ),
-          on<{ hostId: string; text: string; attempt: string }>('host-output', (v) => {
-            if (hostAttempts.get(v.hostId) !== v.attempt || !reconnectHosts.has(v.hostId)) return;
-            logs[v.hostId] = ((logs[v.hostId] || '') + v.text).slice(-12000);
-          }),
-          on<{ hostId: string; attempt: string }>('host-closed', (v) => {
-            if (hostAttempts.get(v.hostId) === v.attempt) {
-              connections[v.hostId] = 'Disconnected';
-              logs[v.hostId] ||= 'Connection closed.';
-            }
-          }),
+          on<{ hostId: string; text: string; attempt: string }>('host-output', (v) =>
+            net.output(v),
+          ),
+          on<{ hostId: string; attempt: string }>('host-closed', (v) => net.closed(v)),
           on<{ id: string; done: number; total: number }>(
             'model-progress',
             (v) =>
@@ -3592,7 +3275,7 @@
           await configureShortcut();
           if (clientInfo.updateSupported && device.checkUpdates !== false) void checkUpdates();
           await loadModels();
-          if (!device.voiceSetupDismissed && !voiceStackReady(device.voice, models))
+          if (!device.voiceSetupDismissed && !voiceStackReady(device.voice, voiceModels.models))
             modal = 'voice-setup';
           if (
             needsChangelog(clientInfo.version, device.lastChangelogVersion, !!data?.hosts?.length)
@@ -3788,7 +3471,7 @@
         !e.shiftKey &&
         !e.metaKey
       ) {
-        if (updatePrompt && !modal && !updateBusy) {
+        if (updates.prompt && !modal && !updates.busy) {
           closeUpdates();
           return;
         }
@@ -3966,7 +3649,7 @@
         title={`Search terminals (${appShortcut(device.appShortcuts, 'search').label})`}
         onclick={() => openTerminalSearch()}><Search size={17} /></button
       >
-      {#if modelsLoaded && !voiceReady}<button
+      {#if voiceModels.modelsLoaded && !voiceModels.ready}<button
           class="voice-setup-alert"
           onclick={() => (modal = 'voice-setup')}
           ><Download size={14} />Voice stack not set up, click here to install</button
@@ -4156,12 +3839,12 @@
             class:recording-highlight={device.supportGlow !== false}
             data-highlight={recordingHighlight(device.recordingHighlight)}
             style:--voice-highlight-color={device.recordingHighlightColor || '#39bdd7'}
-            disabled={filesLocked || voiceStatus !== 'idle' || updateState === 'installing'}
+            disabled={filesLocked || voiceStatus !== 'idle' || updates.state === 'installing'}
             onclick={() => {
               modal = 'support';
               void checkUpdates();
             }}
-            aria-label={`Feedback, support and about DazeDev ${releaseVersion(clientInfo.version)}: ${updateLabel}`}
+            aria-label={`Feedback, support and about DazeDev ${releaseVersion(clientInfo.version)}: ${updates.label}`}
           >
             {#if device.supportGlow !== false && recordingHighlight(device.recordingHighlight) !== 'static'}
               <HighlightEffect kind={recordingHighlight(device.recordingHighlight)} />
@@ -4171,10 +3854,10 @@
             >
             <i
               class="update-dot"
-              data-state={availableUpdate ? 'available' : updateState}
+              data-state={updates.available ? 'available' : updates.state}
               aria-hidden="true"
             ></i>
-            <span>{updateLabel}</span>
+            <span>{updates.label}</span>
           </button>
         </div>
       </aside>
@@ -4225,7 +3908,7 @@
                 >Show {terminalPresentation(pane, paneStatus[pane.id]).name}</button
               >
               <button
-                onclick={() => void dockTerminal(pane.id).catch(fail)}
+                onclick={() => void detached.dock(pane.id).catch(fail)}
                 aria-label={`Return ${pane.name} to workspace`}>Return here</button
               >
             {/each}
@@ -4412,7 +4095,7 @@
                     <button
                       disabled={!desktop || dictationActive}
                       title="Open this terminal in a window you can drag to another screen"
-                      onclick={() => void detachTerminal(p).catch(fail)}
+                      onclick={() => void detached.detach(p).catch(fail)}
                       ><ArrowUpRight size={14} /> Other screen</button
                     >
                     <button
@@ -4569,7 +4252,7 @@
                       (notice = `${p.name}: a program on the host copied ${characters} characters to your clipboard.`)}
                     onpastesetting={setPasteConfirmation}
                     watching={() =>
-                      detachedPanes.has(p.id) ? detachedFocus === p.id : document.hasFocus()}
+                      detachedPanes.has(p.id) ? detached.focus === p.id : document.hasFocus()}
                     floating={detachedPanes.has(p.id)}
                     onterminalfocus={() => {
                       if (!detachedPanes.has(p.id)) return false;
@@ -4739,37 +4422,7 @@
       tabindex="-1"
       use:focusDialog
     >
-      <h2>{hostlessConnect.name}</h2>
-      <p>
-        {hostlessNeeds.required.length
-          ? `Connect to ${hostlessNeeds.required.length} hosts to open this group's terminals?`
-          : 'Some hosts need to be set up on this device.'}
-      </p>
-      {#each hostlessNeeds.required as required}<p>{required.name}</p>{/each}
-      {#if hostlessNeeds.missing.length}<p class="hint">
-          Add these hosts with their original user and tmux socket: {hostlessNeeds.missing.join(
-            ', ',
-          )}.
-        </p>{/if}
-      <div class="row">
-        {#if hostlessNeeds.required.length}<button
-            class="primary"
-            onclick={() => {
-              const hosts = hostlessNeeds!.required;
-              hostlessConnect = null;
-              void task(async () => {
-                await Promise.all(hosts.map((h) => connect(h)));
-              });
-            }}>Connect to {hostlessNeeds.required.length} hosts</button
-          >{/if}
-        {#if hostlessNeeds.missing.length}<button
-            onclick={() => {
-              hostlessConnect = null;
-              addHost();
-            }}>Add host</button
-          >{/if}
-        <button onclick={() => (hostlessConnect = null)}>Keep disconnected</button>
-      </div>
+      <HostlessConnect {addHost} {connect} bind:hostlessConnect {hostlessNeeds} {task} />
     </div>
   </div>
 {/if}
@@ -4871,7 +4524,7 @@
               .then(() => {
                 downloadProgress[id] = 'Cancelling';
               })
-              .catch(fail)}>Cancel {models.find((m) => m.id === id)?.name || id} download</button
+              .catch(fail)}>Cancel {voiceModels.models.find((m) => m.id === id)?.name || id} download</button
         >{/each}
       {#if (modal === 'upload' || modal === 'documents') && filesTarget}
         <FilesDialog
@@ -4885,95 +4538,45 @@
           onbusy={(value) => (filesLocked = value)}
         />
       {:else if modal === 'pane-host' && switchTarget}
-        <p>
-          This pane stays in its workspace. Its current tmux session stays on the original host; a
-          plain shell will close.
-        </p>
-        <label
-          >Connect this pane to<select bind:value={switchHost} disabled={busy}>
-            {#each device.hosts as h}<option
-                value={h.id}
-                disabled={connections[h.id] !== 'Connected'}
-                >{h.name}{connections[h.id] !== 'Connected' ? ' (not connected)' : ''}</option
-              >{/each}
-          </select></label
-        >
-        <p class="hint">
-          The new connection starts with a plain shell. Use Tmux to join or create a session on that
-          host.
-        </p>
-        <button
-          class="primary"
-          disabled={busy || voiceStatus !== 'idle'}
-          onclick={() => void task(switchPaneHost)}>Change connection</button
-        >
-      {:else if modal === 'pane-repo' && repoTarget}
-        <label
-          >Repository host<select
-            bind:value={repoHost}
-            disabled={busy}
-            onchange={() => {
-              repoPath = '';
-              void task(refreshRepoChoices);
-            }}
-          >
-            {#each device.hosts as h}<option
-                value={h.id}
-                disabled={connections[h.id] !== 'Connected'}>{h.name}</option
-              >{/each}
-          </select></label
-        >
-        <p class="hint">
-          Paste the configured orientation prompt into this existing terminal. Choose a matching
-          host if you have manually opened a nested SSH connection.
-        </p>
-        <RepoPicker
-          repos={repoChoices}
-          hostId={repoHost}
-          bind:value={repoPath}
-          warnings={repoWarnings}
-          disabled={busy}
+        <PaneHost
+          {busy}
+          {connections}
+          {device}
+          bind:switchHost
+          {switchPaneHost}
+          {task}
+          {voiceStatus}
         />
-        {#if repoPath}<label
-            >Prompt preview<textarea
-              readonly
-              rows="7"
-              value={promptFor({ ...repoTarget, hostId: repoHost, repo: repoPath })}
-            ></textarea></label
-          >{/if}
-        <div class="form-row">
-          <button disabled={busy} onclick={() => void task(refreshRepoChoices)}
-            >Refresh repositories</button
-          >
-          <button
-            class="primary"
-            disabled={busy || !repoPath}
-            onclick={() => void task(pasteRepoPrompt)}>Paste for review</button
-          >
-        </div>
+      {:else if modal === 'pane-repo' && repoTarget}
+        <PaneRepo
+          {busy}
+          {connections}
+          {device}
+          {pasteRepoPrompt}
+          {promptFor}
+          {refreshRepoChoices}
+          {repoChoices}
+          bind:repoHost
+          bind:repoPath
+          {repoTarget}
+          {repoWarnings}
+          {task}
+        />
       {:else if modal === 'terminal-host-connection' && connectionTarget}
-        <p>{connectionTarget.name}: {connections[connectionTarget.id] || 'Disconnected'}</p>
-        <p>
-          This action applies to every terminal connected to this host. Managed PowerShell and tmux
-          sessions keep running. Disconnecting ends plain shells; their visible output is retained.
-        </p>
-        <div class="form-row">
-          <button
-            disabled={connections[connectionTarget.id] === 'Connecting'}
-            onclick={() => void task(() => connectHostTerminals(connectionTarget!))}
-            >Connect host and terminals</button
-          >
-          <button onclick={() => void task(() => disconnectHostTerminals(connectionTarget!.id))}
-            >Disconnect host and terminals</button
-          >
-        </div>
+        <TerminalHostConnection
+          {connectHostTerminals}
+          {connectionTarget}
+          {connections}
+          {disconnectHostTerminals}
+          {task}
+        />
       {:else if modal === 'support'}
         <SupportDialog
           version={releaseVersion(clientInfo.version)}
-          status={updateStatus || updateLabel}
-          updateState={availableUpdate ? 'available' : updateState}
-          updateAvailable={availableUpdate ? releaseVersion(availableUpdate.version) : ''}
-          {updateBusy}
+          status={updates.status || updates.label}
+          updateState={updates.available ? 'available' : updates.state}
+          updateAvailable={updates.available ? releaseVersion(updates.available.version) : ''}
+          updateBusy={updates.busy}
           updateSupported={desktop && clientInfo.updateSupported}
           onfeedback={openFeedback}
           glow={device.supportGlow !== false}
@@ -4985,7 +4588,7 @@
           }}
           onupdate={() => {
             openUpdates();
-            if (!availableUpdate) void checkUpdates(true);
+            if (!updates.available) void checkUpdates(true);
           }}
         />
       {:else if modal === 'feedback' && device.feedbackContact}
@@ -5003,711 +4606,129 @@
           onclose={() => (modal = '')}
         />
       {:else if modal === 'repo-collision'}
-        <p>
-          Another agent is using this working copy. Concurrent edits can conflict. Separate
-          worktrees still share external ports and databases.
-        </p>
-        <div class="form-row">
-          <button onclick={() => (modal = 'new-session')}>Choose another working copy</button
-          ><button
-            onclick={() => {
-              acknowledgedRepo = form.repo;
-              void task(createSession);
-            }}>Use shared working copy</button
-          >
-        </div>
+        <RepoCollision bind:modal {useSharedWorkingCopy} />
       {:else if modal === 'close-native'}
-        <p>
-          These PowerShell sessions may have running work. Choose what happens when this view
-          closes.
-        </p>
-        <p class="hint">
-          Background sessions can be reattached from Sessions. Continuing in a PowerShell window
-          keeps the same process and waits for the window to attach.
-        </p>
-        <div class="native-close-actions">
-          <button disabled={busy} onclick={() => void task(() => finishNativeClose('background'))}
-            >Keep in background</button
-          >
-          <button disabled={busy} onclick={() => void task(() => finishNativeClose('external'))}
-            >Continue in PowerShell window</button
-          >
-          <button
-            class="danger"
-            disabled={busy}
-            onclick={() => void task(() => finishNativeClose('end'))}>End sessions</button
-          >
-          {#if closingApp}<button disabled={busy} onclick={() => void task(closeAnyway)}
-              >Close anyway</button
-            >{/if}
-          <button
-            disabled={busy}
-            onclick={() => {
-              nativeCloseDone = null;
-              modal = '';
-            }}>Cancel</button
-          >
-        </div>
-      {:else if modal === 'close-terminal'}
-        <p>
-          Closing a plain terminal stops its shell and may stop running work. Attached tmux sessions
-          keep running.
-        </p>
-        <div class="form-row">
-          <button onclick={() => (modal = '')}>Cancel</button><button
-            class="danger"
-            onclick={() => {
-              const action = pendingClose;
-              pendingClose = null;
-              modal = '';
-              action?.();
-            }}>Close terminal</button
-          >
-        </div>
-      {:else if modal === 'listen-intro'}
-        <h2>Speak into your terminal</h2>
-        <p>
-          Select a terminal, then tap <strong>{bindingFor('dictation').label}</strong> to listen. In toggle
-          mode, tap again to stop and review the text in that terminal. Double-tap the same shortcut to
-          send it with Enter.
-        </p>
-        <p>
-          Keyboard shortcuts and mouse or device buttons work while DazeDev is focused. You can also
-          choose hold-to-talk: hold to record, release to stop.
-        </p>
-        <p class="hint">
-          Transcription and optional tidy-up run locally. {voiceReady
-            ? 'Your voice models are ready.'
-            : 'The selected voice stack needs a one-time download. Installed models are reused.'}
-        </p>
-        {#if device.voice.automatic}<p class="hint">
-            Automatic Enter is currently enabled. Dictation will submit as soon as transcription
-            finishes. Turn it off in settings to review first.
-          </p>{/if}
-        <div class="row">
-          <button
-            class="primary"
-            onclick={() => {
-              device.listenOnboarded = true;
-              persistDevice();
-              if (!voiceReady) {
-                modal = 'voice-setup';
-                return;
-              }
-              modal = '';
-              void task(() => record('dictation', listenIntroTarget));
-            }}>{voiceReady ? 'Start listening' : 'Set up local voice'}</button
-          >
-          <button
-            onclick={() => {
-              device.listenOnboarded = true;
-              persistDevice();
-              void task(async () => {
-                await openSettings();
-                await tick();
-                const settings = document.querySelector<HTMLDetailsElement>('#voice-shortcuts');
-                if (settings) {
-                  settings.open = true;
-                  settings.scrollIntoView({ block: 'start' });
-                }
-              });
-            }}>Change keyboard or mouse shortcut</button
-          >
-          <button
-            onclick={() => {
-              device.listenOnboarded = true;
-              persistDevice();
-              modal = '';
-            }}>Later</button
-          >
-        </div>
-      {:else if modal === 'voice-setup'}
-        <p>
-          Voice models are downloaded separately from DazeDev to keep the app small and let you
-          choose your stack. Downloads use the verified versions supported by this release.
-        </p>
-        <p class="hint">
-          Default stack: Parakeet transcription, Silero silence detection and S1-mini cleanup.
-          Download once; everything runs offline on this device with no account or per-use cost.
-        </p>
-        <p>
-          Selected: <strong
-            >{models.find((m) => m.id === device.voice.model)?.name || device.voice.model}</strong
-          >
-        </p>
-        <button onclick={() => void task(openSettings)}>Choose a model in Settings</button>
-        <div class="stack-options">
-          {#each models.filter((m) => m.family === 'asr') as m}<p>
-              <strong>{m.name}</strong>
-              {modelDescriptions[m.id]}
-            </p>{/each}
-        </div>
-        <p><strong>Silero:</strong> {modelDescriptions.silero}</p>
-        <label class="check"
-          ><input
-            type="checkbox"
-            bind:checked={device.voice.cleanup}
-            disabled={voiceStatus !== 'idle' || switchingVoice || voiceCacheLoading}
-            onchange={() => void changeVoiceModel()}
-          /> S1-mini cleanup</label
-        >
-        <p class="hint">
-          {modelDescriptions['s1-mini']} Review important names and commands before pressing Enter.
-        </p>
-        <div class="form-row">
-          <button
-            disabled={busy}
-            onclick={() => {
-              device.voiceSetupDismissed = true;
-              persistDevice();
-              modal = '';
-            }}>Later</button
-          >
-          <button
-            class="primary"
-            disabled={busy}
-            onclick={() =>
-              void task(async () => {
-                await setupVoice();
-                modal = '';
-              })}>{busy ? 'Setting up…' : 'Download selected voice stack'}</button
-          >
-        </div>
-        {#each Object.entries(downloadProgress) as [id, progress]}<div
-            class="download-progress"
-            role="status"
-          >
-            <span>{id}: {progress}</span><progress
-              aria-label={`${id} download`}
-              max="100"
-              value={progress.endsWith('%') ? parseInt(progress) : undefined}
-            ></progress>
-          </div>{/each}
-      {:else if modal === 'changelog'}
-        <div class="row" aria-label="Release platform">
-          {#each ['all', 'desktop', 'mobile'] as platform}
-            <button
-              aria-pressed={releaseFilter === platform}
-              onclick={() => (releaseFilter = platform as typeof releaseFilter)}
-              >{platform === 'all' ? 'All' : platform === 'desktop' ? 'Desktop' : 'Mobile'}</button
-            >
-          {/each}
-        </div>
-        {#if historyStatus}<p class="hint" role="status">{historyStatus}</p>{/if}
-        {#if releaseFilter !== 'mobile' && availableUpdate && !releaseHistory.some((entry) => entry.platform === 'desktop' && entry.version === availableUpdate?.version)}<article
-            class="release-entry"
-          >
-            <h3>Desktop · {releaseHeading(availableUpdate.version)}</h3>
-            <p>{availableUpdate.notes}</p>
-          </article>{/if}
-        {#each releaseHistory.filter((entry) => releaseFilter === 'all' || entry.platform === releaseFilter) as entry}<article
-            class="release-entry"
-          >
-            <h3>
-              {entry.platform === 'desktop' ? 'Desktop' : 'Mobile'} · {entry.platform === 'desktop'
-                ? releaseHeading(entry.version, entry.date)
-                : `${entry.date} : ${entry.version}`}{entry.channel === 'development'
-                ? ' · Development build'
-                : ''}
-            </h3>
-            <p>{entry.notes}</p>
-          </article>{/each}
-        <button onclick={() => (modal = changelogReturn)}>Back</button>
-      {:else if modal === 'delete-host' && deleteHostTarget}
-        <p>
-          Remove <strong>{deleteHostTarget.name}</strong> and its workspace list from this device?
-        </p>
-        <p class="hint">
-          Plain shells close and tmux terminals detach. Remote tmux sessions and the host's saved
-          workspace configuration stay intact.
-        </p>
-        <div class="form-row">
-          <button disabled={busy} onclick={() => (modal = '')}>Cancel</button><button
-            class="danger"
-            disabled={busy}
-            onclick={() => void task(() => deleteHost(deleteHostTarget!))}>Delete host</button
-          >
-        </div>
-      {:else if modal === 'host-colors' && colorHost}
-        <p>
-          Colors for {colorHost.name}. Workspaces and terminals inherit these unless they have their
-          own colors. This choice is saved on this device.
-        </p>
-        <ColorPicker
-          value={device.hosts.find((h) => h.id === colorHost?.id)?.colors}
-          onChange={(colors) => {
-            device.hosts = device.hosts.map((h) => (h.id === colorHost?.id ? { ...h, colors } : h));
-            persistDevice();
-          }}
+        <CloseNative
+          {busy}
+          {closeAnyway}
+          {closingApp}
+          {finishNativeClose}
+          {cancelNativeClose}
+          {task}
         />
+      {:else if modal === 'close-terminal'}
+        <CloseTerminal bind:modal {confirmPendingClose} />
+      {:else if modal === 'listen-intro'}
+        <ListenIntro
+          {bindingFor}
+          bind:device
+          bind:modal
+          {openSettings}
+          {persistDevice}
+          startListening={() => record('dictation', listenIntroTarget)}
+          {task}
+          voiceReady={voiceModels.ready}
+        />
+      {:else if modal === 'voice-setup'}
+        <VoiceSetup
+          {busy}
+          {changeVoiceModel}
+          bind:device
+          {downloadProgress}
+          bind:modal
+          models={voiceModels.models}
+          {openSettings}
+          {persistDevice}
+          {setupVoice}
+          switchingVoice={voiceModels.switching}
+          {task}
+          voiceCacheLoading={voiceModels.cacheLoading}
+          {voiceStatus}
+        />
+      {:else if modal === 'changelog'}
+        <Changelog
+          availableUpdate={updates.available}
+          {changelogReturn}
+          {historyStatus}
+          bind:modal
+          bind:releaseFilter
+          {releaseHistory}
+        />
+      {:else if modal === 'delete-host' && deleteHostTarget}
+        <DeleteHost {busy} {deleteHost} {deleteHostTarget} bind:modal {task} />
+      {:else if modal === 'host-colors' && colorHost}
+        <HostColors {colorHost} bind:device {persistDevice} />
       {:else if modal === 'tmux-settings' && tmuxHost}
         <TmuxSettings host={tmuxHost} appScrollback={device.terminal?.scrollback || terminalDefaults.scrollback} />
       {:else if modal === 'pane-colors' && colorPane}
-        {@const owner = workspaces.find((w) => w.panes.some((p) => p.id === colorPane?.id))}
-        <p class="hint">
-          Overrides this terminal only. Other terminals follow their workspace colors.
-        </p>
-        <ColorPicker
-          value={colorPane.colors}
-          inherited={tabColors(
-            owner?.colors,
-            device.hosts.find((h) => h.id === colorPane?.hostId)?.colors,
-          )}
-          resetLabel="Use workspace colors"
-          onChange={(colors) => {
-            if (!owner || !colorPane) return;
-            colorPane.colors = colors;
-            updateWorkspace({
-              ...owner,
-              panes: owner.panes.map((p) => (p.id === colorPane!.id ? { ...p, colors } : p)),
-            });
-          }}
+        <PaneColors bind:colorPane {device} {updateWorkspace} {workspaces} />
+      {:else if modal === 'workspace' && workspaceTarget}
+        <WorkspaceOptions
+          {closeWorkspace}
+          {device}
+          bind:modal
+          bind:profiles
+          bind:renameValue
+          {saved}
+          {updateWorkspace}
+          bind:workspaceTarget
         />
-      {:else if modal === 'workspace' && workspaceTarget}<form
-          onsubmit={(e) => {
-            e.preventDefault();
-            if (workspaceTarget) {
-              updateWorkspace({
-                ...workspaceTarget,
-                name: renameValue.trim() || workspaceTarget.name,
-              });
-              modal = '';
-            }
-          }}
-        >
-          <label>Workspace name<input bind:value={renameValue} /></label>
-          <p class="hint">
-            Applies to this sidebar tab and all terminals without their own color override,
-            including new terminals.
-          </p>
-          <ColorPicker
-            value={workspaceTarget.colors}
-            inherited={device.hosts.find((h) => h.id === workspaceTarget?.hostId)?.colors}
-            resetLabel="Use host colors"
-            onChange={(colors) => {
-              if (workspaceTarget) {
-                workspaceTarget = { ...workspaceTarget, colors };
-                updateWorkspace(workspaceTarget);
-              }
-            }}
-          />
-          <div class="form-row">
-            <button
-              type="button"
-              onclick={() => {
-                if (!workspaceTarget) return;
-                const list = profiles[workspaceTarget.hostId].workspaces;
-                const i = list.findIndex((w) => w.id === workspaceTarget!.id);
-                if (i > 0) {
-                  [list[i - 1], list[i]] = [list[i], list[i - 1]];
-                  saved(workspaceTarget.hostId);
-                }
-              }}>Move up</button
-            ><button
-              type="button"
-              onclick={() => {
-                if (!workspaceTarget) return;
-                const list = profiles[workspaceTarget.hostId].workspaces;
-                const i = list.findIndex((w) => w.id === workspaceTarget!.id);
-                if (i < list.length - 1) {
-                  [list[i + 1], list[i]] = [list[i], list[i + 1]];
-                  saved(workspaceTarget.hostId);
-                }
-              }}>Move down</button
-            >
-          </div>
-          <div class="form-row">
-            <button
-              type="button"
-              onclick={() => {
-                modal = '';
-                closeWorkspace(workspaceTarget!);
-              }}>Delete workspace</button
-            ><button class="primary">Save name</button>
-          </div>
-          <p class="hint">
-            Deleting removes the saved layout and closes plain shells. Attached tmux sessions stay
-            alive.
-          </p>
-        </form>{:else if modal === 'host'}<form
-          onsubmit={(e) => {
-            e.preventDefault();
-            void task(async () => {
-              if (!newHost.name.trim()) throw new Error('Give this connection a name.');
-              device.hosts = device.hosts.some((h) => h.id === newHost.id)
-                ? device.hosts.map((h) => (h.id === newHost.id ? { ...newHost } : h))
-                : [...device.hosts, { ...newHost }];
-              device.activeHost = newHost.id;
-              persistDevice();
-              modal = '';
-              void connect({ ...newHost });
-            });
-          }}
-        >
-          <label
-            >Connection name<input
-              bind:value={newHost.name}
-              placeholder="Development box"
-              required
-            /></label
-          ><label
-            >Location<select bind:value={newHost.kind}
-              ><option value="ssh">SSH · any network</option><option value="tailscale"
-                >Tailscale SSH · device identity</option
-              ><option value="powershell">Local Windows PowerShell</option><option value="wsl"
-                >Local WSL distribution</option
-              ><option value="local">Local macOS / Linux</option></select
-            ></label
-          >{#if newHost.kind === 'ssh' || newHost.kind === 'tailscale'}<label
-              >{newHost.kind === 'tailscale'
-                ? 'Tailscale hostname or IP'
-                : 'SSH alias or hostname'}<input
-                list="ssh-aliases"
-                bind:value={newHost.address}
-                placeholder="dev-box or 100.x.x.x"
-                required
-              /></label
-            >
-            <div class="form-row">
-              <label
-                >SSH user<input
-                  bind:value={newHost.user}
-                  required={newHost.kind === 'tailscale'}
-                  placeholder={newHost.kind === 'tailscale'
-                    ? 'Linux username, e.g. ubuntu'
-                    : 'From SSH config'}
-                /></label
-              >{#if newHost.kind === 'ssh'}<label
-                  >Port<input
-                    type="number"
-                    bind:value={newHost.port}
-                    min="1"
-                    max="65535"
-                    placeholder="22"
-                  /></label
-                >{/if}
-            </div>
-            <details>
-              <summary>Connection options</summary>{#if newHost.kind === 'ssh'}<label
-                  >Private key path<input
-                    bind:value={newHost.key}
-                    placeholder="Use SSH config / agent"
-                  /></label
-                ><label>Jump host<input bind:value={newHost.jump} placeholder="bastion" /></label
-                >{/if}<label
-                >tmux socket name<input bind:value={newHost.socket} placeholder="default" /></label
-              ><label class="check"
-                ><input type="checkbox" bind:checked={newHost.systemSsh} /> Use system OpenSSH</label
-              >
-              <p class="hint">
-                Only for hosts that need hardware security keys, PKCS#11 or other options the
-                built-in client lacks. Each terminal then signs in separately.
-              </p>
-            </details>
-            <datalist id="ssh-aliases"
-              >{#each aliases as alias}<option value={alias}></option>{/each}</datalist
-            >
-            <p class="hint">
-              {#if newHost.kind === 'tailscale'}
-                Uses your signed-in Tailscale device identity and Tailscale-verified host keys. No
-                SSH password or key is needed. The target must enable Tailscale SSH; an accept
-                policy connects directly, while a check policy can require browser reauthentication.
-                Native Windows cannot serve Tailscale SSH. For WSL, use its Linux endpoint's own
-                tailnet name. DazeDev remote hosts need Python 3.9 or newer and tmux.
-              {:else}
-                Your OpenSSH config, keys, certificates and agent are respected. You sign in once
-                per host; every terminal shares that connection. Password and host-key prompts
-                appear next. Passwords are never saved.
-              {/if}
-            </p>{:else if newHost.kind === 'powershell'}
-            <label
-              >Shell<select bind:value={newHost.nativeShell}>
-                <option value="powershell">Windows PowerShell</option><option value="pwsh"
-                  >PowerShell 7 (installed)</option
-                >
-              </select></label
-            >
-            <p class="hint">
-              Runs natively on this Windows machine, with hardware access and no WSL requirement.
-              Sessions can stay running when DazeDev closes. PowerShell 7 must already be installed.
-            </p>
-          {:else if newHost.kind === 'wsl'}<label
-              >Distribution<input
-                bind:value={newHost.distro}
-                placeholder="Default WSL distribution"
-              /></label
-            >{/if}
-          {#if newHost.kind !== 'powershell'}<p class="hint">
-              The host needs Python 3 and tmux. DazeDev runs its management helper in memory.
-            </p>{/if}
-          <button class="primary" disabled={busy}>Save & connect <ArrowUpRight size={15} /></button>
-        </form>
-      {:else if modal === 'launch'}<form
-          onsubmit={(e) => {
-            e.preventDefault();
-            void task(launch);
-          }}
-        >
-          <div class="form-row">
-            <label
-              >Workspace name<input
-                required={!launchAxis}
-                bind:value={form.name}
-                placeholder="Core · planning"
-              /></label
-            ><label>Terminals<input type="number" min="1" step="1" bind:value={form.count} /></label
-            >
-          </div>
-          <label
-            >Host<select
-              bind:value={form.hostId}
-              onchange={() => {
-                form.repo = '';
-                form.identity = '';
-                form.model = '';
-                form.effort = '';
-              }}
-              ><option value="">Choose a connected host</option>{#each device.hosts as h}<option
-                  value={h.id}>{h.name} · {connections[h.id] || 'disconnected'}</option
-                >{/each}</select
-            ></label
-          >
-          {#if launchFromCommand}
-            <p class="hint">
-              {launchAxis ? 'Add to the current workspace' : 'Create a new workspace'} · {form.agent ===
-              'shell'
-                ? form.repo
-                  ? 'New tmux shells'
-                  : 'Plain shells'
-                : `New ${form.agent} sessions`}. Review these options before starting.
-            </p>
-            <label
-              >Agent<select bind:value={form.agent}
-                ><option value="shell">Plain shell</option
-                >{#each ['codex', 'claude', 'gemini', 'opencode'] as agent}<option value={agent}
-                    >{agent}</option
-                  >{/each}</select
-              ></label
-            >
-            {#if form.agent !== 'shell'}<p class="hint">
-                The agent must already be installed on the selected host. Each terminal starts a
-                separate session.
-              </p>{/if}
-            <label class="check"
-              ><input type="checkbox" bind:checked={launchChooseRepo} /> Choose repository before starting</label
-            >
-            {#if launchChooseRepo}
-              <RepoPicker
-                repos={inventories[form.hostId]?.repos || []}
-                hostId={form.hostId}
-                bind:value={form.repo}
-                warnings={inventories[form.hostId]?.warnings || []}
-                disabled={busy}
-              />
-            {:else if form.repo}<p class="hint">Repository: {form.repo}</p>{/if}
-            {#if form.agent !== 'shell' && form.repo}<label class="check"
-                ><input type="checkbox" bind:checked={form.brief} /> Read repository instructions and
-                give a concise orientation</label
-              >{/if}
-          {:else}
-            <p class="hint">
-              Open plain shells in this host’s home directory. Use each terminal’s tmux button to
-              join or create a session.
-            </p>
-          {/if}
-          <button class="primary" disabled={busy || !form.hostId}
-            >{busy
-              ? 'Starting…'
-              : `Open ${form.count} ${form.count === 1 ? 'terminal' : 'terminals'}`}
-            <ArrowUpRight size={16} /></button
-          >
-        </form>
+      {:else if modal === 'host'}
+        <HostForm
+          {aliases}
+          {busy}
+          {connect}
+          bind:device
+          bind:modal
+          bind:newHost
+          {persistDevice}
+          {task}
+        />
+      {:else if modal === 'launch'}
+        <Launch
+          {busy}
+          {connections}
+          {device}
+          bind:form
+          {inventories}
+          {launch}
+          {launchAxis}
+          bind:launchChooseRepo
+          {launchFromCommand}
+          {task}
+        />
       {:else if modal === 'sessions'}
-        <div class="list-toolbar">
-          <p>
-            {device.hosts.find((h) => h.id === sessionHost)?.name}{sessionPane
-              ? ' · ' + sessionPane.name
-              : ''}
-          </p>
-          <button
-            aria-label="Refresh sessions"
-            disabled={busy}
-            onclick={() =>
-              void task(async () => {
-                await refreshSessions(sessionHost);
-              })}><RefreshCw size={16} /></button
-          >
-        </div>
-        <button class="primary" disabled={busy} onclick={() => void task(startSession)}
-          ><Plus size={16} />
-          {device.hosts.find((h) => h.id === sessionHost)?.kind === 'powershell'
-            ? 'Create new PowerShell session'
-            : 'Create new tmux session'}</button
-        >
-        <p class="hint">
-          Joining attaches only. It never restarts the agent or sends an orientation prompt.
-          Switching replaces this terminal view; existing sessions keep running. Attached views
-          share input and terminal size. Native PowerShell work stops only when you end the session
-          or shut down Windows.
-        </p>
-        {#each sessions as s}<div class="item-row">
-            <TerminalIcon size={18} />
-            <div>
-              <strong>{s.name}</strong><small>{s.windows} windows · {s.attached} attached</small>
-            </div>
-            <button disabled={busy} onclick={() => void task(() => attach(s))}>Join</button>
-            <button
-              class="icon danger"
-              disabled={busy}
-              aria-label={`Delete ${s.name}`}
-              onclick={() => {
-                destroyTarget = { ...s, hostId: sessionHost };
-                modal = 'destroy';
-              }}><Trash2 size={15} /></button
-            >
-          </div>{:else}<p class="hint">
-            No sessions on this host. Create a named session above.
-          </p>{/each}
+        <Sessions
+          {attach}
+          {busy}
+          bind:destroyTarget
+          {device}
+          bind:modal
+          {refreshSessions}
+          {sessionHost}
+          {sessionPane}
+          {sessions}
+          {startSession}
+          {task}
+        />
       {:else if modal === 'new-session'}
-        <p class="hint">
-          Step {sessionStep + 1} of 3 · {device.hosts.find((h) => h.id === sessionHost)?.name}
-        </p>
-        <form
-          onsubmit={(e) => {
-            e.preventDefault();
-            nameError = sessionNameError(form.name);
-            if (nameError) {
-              sessionStep = 0;
-              return;
-            }
-            if (sessionStep < 2) sessionStep += 1;
-            else void task(createSession);
-          }}
-        >
-          {#if sessionStep === 0}
-            <label
-              >Session name<input
-                required
-                aria-invalid={!!nameError}
-                aria-describedby="session-name-error"
-                oninput={() => {
-                  nameError = '';
-                }}
-                bind:value={form.name}
-                placeholder="planning"
-              /></label
-            >
-            {#if nameError}<p id="session-name-error" class="inline-error" role="alert">
-                {nameError}
-              </p>{:else}<p id="session-name-error" class="hint">
-                Use letters, numbers, underscores or hyphens.
-              </p>{/if}
-          {:else if sessionStep === 1}
-            <label
-              >Agent<select
-                bind:value={form.agent}
-                onchange={() => {
-                  form.model = '';
-                  form.effort = '';
-                }}
-                ><option value="shell">None · plain shell</option
-                >{#each inv?.agents || [] as a}<option value={a.id}
-                    >{a.id}{a.path ? '' : ' · install and start'}</option
-                  >{/each}</select
-              ></label
-            >
-            {#if form.agent !== 'shell'}
-              <label
-                >Model<input
-                  bind:value={form.model}
-                  disabled={!selectedAgent?.modelFlag}
-                  placeholder="Agent default"
-                  list="session-models"
-                /></label
-              >
-              <datalist id="session-models"
-                >{#each selectedAgent?.models || [] as m}<option value={m.id}>{m.name}</option
-                  >{/each}</datalist
-              >
-              <label
-                >Effort<select bind:value={form.effort} disabled={!selectedAgent?.effortFlag}
-                  ><option value="">Agent default</option
-                  >{#each selectedAgent?.models.find((m) => m.id === form.model)?.efforts || ['low', 'medium', 'high'] as effort}<option
-                      value={effort}>{effort}</option
-                    >{/each}</select
-                ></label
-              >
-            {/if}
-          {:else}
-            <button type="button" onclick={() => (form.repo = '')}>Use host home directory</button>
-            <RepoPicker
-              repos={inv?.repos || []}
-              hostId={form.hostId || device.activeHost}
-              bind:value={form.repo}
-              warnings={inv?.warnings || []}
-              disabled={busy}
-            />
-            <label
-              >GitHub identity<select bind:value={form.identity}
-                ><option value="">Existing host environment</option
-                >{#each inv?.identities || [] as i}<option value={i.login}>{i.login}</option
-                  >{/each}</select
-              ></label
-            >
-            {#if form.repo && form.agent !== 'shell'}<label class="check"
-                ><input type="checkbox" bind:checked={form.brief} /> Read repo instructions and give a
-                concise orientation</label
-              >{/if}
-            <p class="hint">
-              {form.repo
-                ? 'Starts in the selected working copy. No branch or worktree is created automatically.'
-                : 'Starts in the host’s home directory without a repository orientation prompt.'}
-            </p>
-          {/if}
-          <div class="form-row">
-            <button
-              type="button"
-              disabled={busy}
-              onclick={() => {
-                if (sessionStep) sessionStep -= 1;
-                else modal = 'sessions';
-              }}>Back</button
-            ><button class="primary" disabled={busy}
-              >{busy
-                ? 'Creating…'
-                : sessionStep < 2
-                  ? 'Next'
-                  : form.agent !== 'shell' && !selectedAgent?.path
-                    ? 'Trust upstream installer and start session'
-                    : 'Create session & join'}</button
-            >
-          </div>
-        </form>
-      {:else if modal === 'rename'}<form
-          onsubmit={(e) => {
-            e.preventDefault();
-            void task(renameSession);
-          }}
-        >
-          <label
-            >Session name<input bind:value={renameValue} required pattern="[A-Za-z0-9_-]+" /></label
-          ><button class="primary" disabled={busy}>Rename</button>
-        </form>
-      {:else if modal === 'destroy'}<p>
-          Destroy <strong>{destroyTarget?.name}</strong> on
-          <strong
-            >{device.hosts.find((h) => h.id === (destroyTarget?.hostId || device.activeHost))
-              ?.name}</strong
-          > and terminate all its running processes? All unsaved running work will be lost, including
-          work in other clients attached to this session. This cannot be undone.
-        </p>
-        <div class="form-row">
-          <button onclick={() => (modal = 'sessions')}>Keep session</button><button
-            class="danger"
-            disabled={busy}
-            onclick={() => void task(destroySession)}>Destroy session</button
-          >
-        </div>
+        <NewSession
+          {busy}
+          {createSession}
+          {device}
+          bind:form
+          {inv}
+          bind:modal
+          bind:nameError
+          {selectedAgent}
+          {sessionHost}
+          bind:sessionStep
+          {task}
+        />
+      {:else if modal === 'rename'}
+        <RenameSession {busy} {renameSession} bind:renameValue {task} />
+      {:else if modal === 'destroy'}
+        <DestroySession {busy} {destroySession} {destroyTarget} {device} bind:modal {task} />
       {:else if modal === 'broadcast'}
         <BroadcastDialog
           bind:text={broadcastText}
@@ -5729,755 +4750,109 @@
             }
           }}
         />
-      {:else if modal === 'command'}<form
-          onsubmit={(e) => {
-            e.preventDefault();
-            commandSubmit();
-          }}
-        >
-          <p role="note">
-            <strong
-              >Early alpha: commands may be interpreted incorrectly. Review before running.</strong
-            >
-          </p>
-          <p class="hint">
-            IDE commands control DazeDev. They are never pasted into a terminal. While listening,
-            Enter finishes transcription and Escape abandons it.
-          </p>
-          <label
-            >Command<textarea
-              bind:value={commandText}
-              rows="3"
-              onkeydown={(e) => {
-                if (
-                  e.key === 'Enter' &&
-                  !e.repeat &&
-                  !e.isComposing &&
-                  e.keyCode !== 229 &&
-                  !e.shiftKey &&
-                  !e.ctrlKey &&
-                  !e.altKey &&
-                  !e.metaKey
-                ) {
-                  e.preventDefault();
-                  commandSubmit();
-                }
-              }}
-              readonly={voiceStatus !== 'idle'}
-              oninput={() => {
-                commandReview = null;
-                commandError = '';
-              }}
-              placeholder="Open four new terminals with Codex"></textarea></label
-          >
-          {#if voiceMode === 'command' && voiceStatus !== 'idle'}<p role="status">
-              {voiceStatus === 'finishing-recording'
-                ? 'Finishing recording…'
-                : voiceStatus === 'listening'
-                  ? 'Listening…'
-                  : voiceStatus === 'loading'
-                    ? voicePreparing
-                    : 'Finishing transcription…'}
-            </p>{/if}
-          {#if commandError}<p role="alert">{commandError}</p>{/if}
-          {#if commandReview}
-            <section class="settings-section" aria-label="Proposed command">
-              <h3>Proposed action</h3>
-              <p>{commandReview.summary}</p>
-            </section>
-            <div class="form-row">
-              <button
-                type="button"
-                onclick={() => {
-                  commandReview = null;
-                  commandError = '';
-                }}>Decline / edit</button
-              >
-              <button
-                type="button"
-                class="primary"
-                disabled={busy || voiceStatus !== 'idle'}
-                onclick={() => void implementCommand()}>Implement</button
-              >
-            </div>
-          {:else}
-            <div class="form-row">
-              <button
-                type="button"
-                disabled={voiceStatus !== 'idle' && voiceStatus !== 'listening'}
-                onclick={() => void task(() => record('command'))}
-                ><Mic size={15} />{voiceMode === 'command' && voiceStatus === 'listening'
-                  ? 'Stop and review'
-                  : 'Speak command'}</button
-              >
-              <button
-                class="primary"
-                disabled={!commandText.trim() || busy || voiceStatus !== 'idle'}>Interpret</button
-              >
-            </div>
-            <details>
-              <summary>Command library</summary>
-              <p class="hint">
-                Choose an example, edit it, then interpret. “Codecs” is accepted as Codex here.
-              </p>
-              <div class="command-examples">
-                {#each commandCatalogue as command}<button
-                    type="button"
-                    disabled={voiceStatus !== 'idle'}
-                    title={command.description}
-                    onclick={() => {
-                      commandText = command.example;
-                      commandReview = null;
-                      commandError = '';
-                    }}>{command.example}<ArrowUpRight size={13} /></button
-                  >{/each}
-              </div>
-            </details>
-          {/if}
-        </form>
+      {:else if modal === 'command'}
+        <CommandDialog
+          {busy}
+          bind:commandError
+          bind:commandReview
+          {commandSubmit}
+          bind:commandText
+          {implementCommand}
+          {record}
+          {task}
+          {voiceMode}
+          {voicePreparing}
+          {voiceStatus}
+        />
       {:else if modal === 'settings'}
         <div class="settings-compact settings-page">
-          <section class="settings-section" aria-label="Updates">
-            <h3>Updates · DazeDev {releaseVersion(clientInfo.version)}</h3>
-
-            {#if clientInfo.updateSupported}<label class="check"
-                ><input
-                  type="checkbox"
-                  checked={device.checkUpdates !== false}
-                  onchange={(e) => {
-                    device.checkUpdates = e.currentTarget.checked;
-                    persistDevice();
-                  }}
-                /> Check at startup and every 30 minutes</label
-              >
-              <div class="settings-actions">
-                <button disabled={updateBusy} onclick={() => void checkUpdates(true)}
-                  >Check for updates</button
-                ><button onclick={() => showChangelog()}>Changelog</button><button
-                  onclick={() => exportDiagnostics(clientInfo.version)}>Export diagnostics</button
-                >
-              </div>{:else}<p class="hint">
-                Test build: download updates manually for this platform.
-              </p>
-              <div class="settings-actions">
-                <button onclick={() => showChangelog()}>Changelog</button><button
-                  onclick={() => exportDiagnostics(clientInfo.version)}>Export diagnostics</button
-                >
-              </div>{/if}
-            <p class="hint">
-              Opening Settings always checks for updates, even when automatic checks are off.
-            </p>
-            {#if availableUpdate}<button onclick={openUpdates}
-                >Update to {releaseVersion(availableUpdate.version)}</button
-              >{/if}
-            <p class="hint" role="status">{updateStatus || updateLabel}</p>
-            {#if clientInfo.migration}<p class="hint">{clientInfo.migration}</p>{/if}
-          </section>
+          <UpdatesSection
+            availableUpdate={updates.available}
+            {checkUpdates}
+            {clientInfo}
+            bind:device
+            {openUpdates}
+            {persistDevice}
+            {showChangelog}
+            updateBusy={updates.busy}
+            updateLabel={updates.label}
+            updateStatus={updates.status}
+          />
 
           <PinSettings />
           <DictionarySettings
             compact
             hosts={device.hosts.filter((h) => h.kind === 'ssh' || h.kind === 'tailscale')}
           />
-          <div class="voice-readiness" role="status">
-            <span class="readiness-light" class:ready={voiceReady}></span>
-            <strong
-              >{voiceReady
-                ? 'Voice ready'
-                : modelsLoaded
-                  ? 'Voice setup incomplete'
-                  : 'Checking voice models…'}</strong
-            >
-          </div>
-          <details class="settings-section settings-disclosure" open={!voiceReady}>
-            <summary
-              >Voice models <span
-                >{models.find((m) => m.id === device.voice.model)?.name || 'Setup required'}</span
-              ></summary
-            >
-            {#if hardware && recommendation}
-              <p class="hint">
-                {hardware.logicalCpus} CPU threads · {hardware.memory
-                  ? `${(hardware.memory / 1024 ** 3).toFixed(0)} GB RAM`
-                  : 'RAM unknown'} · {hardware.vulkan ? 'Vulkan GPU available' : 'CPU only'}
-              </p>
-              <p class="hint">{recommendation.reason} Hardware guidance, not a speed benchmark.</p>
-            {:else}<p class="hint">{hardwareError || 'Detecting hardware…'}</p>{/if}
-            <div class="model-list" role="radiogroup" aria-label="Transcription model">
-              {#each models.filter((m) => m.family === 'asr') as m}
-                <div class="model-row" class:selected={device.voice.model === m.id}>
-                  <input
-                    type="radio"
-                    name="voice-model"
-                    aria-label={`Select ${m.name}${m.installed ? '' : ' (download required)'}`}
-                    checked={device.voice.model === m.id}
-                    disabled={voiceStatus !== 'idle' || switchingVoice || voiceCacheLoading || busy}
-                    onclick={(e) => {
-                      e.preventDefault();
-                      void task(() => selectVoiceModel(m.id));
-                    }}
-                  />
-                  <div>
-                    <strong>{m.name}</strong>{#if recommendation?.model === m.id}<span
-                        class="recommended">Recommended</span
-                      >{/if}
-                    <small>{Math.round(m.size / 1e6)} MB · {modelDescriptions[m.id]}</small>
-                    {#if hardware && device.voice.model === m.id}<small
-                        >{accelerationAdvice(hardware, m.id, device.voice.backend)}</small
-                      >{/if}
-                  </div>
-                  {#if m.installed}<span class="installed"><Check size={13} /> Installed</span>
-                    <button
-                      class="icon"
-                      aria-label={`Remove ${m.name}`}
-                      disabled={voiceStatus !== 'idle' ||
-                        switchingVoice ||
-                        voiceCacheLoading ||
-                        busy}
-                      onclick={() =>
-                        void task(async () => {
-                          await call('voice_release');
-                          voiceCacheSignature = '';
-                          await call('model_remove', { id: m.id });
-                          await loadModels();
-                        })}><Trash2 size={14} /></button
-                    >
-                  {:else}<button
-                      disabled={voiceStatus !== 'idle' ||
-                        switchingVoice ||
-                        voiceCacheLoading ||
-                        busy}
-                      onclick={() => void task(() => selectVoiceModel(m.id))}
-                      ><Download size={14} />{downloadProgress[m.id] || 'Download & select'}</button
-                    >{/if}
-                  {#if downloadProgress[m.id]}<progress
-                      aria-label={`${m.name} download`}
-                      max="100"
-                      value={downloadProgress[m.id].endsWith('%')
-                        ? parseInt(downloadProgress[m.id])
-                        : undefined}
-                    ></progress>{/if}
-                </div>
-              {/each}
-            </div>
-            {#if switchingVoice}<p role="status">
-                {Object.keys(downloadProgress).length ? 'Downloading model…' : 'Switching model…'}
-              </p>{/if}
-            <label
-              >Acceleration<select
-                bind:value={device.voice.backend}
-                disabled={voiceStatus !== 'idle' || switchingVoice || voiceCacheLoading}
-                onchange={() => void changeVoiceModel()}
-              >
-                <option value="auto">Automatic</option><option value="cpu">CPU</option><option
-                  value="vulkan"
-                  disabled={!!hardware && !hardware.vulkan}>GPU · Vulkan</option
-                >
-              </select></label
-            >
-            <details>
-              <summary>Supporting models · Silero / S1-mini</summary>
-              <div class="model-list">
-                {#each models.filter((m) => m.family !== 'asr') as m}<div class="model-row">
-                    <div>
-                      <strong>{m.name}</strong><small
-                        >{Math.round(m.size / 1e6)} MB · {m.license}</small
-                      >
-                    </div>
-                    {#if m.installed}<span class="installed"><Check size={13} /> Installed</span
-                      ><button
-                        class="icon"
-                        aria-label={`Remove ${m.name}`}
-                        disabled={voiceStatus !== 'idle' ||
-                          switchingVoice ||
-                          voiceCacheLoading ||
-                          busy}
-                        onclick={() =>
-                          void task(async () => {
-                            await call('model_remove', { id: m.id });
-                            await loadModels();
-                          })}><Trash2 size={14} /></button
-                      >{:else}<button
-                        disabled={!!downloadProgress[m.id]}
-                        onclick={() =>
-                          void task(async () => {
-                            downloadProgress[m.id] = 'Starting';
-                            try {
-                              await call('model_download', { id: m.id });
-                              await loadModels();
-                            } finally {
-                              delete downloadProgress[m.id];
-                            }
-                          })}><Download size={14} />{downloadProgress[m.id] || 'Download'}</button
-                      >{/if}
-                    {#if downloadProgress[m.id]}<progress
-                        aria-label={`${m.name} download`}
-                        max="100"
-                        value={downloadProgress[m.id].endsWith('%')
-                          ? parseInt(downloadProgress[m.id])
-                          : undefined}
-                      ></progress>{/if}
-                  </div>{/each}
-              </div>
-            </details>
-            {#if !voiceReady}<button
-                disabled={busy || switchingVoice || voiceStatus !== 'idle'}
-                onclick={() => void task(setupVoice)}
-                ><Download size={14} /> Install missing stack components</button
-              >{/if}
-          </details>
-          <details class="settings-section settings-disclosure" id="voice-shortcuts">
-            <summary
-              >Voice hotkeys and input <span
-                >{bindingFor('dictation').label} · {bindingFor('command').label}</span
-              ></summary
-            >
-            <p class="hint">
-              Choose separate shortcuts for terminal dictation and IDE commands. Capture stops if
-              DazeDev loses focus.
-            </p>
-            <p>
-              In toggle mode: tap to listen, tap to stop, then double-tap to submit the reviewed
-              text. The terminal must still be unchanged. Hold-to-talk keeps its press and release
-              behavior.
-            </p>
-            {#each ['dictation', 'command'] as mode}
-              {@const voiceInput = mode as VoiceMode}
-              <h4>{voiceInput === 'dictation' ? 'Terminal dictation' : 'IDE voice command'}</h4>
-              <div class="hotkey-assignments">
-                <div class="hotkey-record">
-                  <label
-                    >Keyboard / device<input readonly value={bindingFor(voiceInput).label} /></label
-                  >
-                  <button onclick={() => captureShortcut(voiceInput)}
-                    >{capturingShortcut === voiceInput ? 'Press hotkey…' : 'Record hotkey'}</button
-                  >
-                </div>
-                <label
-                  >Mouse / device<select
-                    value=""
-                    onchange={(e) => {
-                      const key = Number(e.currentTarget.value);
-                      if (key)
-                        void task(() =>
-                          saveShortcut(
-                            {
-                              key,
-                              ctrl: false,
-                              alt: false,
-                              shift: false,
-                              meta: false,
-                              label:
-                                e.currentTarget.selectedOptions[0].textContent || 'Device button',
-                            },
-                            voiceInput,
-                          ),
-                        );
-                    }}
-                  >
-                    <option value="">Choose a button</option><option value="4"
-                      >Middle mouse button</option
-                    ><option value="5">Mouse button 4</option><option value="6"
-                      >Mouse button 5</option
-                    ><option value="179">Media play/pause</option><option value="176"
-                      >Media next</option
-                    ><option value="177">Media previous</option><option value="173"
-                      >Volume mute</option
-                    >
-                  </select></label
-                >
-              </div>
-            {/each}
-            {#if shortcutStatus}<p role="status" class="hint">{shortcutStatus}</p>{/if}
-            <details class="settings-advanced">
-              <summary>Recording behavior and model memory</summary>
-              <p class="hint">
-                While listening, Enter finishes transcription and leaves dictated text for review,
-                even when automatic submission is enabled. Escape abandons capture. These keys never
-                submit a terminal prompt or implement an IDE command while recording.
-              </p>
-              <label
-                >Activation<select bind:value={device.inputMode} onchange={persistDevice}
-                  ><option value="toggle">Press to start / stop</option><option value="hold"
-                    >Hold to talk</option
-                  ></select
-                ></label
-              >
-              <div class="settings-checks">
-                <label class="check"
-                  ><input
-                    type="checkbox"
-                    bind:checked={device.voice.cleanup}
-                    disabled={voiceStatus !== 'idle' || switchingVoice || voiceCacheLoading}
-                    onchange={() => void changeVoiceModel()}
-                  /> S1-mini tidy-up</label
-                ><label
-                  >Voice model memory<select
-                    value={device.voice.keepLoaded === false ? 'release' : 'ready'}
-                    disabled={voiceStatus !== 'idle' || switchingVoice || voiceCacheLoading}
-                    onchange={(e) => {
-                      device.voice.keepLoaded = e.currentTarget.value === 'ready';
-                      void changeVoiceModel();
-                    }}
-                  >
-                    <option value="ready">Preload and keep all voice models ready</option>
-                    <option value="release">Release models after each recording</option>
-                  </select></label
-                ><label class="check"
-                  ><input
-                    type="checkbox"
-                    bind:checked={device.voice.automatic}
-                    onchange={persistDevice}
-                  /> Automatically press Enter after paste</label
-                >
-              </div>
-              <p class="hint">
-                {voiceCacheLoading ? 'Preparing voice models… ' : ''}Preload uses more RAM to
-                prepare installed models before recording and retain the cleanup service. Release
-                mode saves RAM between recordings. The current behavior keeps speech recognition
-                after its first use and reloads cleanup when needed. None of these options keeps the
-                microphone on.
-              </p>
-              <p class="hint">
-                Text is pasted when ready. Press Enter to send unless automatic entry is enabled.
-              </p>
-            </details>
-            <div class="microphone-settings">
-              <label
-                >Microphone<select bind:value={device.voice.microphone} onchange={persistDevice}
-                  ><option value="">System default</option
-                  >{#if device.voice.microphone && !microphones.some((m) => m.deviceId === device.voice.microphone)}<option
-                      value={device.voice.microphone}
-                      >Selected input unavailable - refresh devices</option
-                    >{/if}{#each microphones as m}<option value={m.deviceId}
-                      >{m.label || `Audio input ${microphones.indexOf(m) + 1}`}</option
-                    >{/each}</select
-                ></label
-              ><button disabled={microphoneLoading} onclick={() => void refreshMicrophones()}
-                >{microphoneLoading ? 'Checking microphones…' : 'Refresh microphones'}</button
-              >
-              {#if microphoneError}<p class="inline-error" role="alert">{microphoneError}</p>{/if}
-            </div>
-          </details>
-          <details class="settings-section settings-disclosure">
-            <summary>Appearance <span>{device.theme}</span></summary>
-            <div class="settings-grid">
-              <label
-                >Theme<select bind:value={device.theme} onchange={persistDevice}
-                  ><option value="blue">Blue</option><option value="charcoal">Charcoal</option
-                  ><option value="green">Green</option></select
-                ></label
-              >
-              <label
-                >Recording highlight<select
-                  value={recordingHighlight(device.recordingHighlight)}
-                  onchange={(e) => {
-                    device.recordingHighlight = recordingHighlight(e.currentTarget.value);
-                    persistDevice();
-                  }}
-                  >{#each recordingHighlights as effect}<option value={effect.id}
-                      >{effect.name}</option
-                    >{/each}</select
-                ></label
-              >
-              <label
-                >Highlight animation<select
-                  bind:value={device.highlightMotion}
-                  onchange={persistDevice}
-                >
-                  <option value="system">Follow system</option>
-                  <option value="animate">Always animate highlights</option>
-                  <option value="static">Keep highlights still</option>
-                </select></label
-              >
-              {#if systemReducedMotion && (!device.highlightMotion || device.highlightMotion === 'system')}
-                <p class="muted">
-                  Your system has reduced motion enabled. Choose Always animate highlights to enable
-                  movement here.
-                </p>
-              {/if}
-              {#if recordingHighlight(device.recordingHighlight) === 'static'}<label
-                  >Highlight colour<input
-                    type="color"
-                    value={device.recordingHighlightColor || '#39bdd7'}
-                    oninput={(e) => {
-                      device.recordingHighlightColor = e.currentTarget.value;
-                      persistDevice();
-                    }}
-                  /></label
-                >{/if}
-            </div>
-            <div
-              class="recording-highlight highlight-preview"
-              data-highlight={recordingHighlight(device.recordingHighlight)}
-              style:--voice-highlight-color={device.recordingHighlightColor || '#39bdd7'}
-              aria-label="Recording highlight preview"
-            >
-              {#if recordingHighlight(device.recordingHighlight) !== 'static'}<HighlightEffect
-                  kind={recordingHighlight(device.recordingHighlight)}
-                />{/if}
-              Highlight preview
-            </div>
-          </details>
-          {#if device.terminal}<details class="settings-section settings-disclosure">
-              <summary>Terminal <span>Text, notifications and clipboard</span></summary>
-              <label class="check"
-                ><input
-                  type="checkbox"
-                  checked={device.terminalAlerts?.visual || false}
-                  onchange={(e) => {
-                    device.terminalAlerts = {
-                      sound: device.terminalAlerts?.sound || false,
-                      visual: e.currentTarget.checked,
-                    };
-                    persistDevice();
-                  }}
-                /> Show terminal completion notifications</label
-              >
-              <label class="check"
-                ><input
-                  type="checkbox"
-                  checked={device.terminalAlerts?.sound || false}
-                  onchange={(e) => {
-                    device.terminalAlerts = {
-                      visual: device.terminalAlerts?.visual || false,
-                      sound: e.currentTarget.checked,
-                    };
-                    persistDevice();
-                    if (e.currentTarget.checked) void softAlert().catch(fail);
-                  }}
-                /> Play a soft notification sound</label
-              >
-              <p class="hint">
-                Uses explicit terminal notifications or shell command-completion markers. Support
-                depends on the agent or shell integration; DazeDev does not infer completion from
-                inactivity. "Command finished" shows when you are not watching that terminal or the
-                command ran for 10 seconds or more. Each terminal alerts at most once every three
-                seconds.
-              </p>
-              <div class="form-row">
-                <label
-                  >Font size<input
-                    type="number"
-                    min="8"
-                    max="32"
-                    bind:value={device.terminal.fontSize}
-                    onchange={persistDevice}
-                  /></label
-                >
-                <label
-                  >History lines<input
-                    type="number"
-                    min="100"
-                    max="100000"
-                    step="100"
-                    bind:value={device.terminal.scrollback}
-                    onchange={persistDevice}
-                  /></label
-                >
-              </div>
-              <p class="hint">
-                Each open terminal keeps this many lines in memory, including terminals in other
-                workspaces. Default 10,000; up to 100,000.
-              </p>
-              <div class="settings-checks">
-                <label class="check"
-                  ><input
-                    type="checkbox"
-                    bind:checked={device.terminal.gpu}
-                    onchange={persistDevice}
-                  /> GPU rendering</label
-                >
-                <label class="check"
-                  ><input
-                    type="checkbox"
-                    bind:checked={device.terminal.images}
-                    onchange={persistDevice}
-                  /> Terminal images</label
-                >
-                <label class="check"
-                  ><input
-                    type="checkbox"
-                    bind:checked={device.terminal.ligatures}
-                    onchange={persistDevice}
-                  /> Font ligatures</label
-                >
-              </div>
-              <label class="check"
-                ><input
-                  type="checkbox"
-                  bind:checked={device.terminal.screenReader}
-                  onchange={persistDevice}
-                />Screen reader terminal output</label
-              >
-              <label class="check"
-                ><input
-                  type="checkbox"
-                  checked={device.terminal.confirmPaste !== false}
-                  onchange={(e) => setPasteConfirmation(e.currentTarget.checked)}
-                /> Ask before pasting text with line breaks</label
-              >
-              <label
-                >Remote copy (OSC 52)<select
-                  bind:value={device.terminal.clipboard}
-                  onchange={persistDevice}
-                >
-                  {@render clipboardOptions()}
-                </select></label
-              >
-              <p class="hint">
-                Copy: Ctrl+Shift+C. Paste: Ctrl+V or Ctrl+Shift+V. Search: {appShortcut(
-                  device.appShortcuts,
-                  'search',
-                ).label}. Remote paste access lets programs on the host read this device's
-                clipboard.
-              </p>
-            </details>{/if}
-          <details class="settings-section settings-disclosure">
-            <summary>Keyboard shortcuts <span>App actions</span></summary>
-            <p class="hint">
-              Ctrl+letter shortcuts without Shift or Alt are left to the terminal while a terminal
-              has focus, so shell and editor keys such as Ctrl+K keep working there.
-            </p>
-            {#each appActions as action}
-              <div class="hotkey-record">
-                <label
-                  >{action.label}<input
-                    readonly
-                    value={appShortcut(device.appShortcuts, action.id).label}
-                  /></label
-                >
-                <button
-                  onclick={() => {
-                    capturingAppShortcut = action.id;
-                    appShortcutStatus = 'Press the new key combination. Escape cancels.';
-                  }}
-                  >{capturingAppShortcut === action.id ? 'Press keys…' : 'Change'}</button
-                >
-              </div>
-            {/each}
-            <button onclick={resetAppShortcuts}>Reset to defaults</button>
-            {#if appShortcutStatus}<p role="status" class="hint">{appShortcutStatus}</p>{/if}
-          </details>
-          <details class="settings-section settings-disclosure">
-            <summary>Connections <span>{device.hosts.length} hosts</span></summary>
-            <p class="hint">
-              Windows local terminals can use native PowerShell or WSL. Native sessions support
-              background persistence and same-process handoff to a PowerShell window. Remote
-              terminals use the host login shell.
-            </p>
-            {#if !device.hosts.length}<p class="hint">No hosts configured.</p>{/if}
-            <button onclick={addHost}><Plus size={14} /> Add host</button>
-            {#each device.hosts as h}<div class="item-row">
-                <div><strong>{h.name}</strong><small>{h.address || h.kind}</small></div>
-                <button
-                  onclick={() => {
-                    newHost = { ...h, nativeShell: h.nativeShell || 'powershell' };
-                    modal = 'host';
-                  }}>Edit</button
-                ><button
-                  onclick={() =>
-                    void task(async () => {
-                      await disconnectHost(h.id);
-                      connections[h.id] = 'Disconnected';
-                    })}>Disconnect</button
-                >
-              </div>{/each}
-            {#if settingsHost}<label
-                >Clipboard access for selected host<select
-                  value={device.clipboardByHost?.[settingsHost] ||
-                    device.terminal?.clipboard ||
-                    'notify'}
-                  onchange={(e) => {
-                    (device.clipboardByHost ||= {})[settingsHost] = e.currentTarget
-                      .value as TerminalSettings['clipboard'];
-                    persistDevice();
-                  }}
-                  >{@render clipboardOptions()}</select
-                ></label
-              >{/if}
-          </details>
-          {#if profiles[settingsHost]}<details class="settings-section settings-disclosure">
-              <summary>
-                {device.hosts.find((h) => h.id === settingsHost)?.name} preferences
-                <span>Saved on host</span>
-              </summary>
-              <label
-                >Repository roots · one per line<textarea rows="3" bind:value={roots}
-                ></textarea></label
-              ><label
-                >Additional orientation guidance<textarea rows="3" bind:value={guidance}
-                ></textarea></label
-              >
-              <label
-                >Repository-start prompt template<textarea rows="8" bind:value={promptTemplate}
-                ></textarea></label
-              >
-              <p class="hint">
-                Used when starting an agent with orientation enabled and by the terminal Repo
-                picker. Saved on this host.
-              </p>
-              <p class="hint">
-                Variables: {promptVariables.map((v) => '{{' + v + '}}').join(', ')}. Values are
-                inserted literally.
-              </p>
-              {#if unknownVariables(promptTemplate).length}<p class="inline-error">
-                  Unknown variables: {unknownVariables(promptTemplate).join(', ')}
-                </p>{/if}
-              <button onclick={() => (promptTemplate = defaultPrompt)}>Reset template</button>
-              <details>
-                <summary>Preview with example repository</summary>
-                <pre class="prompt-preview">{renderPrompt(promptTemplate, promptValues())}</pre>
-              </details>
-              <div class="form-row">
-                <button
-                  disabled={unknownVariables(promptTemplate).length > 0}
-                  onclick={() => {
-                    profiles[settingsHost].preferences.roots = roots
-                      .split('\n')
-                      .map((x) => x.trim())
-                      .filter(Boolean);
-                    profiles[settingsHost].preferences.guidance = guidance;
-                    profiles[settingsHost].preferences.promptTemplate = promptTemplate;
-                    saved(settingsHost);
-                    notice = 'Host preferences queued for saving.';
-                  }}>Save host preferences</button
-                ><button
-                  onclick={() =>
-                    void task(async () => {
-                      const local = $state.snapshot(
-                        profiles[settingsHost] || recovery[settingsHost],
-                      );
-                      if (local) {
-                        (device.profileBackups ||= {})[settingsHost] = [
-                          local,
-                          ...(device.profileBackups?.[settingsHost] || []),
-                        ].slice(0, 3);
-                        await call('device_save', {
-                          value: { ...$state.snapshot(device), recovery },
-                        });
-                      }
-                      const backup = JSON.stringify(local, null, 2);
-                      const url = URL.createObjectURL(
-                        new Blob([backup], { type: 'application/json' }),
-                      );
-                      const a = document.createElement('a');
-                      a.href = url;
-                      a.download = 'dazedev-workspace-recovery.json';
-                      a.click();
-                      setTimeout(() => URL.revokeObjectURL(url), 1000);
-                      replaceProfile(
-                        settingsHost,
-                        rebindOwner(await rpc<Profile>(settingsHost, 'profile_load'), settingsHost),
-                      );
-                      profileBlocked[settingsHost] = false;
-                      delete recovery[settingsHost];
-                      saveState[settingsHost] = 'Restored';
-                      persistDevice();
-                    })}>Reload host profile</button
-                >
-              </div>
-            </details>{/if}
+          <VoiceModelsSection
+            {busy}
+            {changeVoiceModel}
+            bind:device
+            {downloadModel}
+            {downloadProgress}
+            hardware={voiceModels.hardware}
+            hardwareError={voiceModels.hardwareError}
+            models={voiceModels.models}
+            modelsLoaded={voiceModels.modelsLoaded}
+            recommendation={voiceModels.recommendation}
+            {removeModel}
+            {selectVoiceModel}
+            {setupVoice}
+            switchingVoice={voiceModels.switching}
+            {task}
+            voiceCacheLoading={voiceModels.cacheLoading}
+            voiceReady={voiceModels.ready}
+            {voiceStatus}
+          />
+          <VoiceHotkeysSection
+            {bindingFor}
+            {captureShortcut}
+            {capturingShortcut}
+            {changeVoiceModel}
+            bind:device
+            microphoneError={voiceModels.microphoneError}
+            microphoneLoading={voiceModels.microphoneLoading}
+            microphones={voiceModels.microphones}
+            {persistDevice}
+            {refreshMicrophones}
+            {saveShortcut}
+            {shortcutStatus}
+            switchingVoice={voiceModels.switching}
+            {task}
+            voiceCacheLoading={voiceModels.cacheLoading}
+            {voiceStatus}
+          />
+          <AppearanceSection bind:device {persistDevice} {systemReducedMotion} />
+          <TerminalSection bind:device {fail} {persistDevice} {setPasteConfirmation} {softAlert} />
+          <ShortcutsSection
+            bind:appShortcutStatus
+            bind:capturingAppShortcut
+            {device}
+            {resetAppShortcuts}
+          />
+          <ConnectionsSection
+            {addHost}
+            bind:connections={net.connections}
+            bind:device
+            {disconnectHost}
+            bind:modal
+            bind:newHost
+            {persistDevice}
+            {settingsHost}
+            {task}
+          />
+          <HostPreferencesSection
+            {device}
+            bind:guidance
+            {profiles}
+            bind:promptTemplate
+            {promptValues}
+            {reloadHostProfile}
+            bind:roots
+            {saveHostPreferences}
+            {settingsHost}
+            {task}
+          />
           <details class="settings-section settings-disclosure">
             <summary>Licenses and credits</summary>
             <p class="hint">Portable data: {clientInfo.dataPath || 'beside the executable'}</p>
@@ -6485,131 +4860,36 @@
           </details>
         </div>
       {:else if modal === 'repos'}
-        <button disabled={busy} onclick={() => void task(() => refresh())}
-          >Refresh repositories</button
-        >
-        <RepoPicker
-          repos={inventories[device.activeHost]?.repos || []}
-          hostId={device.activeHost}
-          warnings={inventories[device.activeHost]?.warnings || []}
-          disabled={busy}
-          onchoose={(repo) => {
-            showLaunch();
-            form.repo = repo.path;
-          }}
+        <Repos
+          {busy}
+          {cloneRepo}
+          {device}
+          bind:form
+          {githubRepos}
+          {inventories}
+          {loadGithubRepos}
+          {refresh}
+          {search}
+          {showLaunch}
+          {task}
         />
-        <div class="settings-section">
-          <h3>GitHub repositories</h3>
-          <div class="form-row">
-            <label
-              >Account<select bind:value={form.identity}
-                ><option value="">Select account</option
-                >{#each inventories[device.activeHost]?.identities || [] as i}<option
-                    value={i.login}>{i.login}</option
-                  >{/each}</select
-              ></label
-            ><button
-              disabled={!form.identity || busy}
-              onclick={() =>
-                void task(async () => {
-                  githubRepos = (
-                    await rpc<{ full_name: string; description: string }[][]>(
-                      device.activeHost,
-                      'github_repos',
-                      { identity: form.identity },
-                    )
-                  ).flat();
-                })}>Load repositories</button
-            >
-          </div>
-          {#each githubRepos.filter((r) => r.full_name
-              .toLowerCase()
-              .includes(search.toLowerCase())) as r}<div class="item-row">
-              <div>
-                <strong>{r.full_name}</strong><small>{r.description || 'GitHub repository'}</small>
-              </div>
-              <button
-                disabled={busy}
-                onclick={() =>
-                  void task(async () => {
-                    const root = profiles[device.activeHost].preferences.roots[0];
-                    if (!root) throw new Error('Set a repository root in host settings.');
-                    await rpc(device.activeHost, 'clone', {
-                      repo: r.full_name,
-                      root,
-                      identity: form.identity,
-                    });
-                    await refresh();
-                  })}>Clone</button
-              >
-            </div>{/each}
-        </div>
-      {:else if modal === 'agents'}<p class="hint">
-          Detected on {host?.name || 'the selected host'}. Authentication stays in each agent’s own
-          CLI.
-        </p>
-        {#each inventories[device.activeHost]?.agents || [] as a}<div class="agent-card">
-            <div>
-              <strong>{a.id}</strong><span class="badge">{a.path ? 'Installed' : 'Not found'}</span>
-            </div>
-            <small>{a.path || a.install}</small>{#if a.path}<small>{a.version}</small>{/if}
-            <button disabled={busy} onclick={() => void task(() => startAgentFromPicker(a.id))}>
-              {#if !a.path}<Download size={14} />{/if}{a.path
-                ? host?.kind === 'powershell'
-                  ? 'Start in new PowerShell session'
-                  : 'Start in new tmux session'
-                : 'Install and start'}</button
-            >
-          </div>{/each}<button onclick={() => void task(() => refresh())}
-          ><RefreshCw size={14} /> Refresh discovery</button
-        >
-      {:else if modal === 'worktree'}{#if worktreeQuestion}<div
-            class="worktree-question"
-            role="group"
-            aria-labelledby="worktree-question-text"
-          >
-            <p id="worktree-question-text">
-              This repository has {worktreeQuestion.script}. Run it to create the worktree?
-            </p>
-            <div class="row">
-              <button
-                class="primary"
-                disabled={busy}
-                onclick={() => void task(() => sendWorktree(true))}>Run script</button
-              >
-              <button disabled={busy} onclick={() => void task(() => sendWorktree(false))}
-                >Create without script</button
-              >
-              <button disabled={busy} onclick={() => (worktreeQuestion = null)}>Cancel</button>
-            </div>
-          </div>{:else}<form
-            onsubmit={(e) => {
-              e.preventDefault();
-              void task(async () => {
-                if (!activePane?.repo) throw new Error('Select a repository terminal first.');
-                worktreeRequest = {
-                  hostId: activePane.hostId,
-                  args: {
-                    path: activePane.repo,
-                    branch,
-                    destination,
-                    identity: activePane.identity,
-                  },
-                };
-                await sendWorktree();
-              });
-            }}
-          >
-            <label>Branch<input bind:value={branch} required /></label><label
-              >Worktree directory<input bind:value={destination} required /></label
-            >
-            <p class="hint">Asks first when the repository provides scripts/new-worktree.sh.</p>
-            <button class="primary" disabled={busy}>Create worktree</button>
-          </form>{/if}{/if}
+      {:else if modal === 'agents'}
+        <Agents {busy} {device} {host} {inventories} {refresh} {startAgentFromPicker} {task} />
+      {:else if modal === 'worktree'}
+        <Worktree
+          bind:branch
+          {busy}
+          {createWorktree}
+          bind:destination
+          {sendWorktree}
+          {task}
+          bind:worktreeQuestion
+        />
+      {/if}
     </div>
   </div>{/if}
 
-{#if updatePrompt && updateCanPresent}
+{#if updates.prompt && updateCanPresent}
   <div class="modal-backdrop" role="presentation">
     <div
       class="modal"
@@ -6619,43 +4899,21 @@
       tabindex="-1"
       use:focusDialog
     >
-      <h2>
-        {availableUpdate
-          ? `DazeDev ${releaseVersion(availableUpdate.version)} is available`
-          : 'DazeDev updates'}
-      </h2>
-      <p class="hint">
-        Installed: {releaseVersion(clientInfo.version)}.{availableUpdate
-          ? ` Download: ${(availableUpdate.size / 1000000).toFixed(1)} MB.`
-          : ''}
-      </p>
-      <button disabled={updateState === 'installing'} onclick={() => showChangelog('')}
-        >Changelog</button
-      >
-      {#if availableUpdate}<p class="hint">
-          The app restarts after updating. Your settings, models and remote tmux sessions are
-          preserved.
-        </p>{/if}
-      {#if !desktop || !clientInfo.updateSupported}<p class="hint">
-          Download updates manually for this platform.
-        </p>{/if}
-      <p role="status">
-        {updateStatus || updateLabel}{updateState === 'installing' ? ` ${updateProgress}%` : ''}
-      </p>
-      <div class="form-row">
-        <button disabled={updateState === 'installing'} onclick={closeUpdates}
-          >{availableUpdate ? 'Later' : 'Close'}</button
-        >
-        {#if desktop && clientInfo.updateSupported}<button
-            disabled={updateBusy}
-            onclick={() => void checkUpdates()}>Check again</button
-          >{/if}
-        {#if availableUpdate}<button
-            class="primary"
-            disabled={updateBusy || voiceStatus !== 'idle' || busy}
-            onclick={() => void installUpdate()}>Download &amp; restart</button
-          >{/if}
-      </div>
+      <UpdatePrompt
+        availableUpdate={updates.available}
+        {busy}
+        {checkUpdates}
+        {clientInfo}
+        {closeUpdates}
+        {installUpdate}
+        {showChangelog}
+        updateBusy={updates.busy}
+        updateLabel={updates.label}
+        updateProgress={updates.progress}
+        updateState={updates.state}
+        updateStatus={updates.status}
+        {voiceStatus}
+      />
     </div>
   </div>
 {/if}
@@ -6708,11 +4966,6 @@
     </div>
   </div>
 {/if}
-{#snippet clipboardOptions()}
-  <option value="off">Block</option><option value="notify">Allow and notify</option><option
-    value="write">Allow silently</option
-  ><option value="read-write">Allow, and let programs read this clipboard</option>
-{/snippet}
 {#if closeFailure}
   <div class="modal-backdrop" role="presentation">
     <div
@@ -6723,16 +4976,7 @@
       tabindex="-1"
       use:focusDialog
     >
-      <h2 id="close-failure-title">DazeDev could not check everything before closing</h2>
-      <p class="inline-error">{closeFailure}</p>
-      <p class="hint">
-        Close anyway ends this window now. Remote tmux sessions keep running; local PowerShell
-        sessions may be left in the background.
-      </p>
-      <div class="row">
-        <button class="danger" onclick={() => void task(closeAnyway)}>Close anyway</button>
-        <button onclick={() => (closeFailure = '')}>Cancel</button>
-      </div>
+      <CloseFailure {closeAnyway} bind:closeFailure {task} />
     </div>
   </div>
 {/if}
@@ -6747,23 +4991,13 @@
       tabindex="-1"
       use:focusDialog={{ key: browserRequest.requestId }}
     >
-      <h2 id="browser-request-title">
-        {device.hosts.find((h) => h.id === browserRequest.hostId)?.name || 'A connected host'} wants
-        to open
-      </h2>
-      <p id="browser-request-url" class="browser-request-url"><code>{browserRequest.url}</code></p>
-      <label class="check"
-        ><input type="checkbox" bind:checked={browserTrust} /> Allow links from this host until
-        DazeDev restarts</label
-      >
-      {#if browserRequests.length > 1}<p class="hint">
-          {browserRequests.length - 1} more {browserRequests.length === 2 ? 'request' : 'requests'}
-          waiting.
-        </p>{/if}
-      <div class="row">
-        <button class="primary" onclick={() => void decideBrowserRequest(true)}>Open</button>
-        <button onclick={() => void decideBrowserRequest(false)}>Don't open</button>
-      </div>
+      <BrowserRequest
+        {browserRequest}
+        {browserRequests}
+        bind:browserTrust
+        {decideBrowserRequest}
+        {device}
+      />
     </div>
   </div>
 {/if}
