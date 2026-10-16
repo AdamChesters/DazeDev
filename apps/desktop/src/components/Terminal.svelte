@@ -1098,8 +1098,8 @@
     left: 0;
     right: 0;
     padding: 8px;
-    background: var(--surface, #20252a);
-    color: var(--text, #eceeef);
+    background: var(--surface);
+    color: var(--text);
     border-top: 1px solid #bd8882;
     z-index: 4;
   }

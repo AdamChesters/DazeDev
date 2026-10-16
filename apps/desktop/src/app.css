@@ -6,7 +6,7 @@
     BlinkMacSystemFont,
     'Segoe UI',
     sans-serif;
-  color: #edede8;
+  color: var(--text);
   background: var(--bg);
   font-synthesis: none;
   font-size: 13px;
@@ -17,6 +17,10 @@
   --muted: #a7aaa5;
   --accent: #b9d5ad;
   --red: #efaaa2;
+  --text: #edede8;
+  /* Aliases used by components; they follow the theme's panel and border. */
+  --surface: var(--panel);
+  --line: var(--border);
 }
 * {
   box-sizing: border-box;
