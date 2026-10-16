@@ -1174,6 +1174,7 @@ mod tests {
             .unwrap();
         fs::remove_dir_all(server.root).unwrap();
     }
+    #[cfg(unix)]
     #[test]
     fn broker_ipc_receives_large_replies_before_server_disconnects() {
         let (server, _) = fixture();
