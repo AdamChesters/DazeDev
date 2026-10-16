@@ -19,7 +19,9 @@ mod tests {
         let value = std::sync::Arc::new(Mutex::new(1));
         let worker = value.clone();
         let _ = std::thread::spawn(move || {
-            let _guard = worker.lock().unwrap();
+            let _guard = worker
+                .lock()
+                .unwrap_or_else(std::sync::PoisonError::into_inner);
             panic!("worker failed");
         })
         .join();

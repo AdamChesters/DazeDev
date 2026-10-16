@@ -683,7 +683,7 @@ fn spawn_piped(
 // The channel retains an early exit until the caller has installed its connection
 // and callback. EOF and child completion share the same active flag below.
 fn observe_exit(pty: &Pty, finished: impl FnOnce() + Send + 'static) {
-    if let Some(exited) = pty.exited.lock().unwrap().take() {
+    if let Some(exited) = lock(&pty.exited).take() {
         std::thread::spawn(move || {
             let _ = exited.recv();
             finished();
@@ -702,9 +702,9 @@ fn host_finished(conn: &Connection, id: &str, sink: &EventSink) {
     conn.pty.writable.store(false, Ordering::Release);
     // Serialize the ready/closed notifications too, so buffered output cannot
     // mark an exited host ready after its closed event has been delivered.
-    let mut ready = conn.ready.lock().unwrap();
+    let mut ready = lock(&conn.ready);
     *ready = false;
-    for (_, tx) in conn.pending.lock().unwrap().drain() {
+    for (_, tx) in lock(&conn.pending).drain() {
         let _ = tx.send(Err("Host disconnected".into()));
     }
     if notify {
@@ -712,7 +712,7 @@ fn host_finished(conn: &Connection, id: &str, sink: &EventSink) {
     }
 }
 fn host_ready(conn: &Connection, id: &str, identity: Value, sink: &EventSink) -> bool {
-    let mut ready = conn.ready.lock().unwrap();
+    let mut ready = lock(&conn.ready);
     if !conn.pty.active.load(Ordering::Acquire) {
         return false;
     }
@@ -1063,10 +1063,10 @@ fn run_control(
 }
 impl Transport {
     pub fn set_native_root(&self, path: std::path::PathBuf) {
-        *self.native_root.lock().unwrap() = Some(path);
+        *lock(&self.native_root) = Some(path);
     }
     fn native_client(&self, id: &str) -> Option<crate::local_sessions::Client> {
-        self.native_hosts.lock().unwrap().get(id).cloned()
+        lock(&self.native_hosts).get(id).cloned()
     }
     pub fn native_close(&self, host: &str, ids: &[String], action: &str) -> Result<(), String> {
         let client = self
@@ -1081,12 +1081,13 @@ impl Transport {
                 }
                 "end" => {
                     // An existing broker can predate idempotent destroy.
-                    // Ignore only its exact missing-session response, then
-                    // continue ending the remaining explicitly chosen IDs.
-                    match client.request("destroy", json!({"id":id})) {
+                    // Ignore only its ended-session response, then continue
+                    // ending the remaining explicitly chosen IDs.
+                    match client.call("destroy", json!({"id":id})) {
                         Ok(_) => {}
-                        Err(error) if error == crate::local_sessions::SESSION_UNAVAILABLE => {}
-                        Err(error) => return Err(error),
+                        Err(error)
+                            if error.kind == crate::local_sessions::SessionErrorKind::Ended => {}
+                        Err(error) => return Err(error.into()),
                     }
                 }
                 _ => return Err("Choose end, background or external".into()),
@@ -1384,7 +1385,7 @@ impl Transport {
             .get(host_id)
             .cloned()
             .ok_or("Browser connection has expired")?;
-        if !conn.pty.active.load(Ordering::Acquire) || !*conn.ready.lock().unwrap() {
+        if !conn.pty.active.load(Ordering::Acquire) || !*lock(&conn.ready) {
             return Err("Browser connection has expired".into());
         }
         conn.browser.reserve(nonce, id)
@@ -1405,9 +1406,7 @@ impl Transport {
             .unwrap()
             .get(host_id)
             .map(|c| {
-                c.browser.nonce == nonce
-                    && c.pty.active.load(Ordering::Acquire)
-                    && *c.ready.lock().unwrap()
+                c.browser.nonce == nonce && c.pty.active.load(Ordering::Acquire) && *lock(&c.ready)
             })
             .unwrap_or(false)
     }
@@ -1461,7 +1460,7 @@ impl Transport {
             .get(id)
             .cloned()
             .ok_or("Host is not connected")?;
-        if !*c.ready.lock().unwrap() {
+        if !*lock(&c.ready) {
             return Err("Complete authentication first".into());
         }
         let request = uuid::Uuid::new_v4().to_string();
@@ -1524,11 +1523,11 @@ impl Transport {
         write(&c.pty, response.as_bytes())
     }
     pub fn disconnect(&self, id: &str) {
-        self.native_hosts.lock().unwrap().remove(id);
-        let removed = self.connections.lock().unwrap().remove(id);
+        lock(&self.native_hosts).remove(id);
+        let removed = lock(&self.connections).remove(id);
         if let Some(c) = removed {
             c.pty.active.store(false, Ordering::Release);
-            *c.ready.lock().unwrap() = false;
+            *lock(&c.ready) = false;
             for (_, tx) in lock(&c.pending).drain() {
                 let _ = tx.send(Err("Host disconnected".into()));
             }
@@ -1876,7 +1875,7 @@ impl Transport {
         Ok(())
     }
     pub fn ack(&self, id: &str, bytes: usize) {
-        if let Some(v) = self.native_views.lock().unwrap().get(id) {
+        if let Some(v) = lock(&self.native_views).get(id) {
             let _ = v
                 .pending
                 .fetch_update(Ordering::AcqRel, Ordering::Acquire, |n| {
@@ -1884,7 +1883,7 @@ impl Transport {
                 });
             return;
         }
-        if let Some(p) = self.terminals.lock().unwrap().get(id) {
+        if let Some(p) = lock(&self.terminals).get(id) {
             let _ = p
                 .pending
                 .fetch_update(Ordering::AcqRel, Ordering::Acquire, |n| {
@@ -1908,7 +1907,7 @@ impl Transport {
         write(&p, bytes)
     }
     pub fn input(&self, id: &str, data: &str) -> Result<(), String> {
-        if self.native_views.lock().unwrap().contains_key(id) {
+        if lock(&self.native_views).contains_key(id) {
             return self.binary(id, data.as_bytes());
         }
         let p = self
@@ -1935,7 +1934,7 @@ impl Transport {
         p.io.resize(cols, rows)
     }
     pub fn close(&self, id: &str) {
-        let native = self.native_views.lock().unwrap().remove(id);
+        let native = lock(&self.native_views).remove(id);
         if let Some(v) = native {
             v.active.store(false, Ordering::Release);
             let _ = v.request("view_detach", json!({}));
@@ -2045,7 +2044,7 @@ mod tests {
                 }
             });
             let transport = Arc::new(Transport::default());
-            transport.native_views.lock().unwrap().insert(
+            lock(&transport.native_views).insert(
                 "pane".into(),
                 Arc::new(NativeView {
                     client: crate::local_sessions::Client {
@@ -2077,7 +2076,7 @@ mod tests {
             io.join().unwrap().unwrap();
             broker.join().unwrap();
             transport.ack("pane", 1);
-            transport.native_views.lock().unwrap().clear();
+            lock(&transport.native_views).clear();
             std::fs::remove_dir_all(root).unwrap();
             assert!(
                 registry_available,
@@ -2133,7 +2132,7 @@ mod tests {
             }
         });
         let transport = Transport::default();
-        transport.native_hosts.lock().unwrap().insert(
+        lock(&transport.native_hosts).insert(
             "host".into(),
             crate::local_sessions::Client {
                 root: root.clone(),
@@ -2371,7 +2370,7 @@ mod tests {
             rx.recv_timeout(Duration::from_secs(2)).unwrap(),
             "host-closed"
         );
-        assert!(!*conn.ready.lock().unwrap());
+        assert!(!*lock(&conn.ready));
         assert!(!host_ready(&conn, "host", json!({}), &sink));
         host_finished(&conn, "host", &sink);
         assert!(rx.try_recv().is_err());
@@ -2417,7 +2416,7 @@ mod tests {
         command.args(["-c", "stty raw -echo; exec sleep 30"]);
         let (pty, _reader) = spawn(command).unwrap();
         let transport = Transport::default();
-        transport.connections.lock().unwrap().insert(
+        lock(&transport.connections).insert(
             "stalled".into(),
             Arc::new(Connection {
                 pty,

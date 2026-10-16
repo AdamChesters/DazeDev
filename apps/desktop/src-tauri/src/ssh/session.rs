@@ -1219,7 +1219,11 @@ mod tests {
     fn prompts_answer_only_a_waiting_question() {
         let shown = Arc::new(Mutex::new(Vec::<String>::new()));
         let sink = shown.clone();
-        let prompts = Prompts::new(move |t| sink.lock().unwrap().push(t.to_owned()));
+        let prompts = Prompts::new(move |t| {
+            sink.lock()
+                .unwrap_or_else(std::sync::PoisonError::into_inner)
+                .push(t.to_owned())
+        });
         assert!(!prompts.answer("early"));
         let waiting = prompts.clone();
         let answer = runtime().spawn(async move { waiting.ask("Password: ").await });
@@ -1230,7 +1234,13 @@ mod tests {
         }
         let value = runtime().block_on(answer).unwrap().unwrap();
         assert_eq!(value, "secret");
-        assert_eq!(shown.lock().unwrap().as_slice(), ["Password: "]);
+        assert_eq!(
+            shown
+                .lock()
+                .unwrap_or_else(std::sync::PoisonError::into_inner)
+                .as_slice(),
+            ["Password: "]
+        );
         prompts.close();
         assert!(runtime()
             .block_on(async { prompts.ask("Again: ").await })

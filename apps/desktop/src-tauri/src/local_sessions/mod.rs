@@ -512,11 +512,10 @@ impl Server {
             "destroy" => {
                 // A stale saved pane may outlive its broker session. Ending it
                 // again must still allow the desktop to remove that pane.
-                let s = match self.session(host, a) {
-                    Ok(s) => s,
-                    Err(error) if error == SESSION_UNAVAILABLE => return Ok(self.list(host)),
-                    Err(error) => return Err(error),
-                };
+                if !self.sessions.locked().contains_key(required(a, "id")?) {
+                    return Ok(self.list(host));
+                }
+                let s = self.session(host, a)?;
                 s.stop()?;
                 self.sessions.locked().remove(required(a, "id")?);
                 Ok(self.list(host))

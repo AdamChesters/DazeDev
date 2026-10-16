@@ -333,7 +333,9 @@ static TEST_CONFIG: std::sync::Mutex<Option<PathBuf>> = std::sync::Mutex::new(No
 /// user's real files.
 #[cfg(test)]
 pub fn set_test_config(path: Option<PathBuf>) {
-    *TEST_CONFIG.lock().unwrap() = path;
+    *TEST_CONFIG
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner) = path;
 }
 
 /// Run `ssh -G`; fall back to defaults when OpenSSH is missing or slow.
@@ -342,7 +344,11 @@ pub fn resolve(request: &Request) -> Resolved {
     let mut command = std::process::Command::new(ssh_program());
     command.arg("-G");
     #[cfg(test)]
-    if let Some(path) = TEST_CONFIG.lock().unwrap().clone() {
+    if let Some(path) = TEST_CONFIG
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner)
+        .clone()
+    {
         command.arg("-F").arg(path);
     }
     if let Some(port) = request.port {
