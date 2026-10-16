@@ -175,6 +175,7 @@
   import { releaseVersion } from './lib/release-version';
   import { focusDialog } from './lib/focus';
   import { DeviceStore } from './lib/state/device-store.svelte';
+  import { DetachedWindows } from './lib/state/detached-windows.svelte';
   import Agents from './components/modals/Agents.svelte';
   import BrowserRequest from './components/modals/BrowserRequest.svelte';
   import Changelog from './components/modals/Changelog.svelte';
@@ -299,11 +300,53 @@
   let repoContext = '';
   let repoChoices = $state<Repo[]>([]);
   let repoWarnings = $state<string[]>([]);
-  let detachedFocus = $state('');
   function appHasFocus() {
-    return document.hasFocus() || !!detachedFocus;
+    return document.hasFocus() || !!detached.focus;
   }
-  const detachedPanes = new SvelteMap<string, string>();
+  const detached = new DetachedWindows({
+    desktop,
+    call: (name, args) => call(name, args),
+    appWindow: getCurrentWindow,
+    terminal: (paneId) => terminals.get(paneId),
+    workspaces: () => workspaces,
+    windowState,
+    title: (pane, owner) =>
+      `${owner.name} / ${terminalPresentation(pane, paneStatus[pane.id]).name} - DazeDev`,
+    busy: () => !!modal || dictationActive,
+    selectWorkspace,
+    focusPane: (owner, paneId) => {
+      owner.focused = paneId;
+      setLocalFocus(owner.id, paneId);
+      if (device.activeWorkspace !== owner.id || device.activeHost !== owner.hostId) {
+        device.activeWorkspace = owner.id;
+        device.activeHost = owner.hostId;
+        persistDevice();
+      }
+    },
+    search: {
+      open: openTerminalSearch,
+      results: () => searchPanel?.showResults(),
+      step: (direction) => searchPanel?.step(direction),
+      close: closeTerminalSearch,
+    },
+    disablePasteConfirmation: () => setPasteConfirmation(false),
+    reconnect: async (hostId) => {
+      const host = device.hosts.find((h) => h.id === hostId);
+      if (host) await reconnectHost(host);
+    },
+    paneAction: async (action, pane) => {
+      if (action === 'repo') await chooseRepo(pane);
+      if (action === 'tmux') await showSessions(pane);
+      if (action === 'host') showHostConnection(pane);
+      if (action === 'model') await agentMenu(pane);
+      if (action === 'close') closePane(pane);
+    },
+    onopen: () => {
+      paneMenu = null;
+    },
+    onfail: fail,
+  });
+  const detachedPanes = detached.panes;
   function windowState(pane: Pane, workspace: Workspace): WindowTerminalState {
     return {
       pane: $state.snapshot(pane),
@@ -327,148 +370,9 @@
       metadata: paneStatus[pane.id],
     };
   }
-  function publishTerminal(paneId: string, value: unknown) {
-    if (detachedPanes.has(paneId))
-      void call('terminal_window_publish', { paneId, value }).catch(() => {});
-  }
   $effect(() => {
-    for (const [id] of detachedPanes) {
-      const owner = workspaces.find((w) => w.panes.some((p) => p.id === id));
-      const pane = owner?.panes.find((p) => p.id === id);
-      if (!owner || !pane) {
-        detachedPanes.delete(id);
-        void call('terminal_window_close', { paneId: id }).catch(fail);
-      } else publishTerminal(id, { kind: 'state', state: windowState(pane, owner) });
-    }
+    detached.sync();
   });
-  async function detachTerminal(pane: Pane, x?: number, y?: number, dragging = false) {
-    if (!desktop) throw new Error('Terminal windows are available in the desktop app.');
-    if (dictationActive || modal)
-      throw new Error('Finish the current action before moving this terminal.');
-    const owner = workspaces.find((w) => w.panes.some((p) => p.id === pane.id));
-    if (!owner || !terminals.get(pane.id)) throw new Error('Wait for the terminal to be ready.');
-    detachedPanes.set(pane.id, owner.id);
-    try {
-      await call('terminal_window_open', {
-        paneId: pane.id,
-        workspaceId: owner.id,
-        title: `${owner.name} / ${terminalPresentation(pane, paneStatus[pane.id]).name} - DazeDev`,
-        x: x ?? null,
-        y: y ?? null,
-        dragging,
-      });
-      paneMenu = null;
-    } catch (error) {
-      detachedPanes.delete(pane.id);
-      throw error;
-    }
-  }
-  async function dockTerminal(id: string) {
-    const owner = workspaces.find((w) => w.panes.some((p) => p.id === id));
-    detachedPanes.delete(id);
-    await call('terminal_window_close', { paneId: id });
-    if (owner) {
-      selectWorkspace(owner);
-      owner.focused = id;
-    }
-    await tick();
-    terminals.get(id)?.focus?.();
-  }
-  async function windowRequest(event: {
-    paneId: string;
-    requestId: string;
-    action: string;
-    args: Record<string, unknown>;
-  }) {
-    const { paneId, requestId, action, args } = event;
-    const owner = workspaces.find((w) => w.panes.some((p) => p.id === paneId));
-    const pane = owner?.panes.find((p) => p.id === paneId);
-    const terminal = terminals.get(paneId);
-    try {
-      if (!detachedPanes.has(paneId) || !owner || !pane || !terminal)
-        throw new Error('Terminal window is no longer attached.');
-      let result: unknown = null;
-      if (action === 'snapshot')
-        result = { state: windowState(pane, owner), snapshot: await terminal.snapshot?.() };
-      else if (action === 'search-open' || action === 'search-results') {
-        if (action === 'search-results') searchPanel?.showResults();
-        else openTerminalSearch(paneId);
-        await getCurrentWindow().show();
-        await getCurrentWindow().setFocus();
-      } else if (action === 'search-step')
-        await searchPanel?.step(Number(args.direction) < 0 ? -1 : 1);
-      else if (action === 'search-close') closeTerminalSearch();
-      else if (action === 'input') {
-        await terminal.input?.(String(args.data || ''));
-        result = terminal.context();
-      } else if (action === 'binary') await terminal.binary?.(String(args.data || ''));
-      else if (action === 'resize') await terminal.resize?.(Number(args.cols), Number(args.rows));
-      else if (action === 'paste') {
-        // The terminal window already asked about multi-line text.
-        await terminal.paste(String(args.text || ''), false, String(args.context || ''), 'clipboard');
-        result = terminal.context();
-      } else if (action === 'paste-confirm-off') {
-        setPasteConfirmation(false);
-      } else if (action === 'reconnect') {
-        terminal.resume?.();
-        const host = device.hosts.find((h) => h.id === pane.hostId);
-        if (host) await reconnectHost(host);
-      } else if (action === 'recover') {
-        if (!terminal.recover) throw new Error('Terminal recovery is unavailable. Return to the workspace and retry.');
-        await terminal.recover();
-      } else if (action === 'focus') {
-        owner.focused = paneId;
-        setLocalFocus(owner.id, paneId);
-        if (device.activeWorkspace !== owner.id || device.activeHost !== owner.hostId) {
-          device.activeWorkspace = owner.id;
-          device.activeHost = owner.hostId;
-          persistDevice();
-        }
-      } else if (action === 'dock') {
-        await call('terminal_window_publish', { paneId, value: { requestId, result: null } });
-        await dockTerminal(paneId);
-        return;
-      } else if (action === 'key') {
-        const options = {
-          key: String(args.key || ''),
-          code: String(args.code || ''),
-          ctrlKey: !!args.ctrlKey,
-          altKey: !!args.altKey,
-          shiftKey: !!args.shiftKey,
-          metaKey: !!args.metaKey,
-          repeat: !!args.repeat,
-        };
-        window.dispatchEvent(
-          new KeyboardEvent(args.type === 'keyup' ? 'keyup' : 'keydown', options),
-        );
-      } else if (action === 'pointer') {
-        window.dispatchEvent(
-          new PointerEvent(args.type === 'pointerup' ? 'pointerup' : 'pointerdown', {
-            button: Number(args.button),
-          }),
-        );
-      } else if (['repo', 'tmux', 'host', 'model', 'close'].includes(action)) {
-        if (modal || dictationActive)
-          throw new Error('Finish the current action in the workspace window first.');
-        selectWorkspace(owner);
-        owner.focused = paneId;
-        await getCurrentWindow().show();
-        await getCurrentWindow().unminimize();
-        await getCurrentWindow().setFocus();
-        if (action === 'repo') await chooseRepo(pane);
-        if (action === 'tmux') await showSessions(pane);
-        if (action === 'host') showHostConnection(pane);
-        if (action === 'model') await agentMenu(pane);
-        if (action === 'close') closePane(pane);
-      } else throw new Error('Unsupported terminal window action.');
-      await call('terminal_window_publish', { paneId, value: { requestId, result } });
-    } catch (error) {
-      await call('terminal_window_publish', {
-        paneId,
-        value: { requestId, error: String(error) },
-      }).catch(() => {});
-    }
-  }
   let terminalReturnFocus = '';
   function restoreTerminalFocus() {
     const id = terminalReturnFocus;
@@ -1456,7 +1360,7 @@
         restore();
         const pane = workspace.panes.find((pane) => pane.id === group[0]);
         if (pane)
-          void detachTerminal(pane, event.screenX - 120, event.screenY - 24, true).catch(fail);
+          void detached.detach(pane, event.screenX - 120, event.screenY - 24, true).catch(fail);
         return;
       }
       locate(event);
@@ -1895,7 +1799,7 @@
       await getCurrentWindow().setFocus();
     }
     if (detachedPanes.has(hit.paneId))
-      publishTerminal(hit.paneId, {
+      detached.publish(hit.paneId, {
         kind: 'search-selection',
         selection: controls.searchSelection?.(),
       });
@@ -1903,7 +1807,7 @@
   }
   function publishSearchNavigation(value: SearchNavigation | null, hit?: SearchHit) {
     for (const [id] of detachedPanes)
-      publishTerminal(id, {
+      detached.publish(id, {
         kind: 'search-navigation',
         navigation: id === hit?.paneId ? value : null,
       });
@@ -3008,7 +2912,7 @@
     if (mode === 'dictation' && voiceStatus === 'idle' && !device.listenOnboarded) {
       listenIntroTarget = target;
       modal = 'listen-intro';
-      if (desktop && detachedFocus) {
+      if (desktop && detached.focus) {
         await getCurrentWindow().show();
         await getCurrentWindow().unminimize();
         await getCurrentWindow().setFocus();
@@ -3391,16 +3295,12 @@
       on<{ paneId: string; requestId: string; action: string; args: Record<string, unknown> }>(
         'terminal-window-request',
         (event) => {
-          void windowRequest(event);
+          void detached.request(event);
         },
       ),
-      on<{ paneId: string; focused: boolean }>('terminal-window-focus', (event) => {
-        if (event.focused && detachedPanes.has(event.paneId)) detachedFocus = event.paneId;
-        else if (detachedFocus === event.paneId) {
-          detachedFocus = '';
-          window.dispatchEvent(new Event('blur'));
-        }
-      }),
+      on<{ paneId: string; focused: boolean }>('terminal-window-focus', (event) =>
+        detached.focused(event.paneId, event.focused),
+      ),
       on<{ requestId: string; hostId: string; url: string }>('browser-open-request', (request) => {
         if (
           typeof request?.requestId === 'string' &&
@@ -3418,10 +3318,7 @@
           })().catch(() => {});
         }
       }),
-      on<{ paneId: string }>('terminal-window-closed', (event) => {
-        detachedPanes.delete(event.paneId);
-        if (detachedFocus === event.paneId) detachedFocus = '';
-      }),
+      on<{ paneId: string }>('terminal-window-closed', (event) => detached.closed(event.paneId)),
     ])
       void subscription.then((stop) => {
         if (mounted) unsub.push(stop);
@@ -4205,7 +4102,7 @@
                 >Show {terminalPresentation(pane, paneStatus[pane.id]).name}</button
               >
               <button
-                onclick={() => void dockTerminal(pane.id).catch(fail)}
+                onclick={() => void detached.dock(pane.id).catch(fail)}
                 aria-label={`Return ${pane.name} to workspace`}>Return here</button
               >
             {/each}
@@ -4392,7 +4289,7 @@
                     <button
                       disabled={!desktop || dictationActive}
                       title="Open this terminal in a window you can drag to another screen"
-                      onclick={() => void detachTerminal(p).catch(fail)}
+                      onclick={() => void detached.detach(p).catch(fail)}
                       ><ArrowUpRight size={14} /> Other screen</button
                     >
                     <button
@@ -4549,7 +4446,7 @@
                       (notice = `${p.name}: a program on the host copied ${characters} characters to your clipboard.`)}
                     onpastesetting={setPasteConfirmation}
                     watching={() =>
-                      detachedPanes.has(p.id) ? detachedFocus === p.id : document.hasFocus()}
+                      detachedPanes.has(p.id) ? detached.focus === p.id : document.hasFocus()}
                     floating={detachedPanes.has(p.id)}
                     onterminalfocus={() => {
                       if (!detachedPanes.has(p.id)) return false;
