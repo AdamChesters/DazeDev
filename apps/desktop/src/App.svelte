@@ -160,7 +160,8 @@
     HOST_HEALTH_TIMEOUT,
     ConnectionOperations,
   } from './lib/connection-health';
-  import { UpdateCheck, pollUpdates, canPresentUpdate } from './lib/update-checks';
+  import { pollUpdates, canPresentUpdate } from './lib/update-checks';
+  import { Updates, type UpdateInfo } from './lib/state/updates.svelte';
   import { version as appVersion } from '../package.json';
   import { Capture } from './lib/audio';
   import { VoiceCaptureKeys } from './lib/voice-capture-keys';
@@ -675,32 +676,25 @@
     migration: '',
     updateSupported: true,
   });
-  let availableUpdate = $state<{ version: string; notes: string; size: number } | null>(null);
-  let updateStatus = $state(''),
-    updateBusy = $state(false),
-    updateProgress = $state(0),
-    updatePrompt = $state(false);
-  const updateCheck = new UpdateCheck<{ version: string; notes: string; size: number } | null>();
-  let updateState = $state<
-    'unchecked' | 'checking' | 'current' | 'available' | 'error' | 'installing'
-  >('unchecked');
-  let updateReturn = '';
-  let automaticUpdatePending = $state(false);
-  const updateLabel = $derived(
-    !desktop || !clientInfo.updateSupported
-      ? 'Manual updates'
-      : updateState === 'checking'
-        ? 'Checking…'
-        : updateState === 'installing'
-          ? 'Installing…'
-          : updateState === 'error'
-            ? 'Check failed'
-            : availableUpdate
-              ? 'Update available'
-              : updateState === 'current'
-                ? 'Up to date'
-                : 'Not checked',
-  );
+  const updates = new Updates({
+    desktop,
+    supported: () => clientInfo.updateSupported,
+    modal: () => modal,
+    setModal: (value) => {
+      modal = value;
+    },
+    canPresent: () => updateCanPresent,
+    voiceBusy: () => voiceStatus !== 'idle' || !!dictation.trim() || !!heldDictation,
+    check: () => call<UpdateInfo | null>('update_check'),
+    download: (version) => call('update_download', { version }),
+    install: () => call('update_install'),
+    saveDevice: () => deviceStore.saveNow(),
+    onerror: (message) => {
+      error = message;
+    },
+  });
+  const { open: openUpdates, close: closeUpdates, check: checkUpdates, install: installUpdate } =
+    updates;
   let modelsLoaded = $state(false),
     microphoneError = $state(''),
     microphoneLoading = $state(false);
@@ -924,11 +918,7 @@
   }
   const updateCanPresent = $derived(canPresentUpdate(modal, voiceStatus, !!draggingPane));
   $effect(() => {
-    if (automaticUpdatePending && updateCanPresent && updateState === 'available') {
-      automaticUpdatePending = false;
-      updateReturn = '';
-      updatePrompt = true;
-    }
+    updates.presentPending();
   });
   let dropTarget = $state<{ id: string; edge: Edge | 'center' } | null>(null);
   let paneMenu = $state<{ pane: Pane; x: number; y: number; selection?: string } | null>(null);
@@ -3301,86 +3291,6 @@
     });
     await refresh();
   }
-  function openUpdates() {
-    automaticUpdatePending = false;
-    updateReturn = ['settings', 'support'].includes(modal) ? modal : '';
-    modal = '';
-    updatePrompt = true;
-  }
-  function closeUpdates() {
-    updatePrompt = false;
-    modal = updateReturn;
-    updateReturn = '';
-  }
-  async function checkUpdates(manual = false, settingsOpening = false) {
-    if (!desktop || !clientInfo.updateSupported || updateState === 'installing') return;
-    const origin = modal;
-    const originPrompt = updatePrompt;
-    try {
-      await updateCheck.run(async () => {
-        updateBusy = true;
-        updateState = 'checking';
-        updateStatus = 'Checking for updates…';
-        try {
-          availableUpdate = await call('update_check');
-          updateState = availableUpdate ? 'available' : 'current';
-          if (!availableUpdate) automaticUpdatePending = false;
-          updateStatus = availableUpdate
-            ? `Version ${releaseVersion(availableUpdate.version)} is available.`
-            : 'You are up to date.';
-        } catch (e) {
-          updateState = 'error';
-          automaticUpdatePending = false;
-          updateStatus = availableUpdate
-            ? `Unable to refresh updates: ${e}. Version ${releaseVersion(availableUpdate.version)} was previously found.`
-            : String(e);
-        } finally {
-          updateBusy = false;
-        }
-        return availableUpdate;
-      });
-      if (availableUpdate && updateState === 'available') {
-        // Each actual Settings opening can remind the user; Later returns without reopening it.
-        if (settingsOpening && modal === 'settings') openUpdates();
-        else if (manual) {
-          // A completed request must not replace a dialog opened after it started.
-          if (
-            modal === origin &&
-            updatePrompt === originPrompt &&
-            (modal === 'settings' || (originPrompt && updateCanPresent))
-          )
-            openUpdates();
-        } else if (!settingsOpening) automaticUpdatePending = true;
-      }
-    } catch (e) {
-      updateState = 'error';
-      updateStatus = String(e);
-    }
-  }
-  async function installUpdate() {
-    if (!availableUpdate || updateBusy) return;
-    if (voiceStatus !== 'idle' || dictation.trim() || heldDictation)
-      throw new Error('Finish dictation and send, copy or discard held text before updating.');
-    updateBusy = true;
-    updateState = 'installing';
-    updateProgress = 0;
-    updateStatus = 'Downloading and verifying…';
-    try {
-      await call('update_download', { version: availableUpdate.version });
-      await deviceStore.saveNow();
-      if (voiceStatus !== 'idle' || dictation.trim() || heldDictation)
-        throw new Error(
-          'Finish dictation before restarting to install. The downloaded update is retained.',
-        );
-      updateStatus = 'Restarting to install…';
-      await call('update_install');
-    } catch (e) {
-      updateStatus = String(e);
-      error = updateStatus;
-      updateState = 'error';
-      updateBusy = false;
-    }
-  }
   async function loadModels() {
     models = await call<ModelInfo[]>('model_list');
     modelsLoaded = true;
@@ -3553,7 +3463,7 @@
         const listeners = await Promise.all([
           on<{ done: number; total: number }>(
             'update-progress',
-            (v) => (updateProgress = Math.round((v.done / v.total) * 100)),
+            (v) => (updates.progress = Math.round((v.done / v.total) * 100)),
           ),
           on<{ hostId: string; attempt: string; identity?: { notice?: string } }>(
             'host-ready',
@@ -3858,7 +3768,7 @@
         !e.shiftKey &&
         !e.metaKey
       ) {
-        if (updatePrompt && !modal && !updateBusy) {
+        if (updates.prompt && !modal && !updates.busy) {
           closeUpdates();
           return;
         }
@@ -4226,12 +4136,12 @@
             class:recording-highlight={device.supportGlow !== false}
             data-highlight={recordingHighlight(device.recordingHighlight)}
             style:--voice-highlight-color={device.recordingHighlightColor || '#39bdd7'}
-            disabled={filesLocked || voiceStatus !== 'idle' || updateState === 'installing'}
+            disabled={filesLocked || voiceStatus !== 'idle' || updates.state === 'installing'}
             onclick={() => {
               modal = 'support';
               void checkUpdates();
             }}
-            aria-label={`Feedback, support and about DazeDev ${releaseVersion(clientInfo.version)}: ${updateLabel}`}
+            aria-label={`Feedback, support and about DazeDev ${releaseVersion(clientInfo.version)}: ${updates.label}`}
           >
             {#if device.supportGlow !== false && recordingHighlight(device.recordingHighlight) !== 'static'}
               <HighlightEffect kind={recordingHighlight(device.recordingHighlight)} />
@@ -4241,10 +4151,10 @@
             >
             <i
               class="update-dot"
-              data-state={availableUpdate ? 'available' : updateState}
+              data-state={updates.available ? 'available' : updates.state}
               aria-hidden="true"
             ></i>
-            <span>{updateLabel}</span>
+            <span>{updates.label}</span>
           </button>
         </div>
       </aside>
@@ -4960,10 +4870,10 @@
       {:else if modal === 'support'}
         <SupportDialog
           version={releaseVersion(clientInfo.version)}
-          status={updateStatus || updateLabel}
-          updateState={availableUpdate ? 'available' : updateState}
-          updateAvailable={availableUpdate ? releaseVersion(availableUpdate.version) : ''}
-          {updateBusy}
+          status={updates.status || updates.label}
+          updateState={updates.available ? 'available' : updates.state}
+          updateAvailable={updates.available ? releaseVersion(updates.available.version) : ''}
+          updateBusy={updates.busy}
           updateSupported={desktop && clientInfo.updateSupported}
           onfeedback={openFeedback}
           glow={device.supportGlow !== false}
@@ -4975,7 +4885,7 @@
           }}
           onupdate={() => {
             openUpdates();
-            if (!availableUpdate) void checkUpdates(true);
+            if (!updates.available) void checkUpdates(true);
           }}
         />
       {:else if modal === 'feedback' && device.feedbackContact}
@@ -5034,7 +4944,7 @@
         />
       {:else if modal === 'changelog'}
         <Changelog
-          {availableUpdate}
+          availableUpdate={updates.available}
           {changelogReturn}
           {historyStatus}
           bind:modal
@@ -5154,16 +5064,16 @@
       {:else if modal === 'settings'}
         <div class="settings-compact settings-page">
           <UpdatesSection
-            {availableUpdate}
+            availableUpdate={updates.available}
             {checkUpdates}
             {clientInfo}
             bind:device
             {openUpdates}
             {persistDevice}
             {showChangelog}
-            {updateBusy}
-            {updateLabel}
-            {updateStatus}
+            updateBusy={updates.busy}
+            updateLabel={updates.label}
+            updateStatus={updates.status}
           />
 
           <PinSettings />
@@ -5276,7 +5186,7 @@
     </div>
   </div>{/if}
 
-{#if updatePrompt && updateCanPresent}
+{#if updates.prompt && updateCanPresent}
   <div class="modal-backdrop" role="presentation">
     <div
       class="modal"
@@ -5287,18 +5197,18 @@
       use:focusDialog
     >
       <UpdatePrompt
-        {availableUpdate}
+        availableUpdate={updates.available}
         {busy}
         {checkUpdates}
         {clientInfo}
         {closeUpdates}
         {installUpdate}
         {showChangelog}
-        {updateBusy}
-        {updateLabel}
-        {updateProgress}
-        {updateState}
-        {updateStatus}
+        updateBusy={updates.busy}
+        updateLabel={updates.label}
+        updateProgress={updates.progress}
+        updateState={updates.state}
+        updateStatus={updates.status}
         {voiceStatus}
       />
     </div>

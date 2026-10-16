@@ -1,8 +1,7 @@
 // Shapes shared by App.svelte and the modal body components.
 export type Task = (fn: () => Promise<void>) => Promise<void>;
 export type VoiceMode = 'dictation' | 'command';
-export type UpdateInfo = { version: string; notes: string; size: number };
-export type UpdateState = 'unchecked' | 'checking' | 'current' | 'available' | 'error' | 'installing';
+export type { UpdateInfo, UpdateState } from '../../lib/state/updates.svelte';
 export type ClientInfo = {
   version: string;
   dataPath: string;
