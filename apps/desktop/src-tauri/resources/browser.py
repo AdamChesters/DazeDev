@@ -13,13 +13,29 @@ def validate_url(value):
         raise ValueError('This link points to the remote host itself. Localhost/OAuth forwarding is not available; use the program\'s device-code or remote login flow.')
     return value
 
-def private_root(root=None):
-    root = P(root) if root is not None else P('/tmp') / ('dazedev-browser-' + str(os.getuid()))
-    root.mkdir(mode=0o700, exist_ok=True)
-    info = root.lstat()
+def default_root():
+    # The per-user runtime directory is private and not swept by /tmp cleaners.
+    runtime = os.environ.get('XDG_RUNTIME_DIR', '')
+    if runtime.startswith('/') and os.path.isdir(runtime): return P(runtime) / 'dazedev-browser'
+    return P('/tmp') / ('dazedev-browser-' + str(os.getuid()))
+
+def private_dir(path):
+    path.mkdir(mode=0o700, exist_ok=True)
+    info = path.lstat()
     if not stat.S_ISDIR(info.st_mode) or info.st_uid != os.getuid() or info.st_mode & 0o077:
         raise RuntimeError('DazeDev browser directory must be private and owned by this user')
-    return root
+    return path
+
+def private_root(root=None):
+    return private_dir(P(root) if root is not None else default_root())
+
+SHIM_DIR = re.compile(r'shim-[0-9a-f]{12}')
+def install_shim(root, source):
+    # Each helper version gets its own shim, so versions never overwrite each other.
+    folder = private_dir(private_root(root) / ('shim-' + hashlib.sha256(source.encode()).hexdigest()[:12]))
+    path = folder / 'xdg-open'
+    if not path.is_file(): atomic_file(path, '#!/usr/bin/env python3\n' + source, 0o700)
+    return path
 
 @contextlib.contextmanager
 def registry_lock(root):
@@ -123,7 +139,8 @@ class Bridge:
             self.server = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
             self.server.bind(str(self.path)); os.chmod(self.path, 0o600)
             self.server.listen(4); self.server.settimeout(.5)
-            atomic_file(self.root / 'xdg-open', '#!/usr/bin/env python3\n' + source, 0o700)
+            self.source = source
+            self.shim = install_shim(self.root, source)
             atomic_file(self.metadata, json.dumps(dict(socket=self.path.name, token=self.token, desktop=desktop, generation=self.generation, pid=os.getpid(), stamp=process_stamp(os.getpid()))))
             if previous and re.fullmatch(r'socket-[a-f0-9]{32}', previous.get('socket', '')):
                 (self.root / previous['socket']).unlink(missing_ok=True)
@@ -142,7 +159,9 @@ class Bridge:
     def start(self):
         self.thread.start()
     def environment(self):
-        return dict(command=str(self.root / 'xdg-open'), endpoint=self.endpoint)
+        # Recreate the shim if something removed it since the bridge started.
+        self.shim = install_shim(self.root, self.source)
+        return dict(command=str(self.shim), endpoint=self.endpoint)
     def launch(self, operation):
         self.launches = {key: until for key, until in self.launches.items() if until > time.monotonic()}
         if len(self.launches) >= 32: raise RuntimeError('Too many pending browser launch registrations')
@@ -251,7 +270,8 @@ def open_url(root, url):
 
 def main():
     try:
-        root = private_root(P(__file__).resolve().parent)
+        here = P(__file__).resolve().parent
+        root = private_root(here.parent if SHIM_DIR.fullmatch(here.name) else here)
         if len(sys.argv) == 5 and sys.argv[1] == '--dazedev-register':
             request(root, sys.argv[2], dict(kind='register', pid=int(sys.argv[3]), tty=sys.argv[4]))
         elif len(sys.argv) == 2: open_url(root, sys.argv[1])

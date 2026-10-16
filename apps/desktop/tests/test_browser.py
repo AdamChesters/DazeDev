@@ -19,8 +19,10 @@ class BrowserTests(unittest.TestCase):
   holder['server'] = value; self.bridges.append(value); return value
  def register(self, server, tty='/dev/dazedev-test'):
   bridge.request(self.root, server.endpoint, dict(kind='register', pid=os.getpid(), tty=tty))
+ def shim(self):
+  return self.bridges[-1].environment()['command']
  def environment(self, **extra):
-  value = dict(os.environ, BROWSER=str(self.root/'xdg-open'), DAZEDEV_BROWSER_TTY='/dev/dazedev-test', DAZEDEV_BROWSER_PID=str(os.getpid()))
+  value = dict(os.environ, BROWSER=self.shim(), DAZEDEV_BROWSER_TTY='/dev/dazedev-test', DAZEDEV_BROWSER_PID=str(os.getpid()))
   value.pop('TMUX', None); value.pop('TMUX_PANE', None); value.update(extra); return value
  def test_real_python_webbrowser_uses_scoped_desktop_bridge(self):
   server=self.server(); self.register(server)
@@ -30,7 +32,7 @@ class BrowserTests(unittest.TestCase):
  def test_real_xdg_open_reports_no_desktop_and_rejects_commands(self):
   self.server()
   for url in ['https://example.com','file:///etc/passwd','javascript:alert(1)','http://localhost:1234']:
-   result=subprocess.run([str(self.root/'xdg-open'),url],env=self.environment(),capture_output=True,text=True,timeout=5)
+   result=subprocess.run([self.shim(),url],env=self.environment(),capture_output=True,text=True,timeout=5)
    self.assertNotEqual(result.returncode,0)
    self.assertIn('DazeDev browser:',result.stderr)
   self.assertEqual(self.opened,[])
@@ -93,7 +95,7 @@ class BrowserTests(unittest.TestCase):
    bridge.request(self.root,server.endpoint,dict(kind='register',pid=client.pid,tty=tty))
    result=self.root/'tmux-result'
    program="import pathlib,webbrowser;pathlib.Path("+repr(str(result))+").write_text(str(webbrowser.open('https://example.com/tmux-client')))"
-   command='BROWSER='+shlex.quote(str(self.root/'xdg-open'))+' '+shlex.quote(sys.executable)+' -c '+shlex.quote(program)
+   command='BROWSER='+shlex.quote(server.environment()['command'])+' '+shlex.quote(sys.executable)+' -c '+shlex.quote(program)
    subprocess.run(['tmux','-L',name,'send-keys','-t','test','-l',command],check=True)
    subprocess.run(['tmux','-L',name,'send-keys','-t','test','Enter'],check=True)
    deadline=time.time()+5
@@ -119,7 +121,7 @@ class BrowserTests(unittest.TestCase):
    deadline=time.time()+5
    while time.time()<deadline and not self.opened:time.sleep(.05)
    self.assertEqual([v['url'] for v in self.opened],['https://example.com/first-login'])
-   self.assertIn(str(self.root/'xdg-open'),host.tmux('show-environment','-t',session['id'],'BROWSER'))
+   self.assertIn(server.environment()['command'],host.tmux('show-environment','-t',session['id'],'BROWSER'))
   finally:subprocess.run(['tmux','-L',host.SOCKET,'kill-server'],capture_output=True)
  def test_optional_bridge_failure_does_not_prevent_host_management_startup(self):
   spec=importlib.util.spec_from_file_location('browser_host_failure',ROOT/'src-tauri/resources/host.py');host=importlib.util.module_from_spec(spec);spec.loader.exec_module(host)
@@ -144,6 +146,28 @@ class BrowserTests(unittest.TestCase):
    self.assertFalse(bridge.route_path(self.root,'/dev/ready-test').exists())
    server.start();client.settimeout(2)
    self.assertTrue(bridge.read_packet(client)['ok'])
+ def test_shim_is_versioned_private_and_recreated(self):
+  first=self.server();command=pathlib.Path(first.environment()['command'])
+  self.assertEqual(command.name,'xdg-open');self.assertRegex(command.parent.name,r'^shim-[0-9a-f]{12}$');self.assertEqual(command.parent.parent,self.root)
+  self.assertEqual(command.parent.stat().st_mode&0o777,0o700)
+  other=bridge.Bridge(SOURCE+'\n# other version\n',uuid.uuid4().hex,uuid.uuid4().hex,self.opened.append,root=self.root,start=False);self.bridges.append(other)
+  other_command=pathlib.Path(other.environment()['command'])
+  self.assertNotEqual(other_command,command);self.assertTrue(command.exists());self.assertTrue(other_command.exists())
+  command.unlink();self.assertFalse(command.exists())
+  self.assertEqual(first.environment()['command'],str(command));self.assertTrue(command.exists())
+  result=subprocess.run([str(command),'https://example.com'],env=self.environment(),capture_output=True,text=True,timeout=5)
+  self.assertIn('No attached',result.stderr)
+ def test_default_root_prefers_private_runtime_directory(self):
+  runtime=self.root/'runtime';runtime.mkdir(mode=0o700)
+  with patch.dict(os.environ,{'XDG_RUNTIME_DIR':str(runtime)}):
+   self.assertEqual(bridge.private_root(),runtime/'dazedev-browser')
+   self.assertEqual((runtime/'dazedev-browser').stat().st_mode&0o777,0o700)
+   (runtime/'dazedev-browser').chmod(0o755)
+   with self.assertRaisesRegex(RuntimeError,'private'):bridge.private_root()
+  with patch.dict(os.environ,{'XDG_RUNTIME_DIR':str(self.root/'missing')}):
+   self.assertEqual(bridge.default_root(),pathlib.Path('/tmp')/('dazedev-browser-'+str(os.getuid())))
+  with patch.dict(os.environ,{k:v for k,v in os.environ.items() if k!='XDG_RUNTIME_DIR'},clear=True):
+   self.assertEqual(bridge.default_root(),pathlib.Path('/tmp')/('dazedev-browser-'+str(os.getuid())))
  def test_insecure_root_is_refused(self):
   self.root.chmod(0o755)
   with self.assertRaisesRegex(RuntimeError,'private'): self.server()
