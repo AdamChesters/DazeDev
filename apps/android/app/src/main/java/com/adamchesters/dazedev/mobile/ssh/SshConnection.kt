@@ -40,6 +40,7 @@ class SshCommandException(message: String) : Exception(message)
 class SshConnection(
     private val knownHostsFile: File,
     private val hostKeyPrompts: HostKeyPromptCoordinator,
+    private val onBanner: (String) -> Unit = {},
 ) {
     private val commandMutex = Mutex()
 
@@ -61,8 +62,11 @@ class SshConnection(
         disconnectNow()
         prepareKnownHostsFile()
 
+        val guard: GuardedHostKeys
         val nextJsch = JSch().apply {
             setKnownHosts(knownHostsFile.absolutePath)
+            guard = GuardedHostKeys(hostKeyRepository)
+            hostKeyRepository = guard
             if (profile.authMethod == AuthMethod.PrivateKey) {
                 val key = requireNotNull(privateKey) { "Choose a private key file." }
                 val passphrase = secret.takeIf(String::isNotEmpty)?.toByteArray(StandardCharsets.UTF_8)
@@ -84,6 +88,8 @@ class SshConnection(
             userInfo = PromptingUserInfo(
                 password = if (profile.authMethod == AuthMethod.Password) secret else "",
                 hostKeyPrompts = hostKeyPrompts,
+                guard = guard,
+                onBanner = onBanner,
             )
             setConfig(Properties().apply {
                 put("StrictHostKeyChecking", "ask")
@@ -113,6 +119,7 @@ class SshConnection(
         } catch (error: Exception) {
             nextSession.disconnect()
             nextJsch.removeAllIdentity()
+            guard.changed?.let { throw HostKeyChangedException(it) }
             throw error
         } finally {
             passwordBytes?.fill(0)
@@ -192,6 +199,8 @@ class SshConnection(
     private class PromptingUserInfo(
         private val password: String,
         private val hostKeyPrompts: HostKeyPromptCoordinator,
+        private val guard: GuardedHostKeys,
+        private val onBanner: (String) -> Unit,
     ) : UserInfo {
         override fun getPassphrase(): String? = null
 
@@ -201,10 +210,19 @@ class SshConnection(
 
         override fun promptPassphrase(message: String?): Boolean = false
 
-        override fun promptYesNo(message: String?): Boolean =
-            hostKeyPrompts.request(message.orEmpty().ifBlank { "Trust this SSH host key?" })
+        // A changed key is refused here; only a first-seen key reaches the trust prompt.
+        override fun promptYesNo(message: String?): Boolean {
+            if (guard.changed != null) return false
+            val notice = guard.unknown ?: return false
+            return hostKeyPrompts.request(
+                "First connection to ${notice.host}.\n\n${notice.type} key fingerprint:\n${notice.fingerprint}",
+            )
+        }
 
-        override fun showMessage(message: String?) = Unit
+        // Servers such as Tailscale SSH in check mode send an approval link here.
+        override fun showMessage(message: String?) {
+            message?.trim()?.takeIf(String::isNotEmpty)?.let { onBanner(it.take(4000)) }
+        }
     }
 
     private companion object {

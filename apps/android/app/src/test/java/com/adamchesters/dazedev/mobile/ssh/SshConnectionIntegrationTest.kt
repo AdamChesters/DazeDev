@@ -7,14 +7,13 @@ import kotlinx.coroutines.*
 import kotlinx.coroutines.flow.filterNotNull
 import org.junit.Assert.*
 import org.junit.Assume.assumeTrue
+import com.adamchesters.dazedev.mobile.Fixtures
 import org.junit.Test
 
 /** Opt-in tests against a disposable SSH fixture; never use a real account or key. */
 class SshConnectionIntegrationTest {
     private fun port(): Int {
-        val value = System.getenv("DAZEDEV_TEST_SSH_PORT")
-        assumeTrue("Requires a disposable SSH fixture", value != null)
-        return requireNotNull(value).toInt()
+        return Fixtures.env("DAZEDEV_TEST_SSH_PORT", "Requires a disposable SSH fixture").toInt()
     }
 
     private fun connectionTest(
@@ -39,7 +38,11 @@ class SshConnectionIntegrationTest {
         val prompts = HostKeyPromptCoordinator()
         val ssh = SshConnection(knownHosts, prompts)
         val answer = launch {
-            prompts.challenge.filterNotNull().collect { prompts.answer(it.id, acceptHostKey) }
+            prompts.challenge.filterNotNull().collect {
+                if (changedKey) throw AssertionError("A changed host key must never be offered for trust")
+                assertTrue(it.message.contains("SHA256:"))
+                prompts.answer(it.id, acceptHostKey)
+            }
         }
         val key = if (method == AuthMethod.PrivateKey) {
             File(requireNotNull(System.getenv("DAZEDEV_TEST_SSH_KEY"))).readBytes()
@@ -78,12 +81,13 @@ class SshConnectionIntegrationTest {
     fun boundsRemoteOutput() = connectionTest(AuthMethod.Password, "password-user", "fixture-password", overflow = true)
     @Test fun passwordOverIpv6() {
         val ipv6Port = System.getenv("DAZEDEV_TEST_SSH_PORT_V6")
-        assumeTrue("Requires an IPv6 loopback fixture", ipv6Port != null)
+        assumeTrue("Requires an IPv6 loopback fixture", !ipv6Port.isNullOrBlank())
         connectionTest(AuthMethod.Password, "password-user", "fixture-password", "::1",
             portOverride = requireNotNull(ipv6Port).toInt())
     }
-    @Test(expected = com.jcraft.jsch.JSchException::class)
+    // A changed key fails without any trust prompt, even when the user would tap Trust.
+    @Test(expected = HostKeyChangedException::class)
     fun rejectsChangedHostKey() = connectionTest(AuthMethod.Password, "password-user", "fixture-password",
-        acceptHostKey = false, changedKey = true)
+        acceptHostKey = true, changedKey = true)
 
 }
