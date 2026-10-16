@@ -9,7 +9,7 @@ interface SshLink {
 
     suspend fun connect(
         profile: ConnectionProfile,
-        secret: String,
+        secret: CharArray,
         privateKey: ByteArray?,
     )
 

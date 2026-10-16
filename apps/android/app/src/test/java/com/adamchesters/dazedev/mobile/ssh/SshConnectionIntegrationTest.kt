@@ -67,7 +67,7 @@ class SshConnectionIntegrationTest {
                     method,
                     privateKeyUri = if (key != null) "content://fixture/key" else null,
                 )
-            ssh.connect(profile, secret, key)
+            ssh.connect(profile, secret.toCharArray(), key)
             assertTrue(ssh.isConnected)
             assertEquals("fixture-ok\n", ssh.execute("probe").requireSuccess("Probe").stdout)
             assertTrue(knownHosts.readText().isNotBlank())
@@ -77,7 +77,7 @@ class SshConnectionIntegrationTest {
             // A reconnect with the saved host key must work without another trust prompt.
             answer.cancelAndJoin()
             ssh.disconnect()
-            withTimeout(5_000) { ssh.connect(profile, secret, key) }
+            withTimeout(5_000) { ssh.connect(profile, secret.toCharArray(), key) }
             assertTrue(ssh.isConnected)
         } finally {
             key?.fill(0)

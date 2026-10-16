@@ -28,6 +28,8 @@ class ProfileStore(
                     name = p.optString("name"),
                     socket = p.optString("socket"),
                     fingerprint = p.optString("fingerprint"),
+                    keyStored = p.optBoolean("keyStored"),
+                    rememberPassphrase = p.optBoolean("rememberPassphrase"),
                 )
             }
         }.getOrDefault(emptyList())
@@ -48,7 +50,18 @@ class ProfileStore(
 
     override fun save(profile: ConnectionProfile) {
         val existing = loadAll()
-        val hosts = if (existing.any { it.id == profile.id }) existing.map { if (it.id == profile.id) profile else it } else existing + profile
+        write(existing, if (existing.any { it.id == profile.id }) existing.map { if (it.id == profile.id) profile else it } else existing + profile)
+    }
+
+    override fun remove(id: String) {
+        write(loadAll(), loadAll().filterNot { it.id == id })
+        clearDraft(id)
+    }
+
+    private fun write(
+        existing: List<ConnectionProfile>,
+        hosts: List<ConnectionProfile>,
+    ) {
         val a = JSONArray()
         for (p in hosts) {
             a.put(
@@ -63,7 +76,9 @@ class ProfileStore(
                     .put("privateKeyName", p.privateKeyName)
                     .put("workingDirectory", p.workingDirectory)
                     .put("socket", p.socket)
-                    .put("fingerprint", p.fingerprint),
+                    .put("fingerprint", p.fingerprint)
+                    .put("keyStored", p.keyStored)
+                    .put("rememberPassphrase", p.rememberPassphrase),
             )
         }
         prefs.edit().putString("hosts", a.toString()).apply()

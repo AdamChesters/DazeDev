@@ -100,7 +100,7 @@ class TerminalControllerTest {
 
         init {
             terminal.rebindPane = { pane, session -> rebound.add(pane to session) }
-            registry.connect(tailscaleProfile(), "")
+            registry.connect(tailscaleProfile(), CharArray(0))
         }
 
         fun measure(

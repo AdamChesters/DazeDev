@@ -31,7 +31,7 @@ class HostIntegrationTest {
             try {
                 val key = File(folder, "fixture-key.pem").readBytes()
                 try {
-                    ssh.connect(ConnectionProfile("127.0.0.1", port, "key-user", AuthMethod.PrivateKey, "content://fixture/key"), "fixture-passphrase", key)
+                    ssh.connect(ConnectionProfile("127.0.0.1", port, "key-user", AuthMethod.PrivateKey, "content://fixture/key"), "fixture-passphrase".toCharArray(), key)
                 } finally {
                     key.fill(0)
                 }

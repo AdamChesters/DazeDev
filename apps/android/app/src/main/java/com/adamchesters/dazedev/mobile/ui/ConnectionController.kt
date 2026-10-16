@@ -73,7 +73,7 @@ class ConnectionController(
         profile: ConnectionProfile,
         secret: String,
     ) {
-        val started = registry.connect(profile, secret, ::verifyPending, ::connected)
+        val started = registry.connect(profile, secret.toCharArray(), ::verifyPending, ::connected)
         if (started) ui.update { it.copy(hostKeyChange = null) }
     }
 

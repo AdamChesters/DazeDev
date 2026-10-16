@@ -58,6 +58,7 @@ fun ConnectionScreen(
     onPickPrivateKey: () -> Unit,
     onConnect: (ConnectionProfile, String) -> Unit,
     onCancel: () -> Unit,
+    onRemove: () -> Unit = {},
 ) {
     val savedProfile = uiState.profile
     var host by rememberSaveable(savedProfile.id) { mutableStateOf(savedProfile.host) }
@@ -67,6 +68,7 @@ fun ConnectionScreen(
     var username by rememberSaveable(savedProfile.id) { mutableStateOf(savedProfile.username) }
     var authMethod by rememberSaveable(savedProfile.id) { mutableStateOf(savedProfile.authMethod) }
     var secret by remember(savedProfile.id) { mutableStateOf("") }
+    var rememberPassphrase by rememberSaveable(savedProfile.id) { mutableStateOf(savedProfile.rememberPassphrase) }
     var formError by remember { mutableStateOf<String?>(null) }
     val isConnecting = uiState.connectionPhase == ConnectionPhase.Connecting
 
@@ -277,6 +279,7 @@ fun ConnectionScreen(
                         modifier = Modifier.fillMaxWidth(),
                     )
                 }
+                if (authMethod == AuthMethod.PrivateKey) RememberPassphraseRow(rememberPassphrase, !isConnecting) { rememberPassphrase = it }
 
                 formError?.let { error ->
                     Text(
@@ -296,6 +299,7 @@ fun ConnectionScreen(
                                 port = port.toIntOrNull() ?: 0,
                                 username = username,
                                 authMethod = authMethod,
+                                rememberPassphrase = rememberPassphrase && authMethod == AuthMethod.PrivateKey,
                             )
                         formError =
                             candidate
@@ -331,7 +335,7 @@ fun ConnectionScreen(
 
         Spacer(Modifier.height(18.dp))
         Text(
-            text = "Connect over a reachable LAN, VPN, or internet connection. DazeDev Mobile verifies SSH host keys and never saves passwords or passphrases. Keys stay in the selected document provider; its storage and sync policy and your key passphrase protect them.",
+            text = "Connect over a reachable LAN, VPN, or internet connection. DazeDev Mobile verifies SSH host keys. A chosen private key is copied into this app's private storage, encrypted with a key kept in Android Keystore. Passwords are never saved; a key passphrase is saved, encrypted the same way, only if you choose to remember it.",
             style = MaterialTheme.typography.bodyMedium,
             color = MaterialTheme.colorScheme.onSurfaceVariant,
             modifier =
@@ -340,5 +344,8 @@ fun ConnectionScreen(
                     .fillMaxWidth(),
         )
         if (isConnecting) OutlinedButton(onClick = onCancel) { Text("Cancel connection") }
+        if (!isConnecting && uiState.pendingTerminalConnection == null && uiState.groupConnectionHost == null && uiState.hosts.any { it.profile.id == savedProfile.id }) {
+            RemoveHostButton(savedProfile.name.ifBlank { savedProfile.host }, onRemove)
+        }
     }
 }

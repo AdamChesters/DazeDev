@@ -21,8 +21,15 @@ data class ConnectionProfile(
     val name: String = "",
     val socket: String = "",
     val fingerprint: String = "",
+    /** The private key is stored encrypted in app storage instead of read from [privateKeyUri]. */
+    val keyStored: Boolean = false,
+    val rememberPassphrase: Boolean = false,
 ) {
-    fun validationError(secret: String): String? =
+    fun validationError(secret: String): String? = problem(secret.isEmpty())
+
+    fun validationError(secret: CharArray): String? = problem(secret.isEmpty())
+
+    private fun problem(secretEmpty: Boolean): String? =
         when {
             host.isBlank() || host.any { it.isWhitespace() || it.isISOControl() } ||
                 host.contains('/') || host.contains('@') -> {
@@ -37,11 +44,11 @@ data class ConnectionProfile(
                 "Enter the SSH username."
             }
 
-            authMethod == AuthMethod.PrivateKey && privateKeyUri.isNullOrBlank() -> {
+            authMethod == AuthMethod.PrivateKey && privateKeyUri.isNullOrBlank() && !keyStored -> {
                 "Choose an SSH private key."
             }
 
-            authMethod == AuthMethod.Password && secret.isEmpty() -> {
+            authMethod == AuthMethod.Password && secretEmpty -> {
                 "Enter the SSH password."
             }
 

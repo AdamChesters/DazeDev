@@ -8,6 +8,8 @@ interface HostStore {
 
     fun save(profile: ConnectionProfile)
 
+    fun remove(id: String)
+
     fun hasDraft(host: String): Boolean
 
     fun draft(host: String): JSONObject?

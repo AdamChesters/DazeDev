@@ -62,6 +62,10 @@ sealed interface HostEvent {
         val error: String,
     ) : HostEvent
 
+    data class Reconnected(
+        val hostId: String,
+    ) : HostEvent
+
     data class Disconnected(
         val hostId: String,
     ) : HostEvent

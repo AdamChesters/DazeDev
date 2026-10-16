@@ -1,15 +1,15 @@
 package com.adamchesters.dazedev.mobile
 
 import android.app.Application
-import androidx.core.net.toUri
-import com.adamchesters.dazedev.mobile.data.ConnectionProfile
 import com.adamchesters.dazedev.mobile.data.ProfileStore
+import com.adamchesters.dazedev.mobile.data.StoredCredentials
 import com.adamchesters.dazedev.mobile.host.HelperSources
 import com.adamchesters.dazedev.mobile.host.HostRegistry
 import com.adamchesters.dazedev.mobile.host.SshHostLinkFactory
 import com.adamchesters.dazedev.mobile.service.KeepConnected
 import com.adamchesters.dazedev.mobile.ui.BrowserLauncher
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import java.io.File
 
@@ -17,20 +17,25 @@ import java.io.File
 class DazeDevApplication : Application() {
     lateinit var hosts: HostRegistry
         private set
+    lateinit var credentials: StoredCredentials
+        private set
 
     override fun onCreate() {
         super.onCreate()
         val store = ProfileStore(this)
+        credentials = StoredCredentials(this)
         hosts =
             HostRegistry(
                 store = store,
                 links = SshHostLinkFactory(::knownHosts),
                 helpers = ::helperSources,
-                readKey = ::readPrivateKey,
+                credentials = credentials,
                 openBrowser = { url -> BrowserLauncher.open(this, url) },
             )
         hosts.keepConnected.value = store.keepConnected
         KeepConnected(this, hosts, hosts.keepConnected).start()
+        val saved = store.loadAll().map { it.id }.toSet()
+        hosts.scope.launch { runCatching { credentials.prune(saved) } }
     }
 
     fun knownHosts(id: String) = File(filesDir, "ssh/$id/known_hosts")
@@ -38,25 +43,5 @@ class DazeDevApplication : Application() {
     private suspend fun helperSources() =
         withContext(Dispatchers.IO) {
             HelperSources(assets.open("host.py").use { it.readBytes() }, assets.open("browser.py").use { it.readBytes() })
-        }
-
-    private suspend fun readPrivateKey(profile: ConnectionProfile): ByteArray =
-        withContext(Dispatchers.IO) {
-            val uri = requireNotNull(profile.privateKeyUri).toUri()
-            contentResolver.openInputStream(uri)?.use {
-                val buffer = ByteArray(1_048_577)
-                try {
-                    var total = 0
-                    while (total < buffer.size) {
-                        val count = it.read(buffer, total, buffer.size - total)
-                        if (count < 0) break
-                        total += count
-                    }
-                    require(total <= 1_048_576) { "Private key exceeds 1 MiB." }
-                    buffer.copyOf(total)
-                } finally {
-                    buffer.fill(0)
-                }
-            } ?: error("Could not open this private key.")
         }
 }

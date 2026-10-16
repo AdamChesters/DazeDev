@@ -217,6 +217,12 @@ class TerminalController(
         return true
     }
 
+    /** Opens the shown terminal again after its host reconnected by itself. */
+    fun reattach(hostId: String) {
+        val s = ui.value
+        if (foreground && s.selectedTargetHost == hostId && s.selectedSessionId != null && s.terminal == null && s.staleSession == null) refreshTerminal()
+    }
+
     /** Closes the terminal when its host link is lost. */
     fun linkLost(
         hostId: String,

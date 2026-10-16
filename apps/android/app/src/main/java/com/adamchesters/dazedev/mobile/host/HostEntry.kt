@@ -31,6 +31,10 @@ class HostEntry(
     var ending: String? = null
     var connectJob: Job? = null
     var watchers: Job? = null
+    var reconnect: Job? = null
+
+    /** The last connection needed no typed secret, so it can reconnect unattended. */
+    var unattended = false
     val edits = Mutex()
 
     fun snapshot(recoveryDraft: Boolean) =

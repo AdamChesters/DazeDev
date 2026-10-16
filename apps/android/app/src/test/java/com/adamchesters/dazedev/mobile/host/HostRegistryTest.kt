@@ -23,7 +23,7 @@ class HostRegistryTest {
             val store = FakeHostStore()
             val registry = fakeRegistry(scope, store = store)
             var connected = false
-            assertTrue(registry.connect(tailscaleProfile(), "", onConnected = { connected = true }))
+            assertTrue(registry.connect(tailscaleProfile(), CharArray(0), onConnected = { connected = true }))
             assertEquals(ConnectionPhase.Connecting, registry.snapshot("host-1")?.phase)
             advanceUntilIdle()
             val host = registry.snapshot("host-1")!!
@@ -42,7 +42,7 @@ class HostRegistryTest {
             val registry = fakeRegistry(scope, factory)
             val events = mutableListOf<HostEvent>()
             val watcher = scope.launch { registry.events.toList(events) }
-            registry.connect(tailscaleProfile(), "")
+            registry.connect(tailscaleProfile(), CharArray(0))
             advanceUntilIdle()
             val link = factory.hosts.single()
             link.lost.emit(HostLinkEvent.Lost("Network unreachable"))
@@ -54,7 +54,7 @@ class HostRegistryTest {
             assertFalse(factory.ssh.single().isConnected)
             assertEquals(HostEvent.LinkLost("host-1", "Lost connection to Dev. Network unreachable"), events.single { it is HostEvent.LinkLost })
 
-            assertTrue(registry.connect(tailscaleProfile(), ""))
+            assertTrue(registry.connect(tailscaleProfile(), CharArray(0)))
             advanceUntilIdle()
             val again = registry.snapshot("host-1")!!
             assertEquals(ConnectionPhase.Connected, again.phase)
@@ -70,7 +70,7 @@ class HostRegistryTest {
             val scope = CoroutineScope(SupervisorJob() + StandardTestDispatcher(testScheduler))
             val factory = FakeLinkFactory()
             val registry = fakeRegistry(scope, factory)
-            registry.connect(tailscaleProfile(), "")
+            registry.connect(tailscaleProfile(), CharArray(0))
             advanceUntilIdle()
             registry.disconnect("host-1")
             factory.hosts
@@ -89,7 +89,7 @@ class HostRegistryTest {
             val registry = fakeRegistry(scope, factory)
             val events = mutableListOf<HostEvent>()
             val watcher = scope.launch { registry.events.toList(events) }
-            registry.connect(tailscaleProfile(), "", verify = { error("Different host") })
+            registry.connect(tailscaleProfile(), CharArray(0), verify = { error("Different host") })
             advanceUntilIdle()
             assertEquals(ConnectionPhase.Disconnected, registry.snapshot("host-1")!!.phase)
             assertEquals(HostEvent.Message("Different host"), events.single())
@@ -104,8 +104,8 @@ class HostRegistryTest {
             val registry = fakeRegistry(scope, factory)
             val events = mutableListOf<HostEvent>()
             val watcher = scope.launch { registry.events.toList(events) }
-            registry.connect(tailscaleProfile("a"), "")
-            registry.connect(tailscaleProfile("b"), "")
+            registry.connect(tailscaleProfile("a"), CharArray(0))
+            registry.connect(tailscaleProfile("b"), CharArray(0))
             advanceUntilIdle()
             registry.disconnectAll()
             advanceUntilIdle()
@@ -113,6 +113,109 @@ class HostRegistryTest {
             assertEquals(listOf(HostEvent.Disconnected("a"), HostEvent.Disconnected("b")), events)
             assertFalse(factory.hosts.any { it.isOpen })
             watcher.cancel()
+            scope.cancel()
+        }
+
+    @Test fun keepConnectedReconnectsAnUnattendedHostAfterLinkLoss() =
+        runTest {
+            val scope = CoroutineScope(SupervisorJob() + StandardTestDispatcher(testScheduler))
+            val factory = FakeLinkFactory()
+            val registry = fakeRegistry(scope, factory)
+            registry.keepConnected.value = true
+            val events = mutableListOf<HostEvent>()
+            val watcher = scope.launch { registry.events.toList(events) }
+            registry.connect(tailscaleProfile(), CharArray(0))
+            advanceUntilIdle()
+            factory.hosts
+                .single()
+                .lost
+                .emit(HostLinkEvent.Lost("Network changed"))
+            advanceUntilIdle()
+            assertEquals(ConnectionPhase.Connected, registry.snapshot("host-1")!!.phase)
+            assertEquals(2, factory.ssh.single().connects)
+            assertTrue(events.contains(HostEvent.Reconnected("host-1")))
+            watcher.cancel()
+            scope.cancel()
+        }
+
+    @Test fun reconnectGivesUpAfterThreeAttemptsAndShowsDisconnected() =
+        runTest {
+            val scope = CoroutineScope(SupervisorJob() + StandardTestDispatcher(testScheduler))
+            val factory = FakeLinkFactory()
+            val registry = fakeRegistry(scope, factory)
+            registry.keepConnected.value = true
+            val events = mutableListOf<HostEvent>()
+            val watcher = scope.launch { registry.events.toList(events) }
+            registry.connect(tailscaleProfile(), CharArray(0))
+            advanceUntilIdle()
+            factory.ssh.single().refuse = true
+            factory.hosts
+                .single()
+                .lost
+                .emit(HostLinkEvent.Lost("Network changed"))
+            advanceUntilIdle()
+            val host = registry.snapshot("host-1")!!
+            assertEquals(ConnectionPhase.Disconnected, host.phase)
+            assertEquals("Lost connection to Dev. Network changed", host.linkError)
+            assertEquals(4, factory.ssh.single().connects)
+            // Quiet attempts: no failure messages pile up.
+            assertTrue(events.none { it is HostEvent.Message })
+            watcher.cancel()
+            scope.cancel()
+        }
+
+    @Test fun withoutKeepConnectedOrWithATypedPasswordThereIsNoReconnect() =
+        runTest {
+            val scope = CoroutineScope(SupervisorJob() + StandardTestDispatcher(testScheduler))
+            val factory = FakeLinkFactory()
+            val registry = fakeRegistry(scope, factory)
+            registry.connect(tailscaleProfile(), CharArray(0))
+            val password = tailscaleProfile("pw").copy(authMethod = com.adamchesters.dazedev.mobile.data.AuthMethod.Password)
+            registry.connect(password, "secret".toCharArray())
+            advanceUntilIdle()
+            registry.keepConnected.value = false
+            factory.hosts[0].lost.emit(HostLinkEvent.Lost("gone"))
+            advanceUntilIdle()
+            registry.keepConnected.value = true
+            factory.hosts[1].lost.emit(HostLinkEvent.Lost("gone"))
+            advanceUntilIdle()
+            assertEquals(listOf(ConnectionPhase.Disconnected, ConnectionPhase.Disconnected), registry.hosts.value.map { it.phase })
+            assertEquals(listOf(1, 1), factory.ssh.map { it.connects })
+            scope.cancel()
+        }
+
+    @Test fun storedKeysMigrateRememberedPassphrasesAreUsedAndRemovalForgetsThem() =
+        runTest {
+            val scope = CoroutineScope(SupervisorJob() + StandardTestDispatcher(testScheduler))
+            val factory = FakeLinkFactory()
+            val store = FakeHostStore()
+            val credentials = FakeCredentials()
+            val registry = fakeRegistry(scope, factory, store, credentials)
+            val profile =
+                tailscaleProfile().copy(
+                    authMethod = com.adamchesters.dazedev.mobile.data.AuthMethod.PrivateKey,
+                    privateKeyUri = "content://old/key",
+                    rememberPassphrase = true,
+                )
+            credentials.keys["host-1"] = byteArrayOf(1, 2, 3)
+            val typed = "typed".toCharArray()
+            registry.connect(profile, typed)
+            advanceUntilIdle()
+            val saved = store.saved.getValue("host-1")
+            assertTrue(saved.keyStored)
+            assertNull(saved.privateKeyUri)
+            assertEquals("typed", credentials.passphrases["host-1"])
+            assertTrue(typed.all { it == ' ' })
+            registry.disconnect("host-1")
+            registry.connect(saved, CharArray(0))
+            advanceUntilIdle()
+            assertEquals(listOf("typed", "typed"), factory.ssh.single().secrets)
+            assertEquals(ConnectionPhase.Connected, registry.snapshot("host-1")!!.phase)
+            registry.remove("host-1")
+            assertNull(registry.snapshot("host-1"))
+            assertTrue(store.saved.isEmpty())
+            assertEquals(listOf("host-1"), credentials.forgotten)
+            assertFalse(factory.hosts.single().isOpen)
             scope.cancel()
         }
 }

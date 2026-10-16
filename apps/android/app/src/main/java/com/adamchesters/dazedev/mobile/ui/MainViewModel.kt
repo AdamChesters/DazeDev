@@ -13,6 +13,7 @@ import com.adamchesters.dazedev.mobile.host.HostEvent
 import com.adamchesters.dazedev.mobile.host.SessionLaunch
 import com.adamchesters.dazedev.mobile.host.TerminalRow
 import com.adamchesters.dazedev.mobile.releases.PublicReleaseCatalog
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.launch
@@ -24,6 +25,7 @@ class MainViewModel(
     application: Application,
 ) : AndroidViewModel(application) {
     private val registry = (application as DazeDevApplication).hosts
+    private val credentials = (application as DazeDevApplication).credentials
     private val store = ProfileStore(application)
     private val ui = UiStore(DazeDevMobileUiState(profile = store.load(), secureScreen = store.secureScreen, keepConnected = store.keepConnected))
     val uiState: StateFlow<DazeDevMobileUiState> = ui.state.asStateFlow()
@@ -56,6 +58,7 @@ class MainViewModel(
         when (event) {
             is HostEvent.Message -> ui.message(event.text)
             is HostEvent.LinkLost -> terminal.linkLost(event.hostId, event.error)
+            is HostEvent.Reconnected -> terminal.reattach(event.hostId)
             is HostEvent.Disconnected -> terminal.linkLost(event.hostId, "This host was disconnected. Connect again to continue.")
             is HostEvent.KeyChanged -> ui.update { it.copy(hostKeyChange = event.change) }
         }
@@ -117,7 +120,38 @@ class MainViewModel(
         uri: Uri,
         displayName: String,
     ) {
-        ui.update { it.copy(profile = it.profile.copy(privateKeyUri = uri.toString(), privateKeyName = displayName)) }
+        val id = ui.value.profile.id
+        viewModelScope.launch {
+            var key: ByteArray? = null
+            try {
+                // The key is read once and kept encrypted on this phone; the document is not opened again.
+                key = credentials.readDocument(uri.toString())
+                credentials.importKey(id, key)
+                ui.update { if (it.profile.id == id) it.copy(profile = it.profile.copy(keyStored = true, privateKeyUri = null, privateKeyName = displayName)) else it }
+            } catch (e: CancellationException) {
+                throw e
+            } catch (e: Exception) {
+                ui.message(e.message ?: "Could not read this private key.")
+            } finally {
+                key?.fill(0)
+            }
+        }
+    }
+
+    /** Forgets the shown host, its stored key, passphrase and host key. */
+    fun removeHost() {
+        val id = ui.value.profile.id
+        terminal.closeTerminal()
+        viewModelScope.launch {
+            try {
+                registry.remove(id)
+            } catch (e: CancellationException) {
+                throw e
+            } catch (e: Exception) {
+                ui.message(e.message ?: "Could not remove every stored item for this host.")
+            }
+            connections.showHosts()
+        }
     }
 
     fun refreshSessions() = sessions.refreshSessions()

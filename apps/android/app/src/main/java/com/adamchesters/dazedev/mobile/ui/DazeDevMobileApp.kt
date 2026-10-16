@@ -53,12 +53,6 @@ fun DazeDevMobileApp(viewModel: MainViewModel) {
             contract = ActivityResultContracts.OpenDocument(),
         ) { uri ->
             if (uri != null) {
-                runCatching {
-                    context.contentResolver.takePersistableUriPermission(
-                        uri,
-                        Intent.FLAG_GRANT_READ_URI_PERMISSION,
-                    )
-                }
                 viewModel.setPrivateKey(
                     uri = uri,
                     displayName =
@@ -152,6 +146,7 @@ fun DazeDevMobileApp(viewModel: MainViewModel) {
                     onPickPrivateKey = { privateKeyPicker.launch(arrayOf("*/*")) },
                     onConnect = viewModel::connect,
                     onCancel = viewModel::cancelConnection,
+                    onRemove = viewModel::removeHost,
                 )
             }
 
