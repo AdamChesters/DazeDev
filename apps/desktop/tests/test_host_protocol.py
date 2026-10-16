@@ -1,4 +1,4 @@
-import ast, base64, importlib.util, io, json, pathlib, subprocess, sys, threading, time, unittest
+import ast, base64, importlib.util, io, json, os, pathlib, signal, subprocess, sys, tempfile, threading, time, unittest
 from unittest.mock import patch
 ROOT = pathlib.Path(__file__).resolve().parents[1]
 HOST = ROOT / 'src-tauri/resources/host.py'
@@ -122,5 +122,35 @@ class ReplyWriterTests(unittest.TestCase):
         replies={r['id']:r for r in decode(result.stdout,'DAZED:fixture:')}
         self.assertIn('too large',replies['big']['error'])
         self.assertEqual(replies['fast']['result']['machine'],host.MACHINE)
+
+class SignalTests(unittest.TestCase):
+    def start_upload(self, folder):
+        code=("import importlib.util; s=importlib.util.spec_from_file_location('host',"+repr(str(HOST))+"); h=importlib.util.module_from_spec(s);"
+              "s.loader.exec_module(h); h.main()")
+        proc=subprocess.Popen([sys.executable,'-I','-c',code,'fixture'],stdin=subprocess.PIPE,stdout=subprocess.PIPE,text=True)
+        request={'id':'u','method':'upload_begin','args':{'directory':str(folder),'name':'partial.bin','size':10}}
+        proc.stdin.write(base64.b64encode(json.dumps(request).encode()).decode()+'\n'); proc.stdin.flush()
+        seen=''
+        while True:
+            line=proc.stdout.readline()
+            self.assertTrue(line,'host ended before replying')
+            seen+=line
+            replies=[r for r in decode(seen,'DAZED:fixture:') if r['id']=='u']
+            if replies: break
+        self.assertIn('result',replies[0])
+        self.assertEqual(len(list(folder.glob('.dazedev-upload-*'))),1)
+        return proc
+
+    def test_hangup_and_terminate_remove_upload_temp_files(self):
+        for sig in (signal.SIGHUP,signal.SIGTERM):
+            with tempfile.TemporaryDirectory() as temp:
+                folder=pathlib.Path(temp); proc=self.start_upload(folder)
+                try:
+                    proc.send_signal(sig)
+                    self.assertEqual(proc.wait(5),128+sig)
+                finally:
+                    if proc.poll() is None: proc.kill(); proc.wait()
+                    proc.stdin.close(); proc.stdout.close()
+                self.assertEqual(list(folder.glob('.dazedev-upload-*')),[])
 
 if __name__ == '__main__': unittest.main()

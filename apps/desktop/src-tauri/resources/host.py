@@ -1,6 +1,6 @@
 """DazeDev's stdlib-only host protocol. Executed in memory; installs no daemon."""
 import threading, concurrent.futures, collections
-import base64, contextlib, fcntl, getpass, hashlib, json, os, pathlib, re, shlex, shutil, socket, subprocess, sys, tempfile, time, uuid
+import base64, contextlib, fcntl, getpass, hashlib, json, os, pathlib, re, shlex, shutil, signal, socket, subprocess, sys, tempfile, time, uuid
 P = pathlib.Path
 os.environ['PATH']=str(P.home()/'.local/bin')+os.pathsep+os.environ.get('PATH','')
 SCHEMA = 1
@@ -949,8 +949,15 @@ def main():
     nonce=sys.argv[1];os.environ['PATH']=str(P.home()/'.local/bin')+':'+os.environ.get('PATH','')
     prefix='DAZED:'+nonce+':'
     WRITER=ReplyWriter()
+    # A dropped SSH link sends SIGHUP, which skips atexit. Remove upload temp
+    # files, then exit at once; the next bridge start removes stale entries.
+    def on_exit_signal(signum, frame):
+        try: cleanup_uploads()
+        finally: os._exit(128+signum)
+    previous={sig:signal.signal(sig,on_exit_signal) for sig in (signal.SIGHUP,signal.SIGTERM)}
     try: serve(prefix)
     finally:
+        for sig,handler in previous.items(): signal.signal(sig,handler)
         WRITER.close(); WRITER=None
 def serve(prefix):
     global BROWSER, BROWSER_ERROR
