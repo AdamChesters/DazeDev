@@ -154,13 +154,15 @@ fun SessionListScreen(
                     ) {}
                 }
                 Text(
-                    text = "SSH connected. ${uiState.sessions.size} tmux ${if (uiState.sessions.size == 1) "session" else "sessions"}",
+                    text = if (uiState.sessionsLoading) "SSH connected. Loading tmux sessions…" else "SSH connected. ${uiState.sessions.size} tmux ${if (uiState.sessions.size == 1) "session" else "sessions"}",
                     style = MaterialTheme.typography.bodyMedium,
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                 )
             }
 
-            if (uiState.sessions.isEmpty() && !uiState.isRefreshing) {
+            if (uiState.sessions.isEmpty() && uiState.sessionsLoading) {
+                Box(Modifier.weight(1f).fillMaxWidth(), contentAlignment = Alignment.Center) { CircularProgressIndicator() }
+            } else if (uiState.sessions.isEmpty() && !uiState.isRefreshing) {
                 EmptySessions(
                     modifier = Modifier
                         .weight(1f)

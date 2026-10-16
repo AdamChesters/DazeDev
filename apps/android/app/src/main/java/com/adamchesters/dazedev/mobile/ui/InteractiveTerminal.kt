@@ -26,25 +26,29 @@ class TerminalController {
         if(!ready || text.toByteArray().size>65_536)return false
         call("paste",JSONObject.quote(text));return true
     }
-    suspend fun submit(text:String):Boolean {
+    /** True when sent, false when refused, null when the page did not answer in time. */
+    suspend fun submit(text:String):Boolean? {
         val page=web ?: return false
         if(!ready || text.isBlank() || text.toByteArray().size>65_536)return false
         val result=CompletableDeferred<Boolean>()
         page.evaluateJavascript("window.daze?.submit(${JSONObject.quote(text)})") {value->result.complete(value=="true")}
-        return withTimeout(5_000){result.await()}
+        return withTimeoutOrNull(5_000){result.await()}
     }
     fun clear(){call("clear")}
 }
 
 @SuppressLint("SetJavaScriptEnabled")
 @Composable
-fun InteractiveTerminal(stream:TerminalStream,controller:TerminalController,onMessage:(String)->Unit,modifier:Modifier=Modifier) {
+/** One WebView per attachment: the caller keys this on the terminal epoch. The page measures before the stream attaches. */
+fun InteractiveTerminal(stream:TerminalStream?,controller:TerminalController,onMeasured:(Int,Int)->Unit,onScrolled:(Boolean)->Unit,onMessage:(String)->Unit,modifier:Modifier=Modifier) {
     val context=LocalContext.current
     val fontScale=LocalConfiguration.current.fontScale
-    val ready=remember(stream){CompletableDeferred<Unit>()}
-    var viewport by remember(stream){mutableStateOf(IntSize.Zero)}
-    val acknowledgements=remember(stream){java.util.concurrent.ConcurrentHashMap<Long,CompletableDeferred<Unit>>()}
-    val web=remember(stream) {
+    val ready=remember{CompletableDeferred<Unit>()}
+    var viewport by remember{mutableStateOf(IntSize.Zero)}
+    val acknowledgements=remember{java.util.concurrent.ConcurrentHashMap<Long,CompletableDeferred<Unit>>()}
+    val currentStream by rememberUpdatedState(stream)
+    val scope=rememberCoroutineScope()
+    val web=remember {
         WebView(context).apply {
             settings.javaScriptEnabled=true
             settings.allowFileAccess=false;settings.allowContentAccess=false
@@ -63,18 +67,18 @@ fun InteractiveTerminal(stream:TerminalStream,controller:TerminalController,onMe
                 }
             }
             addJavascriptInterface(object {
-                @JavascriptInterface fun submit(text:String):Boolean = controller.ready && stream.send(text.toByteArray())
+                @JavascriptInterface fun submit(text:String):Boolean = controller.ready && currentStream?.send(text.toByteArray())==true
                 @JavascriptInterface fun event(text:String) {
                     if(text.length>500_000){post {onMessage("Selection is too large. Choose a smaller region.")};return}
                     runCatching {
                         val event=JSONObject(text)
                         when(event.getString("kind")) {
-                            "ready"->{val size=event.getJSONObject("value");stream.resize(size.getInt("cols"),size.getInt("rows"));post {controller.ready=true};ready.complete(Unit)}
-                            "resize"->{val size=event.getJSONObject("value");stream.resize(size.getInt("cols"),size.getInt("rows"))}
-                            "input"->{if(!controller.ready || !stream.send(event.getString("value").toByteArray()))post {onMessage("Input was not sent. Reconnect the terminal.")}}
-                            "binary"->{val data=event.getString("value");if(!controller.ready || !stream.send(ByteArray(data.length){data[it].code.toByte()}))post {onMessage("Input was not sent. Reconnect the terminal.")}}
-                            "scroll"->{if(!stream.scrollHistory(event.getInt("value")))post {onMessage("Reconnect the terminal before scrolling.")}}
-                            "scrollBottom"->{if(!stream.scrollToBottom())post {onMessage("Reconnect the terminal before scrolling.")}}
+                            "ready","resize"->{val size=event.getJSONObject("value");val cols=size.getInt("cols");val rows=size.getInt("rows");currentStream?.resize(cols,rows);post {onMeasured(cols,rows)};if(event.getString("kind")=="ready")ready.complete(Unit)}
+                            "input"->{if(!controller.ready || currentStream?.send(event.getString("value").toByteArray())!=true)post {onMessage("Input was not sent. Reconnect the terminal.")}}
+                            "binary"->{val data=event.getString("value");if(!controller.ready || currentStream?.send(ByteArray(data.length){data[it].code.toByte()})!=true)post {onMessage("Input was not sent. Reconnect the terminal.")}}
+                            "scrolled"->{val value=event.getBoolean("value");post {onScrolled(value)}}
+                            "hint"->{val value=event.getString("value");post {onMessage(value)}}
+                            "scrollBottom"->post {currentStream?.let {active->scope.launch {try {active.cancelCopyMode()}catch(e:CancellationException){throw e}catch(e:Exception){onMessage(e.message?:"Could not return to live output.")}}}}
                             "openUrl"->post {BrowserLauncher.open(context,event.getString("value"))?.let(onMessage)}
                             "ack"->acknowledgements.remove(event.getLong("value"))?.complete(Unit)
                             "copy"->{val selected=event.getString("value");if(selected.toByteArray().size>250_000)post {onMessage("Selection is too large for the clipboard. Choose a smaller region.")} else if(selected.isNotEmpty())post {runCatching {(context.getSystemService(Context.CLIPBOARD_SERVICE) as ClipboardManager).setPrimaryClip(ClipData.newPlainText("Terminal selection",selected))}.onFailure {onMessage("Could not copy this selection.")}}}
@@ -87,8 +91,10 @@ fun InteractiveTerminal(stream:TerminalStream,controller:TerminalController,onMe
         }
     }
     LaunchedEffect(web,stream) {
+        if(stream==null)return@LaunchedEffect
         try {
             withTimeout(15_000){ready.await()}
+            controller.ready=true
             var id=0L
             stream.output.collect { bytes->
                 val current=++id;val ack=CompletableDeferred<Unit>();acknowledgements[current]=ack
@@ -103,12 +109,11 @@ fun InteractiveTerminal(stream:TerminalStream,controller:TerminalController,onMe
         }catch(e:CancellationException){throw e}catch(e:Exception){controller.ready=false;stream.close();onMessage(e.message?:"Terminal stopped.")}
         finally {controller.ready=false;stream.close()}
     }
-    LaunchedEffect(stream) {stream.scrollFailures.collect {onMessage(it)}}
     LaunchedEffect(web,fontScale){withTimeout(15_000){ready.await()};controller.call("font",fontScale.toString())}
     LaunchedEffect(web,viewport){
         withTimeout(15_000){ready.await()}
         if(viewport.width>0 && viewport.height>0)controller.call("viewport","${viewport.width},${viewport.height}")
     }
-    DisposableEffect(web) {onDispose {controller.clear();controller.web=null;controller.ready=false;web.removeJavascriptInterface("DazeBridge");web.destroy();stream.close();acknowledgements.values.forEach {it.cancel()};acknowledgements.clear()}}
+    DisposableEffect(web) {onDispose {controller.clear();controller.web=null;controller.ready=false;web.removeJavascriptInterface("DazeBridge");web.destroy();acknowledgements.values.forEach {it.cancel()};acknowledgements.clear()}}
     AndroidView(factory={web},modifier=modifier.onSizeChanged {viewport=it})
 }

@@ -81,7 +81,10 @@ import com.adamchesters.dazedev.mobile.voice.VoiceInputPhase
 import com.adamchesters.dazedev.mobile.voice.VoiceInputStatus
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
-import kotlinx.coroutines.withTimeout
+import kotlinx.coroutines.withTimeoutOrNull
+import kotlinx.coroutines.TimeoutCancellationException
+import androidx.compose.foundation.background
+import androidx.compose.runtime.key
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Job
 
@@ -100,6 +103,8 @@ fun TerminalScreen(
     onPrepareTarget: suspend () -> String,
     onValidateTarget: suspend (String) -> Boolean,
     onMessage: (String) -> Unit,
+    onReconnect: () -> Unit = onRefresh,
+    onMeasured: (Long, Int, Int) -> Unit = { _, _, _ -> },
 ) {
     val connected = uiState.terminal?.state?.collectAsState()?.value == true
     val context = LocalContext.current
@@ -221,7 +226,10 @@ fun TerminalScreen(
             try {
                 if (voiceStatus.isActive) {
                     voiceController.stop()
-                    withTimeout(3_000) { while (voiceStatus.isActive) delay(25) }
+                    if (withTimeoutOrNull(3_000) { while (voiceStatus.isActive) delay(25) } == null) {
+                        reportDraft("Voice input is still finishing. Your draft is saved; tap Enter again in a moment.")
+                        return@launch
+                    }
                 }
                 val text = input
                 if (text.isBlank()) {
@@ -233,7 +241,9 @@ fun TerminalScreen(
                     reportDraft("The recording target changed or disconnected. Your draft is saved. Review before choosing the current terminal.")
                     return@launch
                 }
-                if (terminalController.submit(text)) {
+                val sent = terminalController.submit(text)
+                if (sent == null) reportDraft("Submission was not confirmed. Check the terminal before retrying; your draft is saved.")
+                else if (sent) {
                     input = ""
                     voicePrefix = ""
                     frozenTarget = null
@@ -241,8 +251,9 @@ fun TerminalScreen(
                     showDraft = false
                     reportDraft("Entered in the terminal.")
                 } else reportDraft("Draft was not entered. Wait for the terminal, or reduce it to 64 KiB. Your draft is saved.")
-            } catch (e: CancellationException) { throw e }
-            catch (e: Exception) { reportDraft("Submission was not confirmed. Check the terminal before retrying; your draft is saved.") }
+            } catch (e: TimeoutCancellationException) { reportDraft("The host did not answer in time. Your draft is saved; try again.") }
+            catch (e: CancellationException) { throw e }
+            catch (e: Exception) { reportDraft(e.message?.let { "Draft was not entered: $it Your draft is saved." } ?: "Submission was not confirmed. Check the terminal before retrying; your draft is saved.") }
             finally { submitting = false }
         }
     }
@@ -342,8 +353,25 @@ fun TerminalScreen(
             shape = RoundedCornerShape(14.dp),
         ) {
             val stream = uiState.terminal
-            if (stream == null) Box(Modifier.fillMaxSize(),contentAlignment=Alignment.Center) {Text("Connecting terminal…",color=TerminalForeground)}
-            else InteractiveTerminal(stream,terminalController,onMessage,Modifier.fillMaxSize())
+            var scrolledBack by remember(uiState.terminalEpoch) { mutableStateOf(false) }
+            Box(Modifier.fillMaxSize()) {
+                // A fresh WebView per attachment; it measures before the stream attaches.
+                key(uiState.terminalEpoch) {
+                    InteractiveTerminal(stream,terminalController,{cols,rows->onMeasured(uiState.terminalEpoch,cols,rows)},{scrolledBack=it},onMessage,Modifier.fillMaxSize())
+                }
+                val problem = uiState.terminalError ?: if (stream != null && !connected) "Terminal disconnected." else null
+                if (problem != null) Surface(Modifier.fillMaxSize(), color = TerminalBackground.copy(alpha = 0.92f)) {
+                    Column(Modifier.fillMaxSize().padding(24.dp), verticalArrangement = Arrangement.Center, horizontalAlignment = Alignment.CenterHorizontally) {
+                        Text(problem, color = TerminalForeground, style = MaterialTheme.typography.bodyLarge)
+                        Spacer(Modifier.size(12.dp))
+                        if (uiState.staleSession == null) Button(onClick = onReconnect) { Text("Reconnect") }
+                    }
+                } else if (stream == null) Box(Modifier.fillMaxSize().background(TerminalBackground),contentAlignment=Alignment.Center) {Text("Connecting terminal…",color=TerminalForeground)}
+                else if (scrolledBack) FilledTonalButton(
+                    onClick = { terminalController.call("bottom") },
+                    modifier = Modifier.align(Alignment.BottomEnd).padding(12.dp),
+                ) { Text("Latest output") }
+            }
         }
         Row(
             Modifier.fillMaxWidth().padding(horizontal = 12.dp, vertical = 8.dp),
@@ -351,6 +379,7 @@ fun TerminalScreen(
             verticalAlignment = Alignment.CenterVertically,
         ) {
             Row(Modifier.weight(1f).horizontalScroll(rememberScrollState())) {
+                TextButton(onClick={terminalController.call("bottom")}){Text("Latest output")}
                 TextButton(onClick={showKeys=!showKeys;terminalController.call("keys",showKeys.toString())}) {Text(if(showKeys)"Hide keys" else "Keys")}
                 TextButton(onClick=onWindows){Text("Windows")}
                 TextButton(onClick=onSettings){Text("Settings")}
@@ -360,7 +389,6 @@ fun TerminalScreen(
                 Text("Drafts and original transcripts stay on this device. Clear removes both; inactive entries expire after 7 days.")
                 TextButton(onClick={terminalController.call("selectAll")}){Text("Select all")}
                 TextButton(onClick={terminalController.call("clearSelection")}){Text("Clear selection")}
-                TextButton(onClick={terminalController.call("bottom")}){Text("Latest output")}
                 TextButton(onClick={terminalController.call("copy")}){Text("Copy")}
                 TextButton(onClick={
                     val clipboard=context.getSystemService(android.content.Context.CLIPBOARD_SERVICE) as android.content.ClipboardManager

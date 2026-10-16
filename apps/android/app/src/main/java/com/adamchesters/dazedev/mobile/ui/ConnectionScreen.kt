@@ -104,6 +104,15 @@ fun ConnectionScreen(
             color = MaterialTheme.colorScheme.onSurfaceVariant,
         )
 
+        uiState.linkError?.let {reason->
+            Spacer(Modifier.height(16.dp))
+            Surface(color=MaterialTheme.colorScheme.errorContainer,shape=RoundedCornerShape(16.dp),modifier=Modifier.fillMaxWidth()) {
+                Column(Modifier.padding(16.dp),verticalArrangement=Arrangement.spacedBy(6.dp)) {
+                    Text("Disconnected",style=MaterialTheme.typography.titleMedium,color=MaterialTheme.colorScheme.onErrorContainer)
+                    Text("$reason Connect again to reconnect.",color=MaterialTheme.colorScheme.onErrorContainer)
+                }
+            }
+        }
         uiState.pendingTerminalConnection?.let {pending->
             Spacer(Modifier.height(16.dp))
             Surface(color=MaterialTheme.colorScheme.secondaryContainer,shape=RoundedCornerShape(16.dp),modifier=Modifier.fillMaxWidth()) {

@@ -39,6 +39,20 @@ class SharedProfile(document: JSONObject) {
             }
         }
     }
+    /** Points a saved terminal at a new tmux session id and stamp. Returns false if the pane is not here. */
+    fun rebindPaneSession(paneId:String,sessionId:String,stamp:String):Boolean {
+        require(Regex("\\$[0-9]+").matches(sessionId) && stamp.isNotBlank()) {"Invalid tmux session."}
+        val workspaces=document.getJSONArray("workspaces")
+        var changed=false
+        for(i in 0 until workspaces.length()) {
+            val panes=workspaces.getJSONObject(i).getJSONArray("panes")
+            for(j in 0 until panes.length()) {
+                val pane=panes.getJSONObject(j)
+                if(pane.optString("id")==paneId){pane.put("sessionId",sessionId).put("stamp",stamp);changed=true}
+            }
+        }
+        return changed
+    }
     fun folders(): List<WorkspaceFolder> {
         val w = document.getJSONArray("workspaces")
         return (0 until w.length()).map { i ->

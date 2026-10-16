@@ -115,6 +115,7 @@ fun HostWorkspaceScreen(state:DazeDevMobileUiState,padding:PaddingValues,viewMod
         HorizontalDivider()
         Row(Modifier.fillMaxWidth(),horizontalArrangement=Arrangement.Center) {
             TextButton(onClick={history=true}){Text("Changelog")}
+            TextButton(onClick=viewModel::openHostKeys){Text("Host keys")}
             TextButton(onClick={
                 val assets=context.assets
                 val paths=listOf("moonshine-license.txt","xterm-license.txt","addon-fit-license.txt","addon-unicode11-license.txt","addon-web-links-license.txt") + assets.list("licenses").orEmpty().map {"licenses/$it"}
