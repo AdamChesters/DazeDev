@@ -9,6 +9,7 @@ import com.adamchesters.dazedev.mobile.DazeDevApplication
 import com.adamchesters.dazedev.mobile.data.ConnectionProfile
 import com.adamchesters.dazedev.mobile.data.ProfileStore
 import com.adamchesters.dazedev.mobile.host.BrowserAnswer
+import com.adamchesters.dazedev.mobile.host.ConnectionPhase
 import com.adamchesters.dazedev.mobile.host.HostEvent
 import com.adamchesters.dazedev.mobile.host.SessionLaunch
 import com.adamchesters.dazedev.mobile.host.TerminalRow
@@ -30,6 +31,9 @@ class MainViewModel(
     private val ui = UiStore(DazeDevMobileUiState(profile = store.load(), secureScreen = store.secureScreen, keepConnected = store.keepConnected, keepOtherSize = store.keepOtherSize))
     val uiState: StateFlow<DazeDevMobileUiState> = ui.state.asStateFlow()
     private val terminal = TerminalController(ui, registry, viewModelScope)
+
+    /** The open terminal's live stream, kept out of the UI state. */
+    val terminalLink = terminal.link
     private val connections = ConnectionController(ui, registry, terminal)
     private val workspace = WorkspaceController(ui, registry, store, viewModelScope, terminal, connections::connect, connections::showHosts)
     private val sessions = SessionController(ui, registry, store, viewModelScope, terminal, workspace)
@@ -103,6 +107,19 @@ class MainViewModel(
     fun removeLocalTerminalView(pane: String) = workspace.removeLocalTerminalView(pane)
 
     fun showHosts() = connections.showHosts()
+
+    /** Back: leaves the terminal, cancels a connection, closes the folder, then returns to the host list. */
+    fun back() {
+        val s = ui.value
+        when {
+            s.screen is Screen.Terminal -> leaveTerminal()
+            s.screen == Screen.Hosts -> Unit
+            s.localGroupId == null && s.connectionPhase != ConnectionPhase.Connected -> cancelConnection()
+            s.groupConnectionHost != null || s.pendingTerminalConnection != null -> cancelConnection()
+            s.selectedFolder != null -> selectFolder(null)
+            else -> showHosts()
+        }
+    }
 
     fun newHost() = connections.newHost()
 

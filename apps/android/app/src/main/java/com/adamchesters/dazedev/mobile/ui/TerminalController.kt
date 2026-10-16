@@ -17,6 +17,8 @@ import kotlinx.coroutines.Job
 import kotlinx.coroutines.TimeoutCancellationException
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.StateFlow
+import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.filterNotNull
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.launch
@@ -35,6 +37,10 @@ class TerminalController(
     private var attachment: Job? = null
     private val terminalSize = MutableStateFlow<Pair<Int, Int>?>(null)
     private var attachmentGeneration = 0L
+    private val openLink = MutableStateFlow<TerminalLink?>(null)
+
+    /** The live terminal stream. The UI state only carries its epoch. */
+    val link: StateFlow<TerminalLink?> = openLink.asStateFlow()
 
     /** The session to reopen once its host reconnects: host id to (session id, stamp, name). */
     var resumeAfterConnect: Pair<String, Triple<String, String, String>>? = null
@@ -60,7 +66,7 @@ class TerminalController(
     ) {
         closeTerminal()
         ui.update {
-            it.copy(
+            it.withTerminal(h.profile.id, id).copy(
                 selectedSessionName = name,
                 selectedSessionId = id,
                 selectedStamp = stamp,
@@ -113,7 +119,7 @@ class TerminalController(
                 return
             }
             terminalSize.value?.let { stream.resize(it.first, it.second) }
-            ui.update { it.copy(terminal = stream) }
+            openLink.value = stream
         } catch (e: TimeoutCancellationException) {
             stream?.close()
             if (generation == attachmentGeneration) ui.update { it.copy(terminalError = "The terminal did not connect in time. Try again.") }
@@ -184,8 +190,9 @@ class TerminalController(
         attachment?.cancel()
         attachment = null
         terminalSize.value = null
-        ui.value.terminal?.close()
-        ui.update { it.copy(terminal = null, terminalEpoch = attachmentGeneration, tmuxSettings = null, windows = emptyList(), draftReview = null) }
+        openLink.value?.close()
+        openLink.value = null
+        ui.update { it.copy(terminalEpoch = attachmentGeneration, tmuxSettings = null, windows = emptyList(), draftReview = null) }
     }
 
     fun refreshTerminal() {
@@ -214,13 +221,11 @@ class TerminalController(
         closeTerminal()
         ui.update {
             it
+                .withoutTerminal()
+                .atHost(h.profile.id)
                 .copy(
                     profile = h.profile,
-                    showHosts = false,
-                    localGroupId = null,
                     selectedFolder = null,
-                    selectedSessionName = null,
-                    selectedSessionId = null,
                     selectedTargetHost = null,
                     terminalError = null,
                 ).withHost(registry.snapshot(h.profile.id))
@@ -238,7 +243,7 @@ class TerminalController(
     /** Opens the shown terminal again after its host reconnected by itself. */
     fun reattach(hostId: String) {
         val s = ui.value
-        if (foreground && s.selectedTargetHost == hostId && s.selectedSessionId != null && s.terminal == null && s.staleSession == null) refreshTerminal()
+        if (foreground && s.selectedTargetHost == hostId && s.selectedSessionId != null && openLink.value == null && s.staleSession == null) refreshTerminal()
     }
 
     /** Closes the terminal when its host link is lost. */
@@ -254,7 +259,7 @@ class TerminalController(
     suspend fun prepareInputTarget(): String {
         val state = ui.value
         val h = target() ?: error("Terminal host is disconnected.")
-        require(state.terminal?.connected == true) { "Reconnect this terminal before preparing input." }
+        require(openLink.value?.connected == true) { "Reconnect this terminal before preparing input." }
         val args = JSONObject().put("id", state.selectedSessionId).put("stamp", state.selectedStamp)
         val context = h.link.request("session_context", args, 15_000) as String
         val pid = context.split(':').getOrNull(3)?.toIntOrNull() ?: error("Terminal process is unavailable.")
@@ -304,11 +309,11 @@ class TerminalController(
 
     fun leaveTerminal() {
         closeTerminal()
-        ui.update { it.copy(selectedSessionName = null, selectedSessionId = null, selectedTargetHost = null) }
+        ui.update { it.withoutTerminal().copy(selectedTargetHost = null) }
     }
 
     fun sendInput(input: String) {
-        if (ui.value.terminal?.send(input.toByteArray()) != true) ui.message("Input was not sent. Reconnect the terminal; input is never replayed.")
+        if (openLink.value?.send(input.toByteArray()) != true) ui.message("Input was not sent. Reconnect the terminal; input is never replayed.")
     }
 
     /** Keeps the terminal through rotation and short app switches; detaches after a grace period. */
@@ -325,7 +330,7 @@ class TerminalController(
             return
         }
         val s = ui.value
-        if (s.selectedSessionId != null && s.staleSession == null && attachment?.isActive != true && s.terminal?.connected != true && target()?.phase == ConnectionPhase.Connected) {
+        if (s.selectedSessionId != null && s.staleSession == null && attachment?.isActive != true && openLink.value?.connected != true && target()?.phase == ConnectionPhase.Connected) {
             refreshTerminal()
         }
     }

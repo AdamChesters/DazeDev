@@ -34,14 +34,10 @@ class ConnectionController(
         terminal.closeTerminal()
         workspace.clearGroupQueue()
         ui.update {
-            it.copy(
-                showHosts = true,
-                localGroupId = null,
+            it.withoutTerminal().atHosts().copy(
                 groupConnectPrompt = false,
                 groupConnectionHost = null,
                 selectedFolder = null,
-                selectedSessionName = null,
-                selectedSessionId = null,
                 pendingTerminalConnection = null,
             )
         }
@@ -49,14 +45,12 @@ class ConnectionController(
 
     fun newHost() {
         terminal.closeTerminal()
+        val profile = ConnectionProfile()
         ui.update {
-            it.copy(
-                profile = ConnectionProfile(),
-                localGroupId = null,
-                showHosts = false,
+            it.withoutTerminal().atHost(profile.id).copy(
+                profile = profile,
                 connectionPhase = ConnectionPhase.Disconnected,
                 selectedFolder = null,
-                selectedSessionName = null,
                 pendingTerminalConnection = null,
             )
         }
@@ -65,7 +59,7 @@ class ConnectionController(
     fun selectHost(id: String) {
         val h = registry.entry(id) ?: return
         terminal.closeTerminal()
-        ui.update { it.copy(profile = h.profile, localGroupId = null, showHosts = false, selectedFolder = null, selectedSessionName = null, selectedSessionId = null, pendingTerminalConnection = null) }
+        ui.update { it.withoutTerminal().atHost(id).copy(profile = h.profile, selectedFolder = null, pendingTerminalConnection = null) }
         sync(force = true)
     }
 
@@ -106,7 +100,7 @@ class ConnectionController(
         val h = registry.entry(ui.value.profile.id) ?: return
         terminal.closeTerminal()
         registry.disconnect(h.profile.id)
-        ui.update { it.copy(selectedSessionName = null, selectedSessionId = null) }
+        ui.update { it.withoutTerminal() }
         sync(force = true)
     }
 
@@ -127,13 +121,11 @@ class ConnectionController(
         val pending = PendingTerminalConnection(row, state.profile.id, state.selectedFolder, profile.id)
         terminal.closeTerminal()
         ui.update {
-            it.copy(
+            // The connection form shows on top of the workspace or hostless group the terminal came from.
+            it.withoutTerminal().let { s -> if (s.screen == Screen.Hosts) s.atHost(profile.id) else s }.copy(
                 profile = profile,
-                showHosts = false,
                 connectionPhase = target.host?.phase ?: ConnectionPhase.Disconnected,
                 selectedFolder = null,
-                selectedSessionName = null,
-                selectedSessionId = null,
                 pendingTerminalConnection = pending,
             )
         }
@@ -160,7 +152,7 @@ class ConnectionController(
         if (owner == null) {
             showHosts()
         } else {
-            ui.update { it.copy(profile = owner.profile, showHosts = false, selectedFolder = pending.folderId) }
+            ui.update { (if (it.localGroupId == null) it.atHost(owner.profile.id) else it).copy(profile = owner.profile, selectedFolder = pending.folderId) }
             sync(force = true)
         }
     }

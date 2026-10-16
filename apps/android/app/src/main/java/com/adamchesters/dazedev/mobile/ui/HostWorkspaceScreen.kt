@@ -90,7 +90,7 @@ fun HostWorkspaceScreen(
             }
         }
         HorizontalDivider()
-        if (state.showHosts) {
+        if (state.screen == Screen.Hosts) {
             Row(Modifier.fillMaxWidth().padding(horizontal = 16.dp), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.SpaceBetween) {
                 Text("Hosts", style = MaterialTheme.typography.titleMedium)
                 TextButton(onClick = viewModel::newHost) { Text("+ Add host") }

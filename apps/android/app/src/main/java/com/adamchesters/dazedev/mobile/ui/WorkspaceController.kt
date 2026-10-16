@@ -8,6 +8,12 @@ import com.adamchesters.dazedev.mobile.host.HostEntry
 import com.adamchesters.dazedev.mobile.host.HostRegistry
 import com.adamchesters.dazedev.mobile.host.ProfileMerge
 import com.adamchesters.dazedev.mobile.host.SharedProfile
+import com.adamchesters.dazedev.mobile.host.clonePane
+import com.adamchesters.dazedev.mobile.host.createLocalWorkspace
+import com.adamchesters.dazedev.mobile.host.editWorkspace
+import com.adamchesters.dazedev.mobile.host.groupTabs
+import com.adamchesters.dazedev.mobile.host.removeLocalView
+import com.adamchesters.dazedev.mobile.host.ungroupTab
 import com.adamchesters.dazedev.mobile.tmux.TmuxSession
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.launch
@@ -46,11 +52,7 @@ class WorkspaceController(
         terminal.closeTerminal()
         groupConnectQueue = emptyList()
         ui.update {
-            it.copy(
-                showHosts = false,
-                localGroupId = id,
-                selectedSessionName = null,
-                selectedSessionId = null,
+            it.withoutTerminal().atLocalGroup(id).copy(
                 selectedPaneId = null,
                 selectedFolder = null,
                 groupConnectionHost = null,
