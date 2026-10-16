@@ -6,12 +6,11 @@
   import HtmlPreview from './HtmlPreview.svelte';
   import { previewKind } from '../lib/source-viewer';
   import { rpc } from '../lib/bridge';
-  import { uploadChunkSize } from '../lib/clipboard-upload';
+  import { sendChunks, type UploadTransfer } from '../lib/clipboard-upload';
   import { openPreviewLink } from '../lib/preview-links';
   import type { Host, Inventory } from '../lib/types';
   import {
     markdownPreview,
-    encodeChunk,
     shellPath,
     type HostDocument,
     type DocumentText,
@@ -233,29 +232,21 @@
     capacitySize = file.size;
     if (file.size > checked.maxBytes || checked.requiredBytes > checked.availableBytes)
       throw Error('The selected file exceeds the upload limit or available destination storage.');
-    const transfer = await rpc<{ id: string; path: string; chunk?: number }>(
-      targetHost,
-      'upload_begin',
-      {
-        directory: checked.directory,
-        name: targetName,
-        size: file.size,
-      },
-    );
+    const transfer = await rpc<UploadTransfer & { path: string }>(targetHost, 'upload_begin', {
+      directory: checked.directory,
+      name: targetName,
+      size: file.size,
+    });
     try {
-      for (let offset = 0; offset < file.size;) {
-        if (canceled) throw new Error('Upload canceled. No destination file was created.');
-        const bytes = new Uint8Array(
-          await file.slice(offset, offset + uploadChunkSize(transfer)).arrayBuffer(),
-        );
-        const result = await rpc<{ offset: number }>(targetHost, 'upload_chunk', {
-          id: transfer.id,
-          offset,
-          data: encodeChunk(bytes),
-        });
-        offset = result.offset;
-        progress = file.size ? (offset / file.size) * 100 : 100;
-      }
+      await sendChunks(
+        file,
+        transfer,
+        (method, args) => rpc(targetHost, method, args),
+        (acknowledged) => (progress = file.size ? (acknowledged / file.size) * 100 : 100),
+        () => {
+          if (canceled) throw new Error('Upload canceled. No destination file was created.');
+        },
+      );
       if (canceled) throw new Error('Upload canceled.');
       const result = await rpc<{ path: string }>(targetHost, 'upload_finish', { id: transfer.id });
       uploaded = result.path;
