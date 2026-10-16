@@ -1,6 +1,6 @@
 """DazeDev's stdlib-only host protocol. Executed in memory; installs no daemon."""
 import threading, concurrent.futures, collections
-import base64, contextlib, fcntl, getpass, hashlib, json, os, pathlib, re, shlex, shutil, signal, socket, subprocess, sys, tempfile, time, uuid
+import base64, contextlib, errno, fcntl, getpass, hashlib, json, os, pathlib, re, shlex, shutil, signal, socket, subprocess, sys, tempfile, time, uuid
 P = pathlib.Path
 os.environ['PATH']=str(P.home()/'.local/bin')+os.pathsep+os.environ.get('PATH','')
 SCHEMA = 1
@@ -470,10 +470,40 @@ def upload_finish(a):
     item = UPLOADS[a['id']]
     if item['offset'] != item['size'] or item['path'].stat().st_size != item['size']: raise ValueError('Upload incomplete')
     with item['path'].open('rb') as source: os.fsync(source.fileno())
-    # Atomic no-clobber publication, including a concurrent destination creation.
-    os.link(item['path'], item['target'])
-    item['path'].unlink(); del UPLOADS[a['id']]
+    publish_no_clobber(item['path'], item['target'])
+    item['path'].unlink(missing_ok=True); del UPLOADS[a['id']]
     return {'path':str(item['target']), 'size':item['size']}
+
+# File systems without hard links (FAT, SMB, some FUSE) report one of these.
+NO_LINK_ERRORS = {getattr(errno, name) for name in ('EPERM','EXDEV','ENOTSUP','EOPNOTSUPP','ENOSYS','EMLINK') if hasattr(errno, name)}
+def publish_no_clobber(staged, target):
+    # Atomic no-clobber publication, including a concurrent destination creation.
+    try:
+        os.link(staged, target); return
+    except OSError as e:
+        if e.errno not in NO_LINK_ERRORS: raise
+    # Fallback: claim the name exclusively, then replace only our own placeholder.
+    fd = os.open(target, os.O_WRONLY | os.O_CREAT | os.O_EXCL | getattr(os, 'O_NOFOLLOW', 0), 0o600)
+    try:
+        os.fchmod(fd, os.stat(staged).st_mode & 0o777)
+        try:
+            os.replace(staged, target); return
+        except OSError:
+            pass
+        # Rename over a file is not supported here either: copy into the placeholder.
+        with open(staged, 'rb') as source:
+            while True:
+                chunk = source.read(1024 * 1024)
+                if not chunk: break
+                view = memoryview(chunk)
+                while view: view = view[os.write(fd, view):]
+        os.fsync(fd)
+    except BaseException:
+        os.close(fd); fd = None
+        with contextlib.suppress(OSError): os.unlink(target)
+        raise
+    finally:
+        if fd is not None: os.close(fd)
 
 def upload_abort(a):
     item = UPLOADS.pop(a['id'], None)

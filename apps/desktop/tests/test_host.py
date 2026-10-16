@@ -93,6 +93,28 @@ class HostTests(unittest.TestCase):
   item=host.upload_begin({'directory':str(root),'name':'raced','size':0});(root/'raced').write_text('other work')
   with self.assertRaises(FileExistsError):host.upload_finish(item)
   host.upload_abort(item);self.assertEqual((root/'raced').read_text(),'other work')
+ def upload_fixture(self,name,data):
+  root=pathlib.Path(self.temp.name);item=host.upload_begin({'directory':str(root),'name':name,'size':len(data)})
+  host.upload_chunk({'id':item['id'],'offset':0,'data':base64.b64encode(data).decode()});return root,item
+ def test_upload_publish_falls_back_when_hard_links_are_unsupported(self):
+  import errno
+  for code in (errno.EPERM,errno.EXDEV,errno.EOPNOTSUPP):
+   root,item=self.upload_fixture('nolink-'+str(code),b'payload')
+   with patch.object(host.os,'link',side_effect=OSError(code,'not supported')):result=host.upload_finish({'id':item['id']})
+   self.assertEqual(pathlib.Path(result['path']).read_bytes(),b'payload');self.assertEqual(list(root.glob('.dazedev-upload-*')),[])
+  root,item=self.upload_fixture('nolink-norename',b'copied')
+  with patch.object(host.os,'link',side_effect=OSError(errno.EPERM,'no')),patch.object(host.os,'replace',side_effect=OSError(errno.EPERM,'no')):
+   result=host.upload_finish({'id':item['id']})
+  self.assertEqual(pathlib.Path(result['path']).read_bytes(),b'copied');self.assertEqual(list(root.glob('.dazedev-upload-*')),[])
+ def test_upload_publish_fallback_never_overwrites(self):
+  import errno
+  root,item=self.upload_fixture('raced-fallback',b'new');(root/'raced-fallback').write_text('other work')
+  with patch.object(host.os,'link',side_effect=OSError(errno.EXDEV,'no')):
+   with self.assertRaises(FileExistsError):host.upload_finish({'id':item['id']})
+  self.assertEqual((root/'raced-fallback').read_text(),'other work')
+  with patch.object(host.os,'link',side_effect=OSError(errno.EACCES,'denied')):
+   with self.assertRaises(PermissionError):host.upload_finish({'id':item['id']})
+  host.upload_abort({'id':item['id']});self.assertEqual(list(root.glob('.dazedev-upload-*')),[])
  def test_document_edit_conflict_and_literal_content(self):
   path=pathlib.Path(self.temp.name)/'AGENTS.md';path.write_text('# Original\n');path.chmod(0o640)
   first=host.document_read({'path':str(path)})
