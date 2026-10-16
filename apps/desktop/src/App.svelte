@@ -86,7 +86,6 @@
     terminalDefaults,
     deliverDictation,
   } from './lib/terminals';
-  import ColorPicker from './components/ColorPicker.svelte';
   import { tabColors, retainedPaneColors } from './lib/colors';
   import TmuxSettings from './components/TmuxSettings.svelte';
   import Brand from './components/Brand.svelte';
@@ -167,21 +166,26 @@
   import { VoiceCaptureKeys } from './lib/voice-capture-keys';
   import { RecordingTail } from './lib/recording-tail';
   import {
-    modelDescriptions,
     requiredVoiceModels,
     voiceStackReady,
     listMicrophones,
   } from './lib/voice-setup';
-  import { changelog, mergeChangelog, releaseHeading, type ReleaseEntry } from './lib/changelog';
+  import { changelog, mergeChangelog, type ReleaseEntry } from './lib/changelog';
   import { releaseVersion } from './lib/release-version';
   import { focusDialog } from './lib/focus';
   import Agents from './components/modals/Agents.svelte';
+  import Changelog from './components/modals/Changelog.svelte';
   import CloseNative from './components/modals/CloseNative.svelte';
   import CloseTerminal from './components/modals/CloseTerminal.svelte';
   import CommandDialog from './components/modals/CommandDialog.svelte';
+  import DeleteHost from './components/modals/DeleteHost.svelte';
   import DestroySession from './components/modals/DestroySession.svelte';
+  import HostColors from './components/modals/HostColors.svelte';
+  import HostForm from './components/modals/HostForm.svelte';
   import Launch from './components/modals/Launch.svelte';
+  import ListenIntro from './components/modals/ListenIntro.svelte';
   import NewSession from './components/modals/NewSession.svelte';
+  import PaneColors from './components/modals/PaneColors.svelte';
   import PaneHost from './components/modals/PaneHost.svelte';
   import PaneRepo from './components/modals/PaneRepo.svelte';
   import RenameSession from './components/modals/RenameSession.svelte';
@@ -189,6 +193,8 @@
   import Repos from './components/modals/Repos.svelte';
   import Sessions from './components/modals/Sessions.svelte';
   import TerminalHostConnection from './components/modals/TerminalHostConnection.svelte';
+  import VoiceSetup from './components/modals/VoiceSetup.svelte';
+  import WorkspaceOptions from './components/modals/WorkspaceOptions.svelte';
   import Worktree from './components/modals/Worktree.svelte';
   import AppearanceSection from './components/modals/settings/AppearanceSection.svelte';
   import ConnectionsSection from './components/modals/settings/ConnectionsSection.svelte';
@@ -5074,383 +5080,71 @@
       {:else if modal === 'close-terminal'}
         <CloseTerminal bind:modal {confirmPendingClose} />
       {:else if modal === 'listen-intro'}
-        <h2>Speak into your terminal</h2>
-        <p>
-          Select a terminal, then tap <strong>{bindingFor('dictation').label}</strong> to listen. In toggle
-          mode, tap again to stop and review the text in that terminal. Double-tap the same shortcut to
-          send it with Enter.
-        </p>
-        <p>
-          Keyboard shortcuts and mouse or device buttons work while DazeDev is focused. You can also
-          choose hold-to-talk: hold to record, release to stop.
-        </p>
-        <p class="hint">
-          Transcription and optional tidy-up run locally. {voiceReady
-            ? 'Your voice models are ready.'
-            : 'The selected voice stack needs a one-time download. Installed models are reused.'}
-        </p>
-        {#if device.voice.automatic}<p class="hint">
-            Automatic Enter is currently enabled. Dictation will submit as soon as transcription
-            finishes. Turn it off in settings to review first.
-          </p>{/if}
-        <div class="row">
-          <button
-            class="primary"
-            onclick={() => {
-              device.listenOnboarded = true;
-              persistDevice();
-              if (!voiceReady) {
-                modal = 'voice-setup';
-                return;
-              }
-              modal = '';
-              void task(() => record('dictation', listenIntroTarget));
-            }}>{voiceReady ? 'Start listening' : 'Set up local voice'}</button
-          >
-          <button
-            onclick={() => {
-              device.listenOnboarded = true;
-              persistDevice();
-              void task(async () => {
-                await openSettings();
-                await tick();
-                const settings = document.querySelector<HTMLDetailsElement>('#voice-shortcuts');
-                if (settings) {
-                  settings.open = true;
-                  settings.scrollIntoView({ block: 'start' });
-                }
-              });
-            }}>Change keyboard or mouse shortcut</button
-          >
-          <button
-            onclick={() => {
-              device.listenOnboarded = true;
-              persistDevice();
-              modal = '';
-            }}>Later</button
-          >
-        </div>
-      {:else if modal === 'voice-setup'}
-        <p>
-          Voice models are downloaded separately from DazeDev to keep the app small and let you
-          choose your stack. Downloads use the verified versions supported by this release.
-        </p>
-        <p class="hint">
-          Default stack: Parakeet transcription, Silero silence detection and S1-mini cleanup.
-          Download once; everything runs offline on this device with no account or per-use cost.
-        </p>
-        <p>
-          Selected: <strong
-            >{models.find((m) => m.id === device.voice.model)?.name || device.voice.model}</strong
-          >
-        </p>
-        <button onclick={() => void task(openSettings)}>Choose a model in Settings</button>
-        <div class="stack-options">
-          {#each models.filter((m) => m.family === 'asr') as m}<p>
-              <strong>{m.name}</strong>
-              {modelDescriptions[m.id]}
-            </p>{/each}
-        </div>
-        <p><strong>Silero:</strong> {modelDescriptions.silero}</p>
-        <label class="check"
-          ><input
-            type="checkbox"
-            bind:checked={device.voice.cleanup}
-            disabled={voiceStatus !== 'idle' || switchingVoice || voiceCacheLoading}
-            onchange={() => void changeVoiceModel()}
-          /> S1-mini cleanup</label
-        >
-        <p class="hint">
-          {modelDescriptions['s1-mini']} Review important names and commands before pressing Enter.
-        </p>
-        <div class="form-row">
-          <button
-            disabled={busy}
-            onclick={() => {
-              device.voiceSetupDismissed = true;
-              persistDevice();
-              modal = '';
-            }}>Later</button
-          >
-          <button
-            class="primary"
-            disabled={busy}
-            onclick={() =>
-              void task(async () => {
-                await setupVoice();
-                modal = '';
-              })}>{busy ? 'Setting up…' : 'Download selected voice stack'}</button
-          >
-        </div>
-        {#each Object.entries(downloadProgress) as [id, progress]}<div
-            class="download-progress"
-            role="status"
-          >
-            <span>{id}: {progress}</span><progress
-              aria-label={`${id} download`}
-              max="100"
-              value={progress.endsWith('%') ? parseInt(progress) : undefined}
-            ></progress>
-          </div>{/each}
-      {:else if modal === 'changelog'}
-        <div class="row" aria-label="Release platform">
-          {#each ['all', 'desktop', 'mobile'] as platform}
-            <button
-              aria-pressed={releaseFilter === platform}
-              onclick={() => (releaseFilter = platform as typeof releaseFilter)}
-              >{platform === 'all' ? 'All' : platform === 'desktop' ? 'Desktop' : 'Mobile'}</button
-            >
-          {/each}
-        </div>
-        {#if historyStatus}<p class="hint" role="status">{historyStatus}</p>{/if}
-        {#if releaseFilter !== 'mobile' && availableUpdate && !releaseHistory.some((entry) => entry.platform === 'desktop' && entry.version === availableUpdate?.version)}<article
-            class="release-entry"
-          >
-            <h3>Desktop · {releaseHeading(availableUpdate.version)}</h3>
-            <p>{availableUpdate.notes}</p>
-          </article>{/if}
-        {#each releaseHistory.filter((entry) => releaseFilter === 'all' || entry.platform === releaseFilter) as entry}<article
-            class="release-entry"
-          >
-            <h3>
-              {entry.platform === 'desktop' ? 'Desktop' : 'Mobile'} · {entry.platform === 'desktop'
-                ? releaseHeading(entry.version, entry.date)
-                : `${entry.date} : ${entry.version}`}{entry.channel === 'development'
-                ? ' · Development build'
-                : ''}
-            </h3>
-            <p>{entry.notes}</p>
-          </article>{/each}
-        <button onclick={() => (modal = changelogReturn)}>Back</button>
-      {:else if modal === 'delete-host' && deleteHostTarget}
-        <p>
-          Remove <strong>{deleteHostTarget.name}</strong> and its workspace list from this device?
-        </p>
-        <p class="hint">
-          Plain shells close and tmux terminals detach. Remote tmux sessions and the host's saved
-          workspace configuration stay intact.
-        </p>
-        <div class="form-row">
-          <button disabled={busy} onclick={() => (modal = '')}>Cancel</button><button
-            class="danger"
-            disabled={busy}
-            onclick={() => void task(() => deleteHost(deleteHostTarget!))}>Delete host</button
-          >
-        </div>
-      {:else if modal === 'host-colors' && colorHost}
-        <p>
-          Colors for {colorHost.name}. Workspaces and terminals inherit these unless they have their
-          own colors. This choice is saved on this device.
-        </p>
-        <ColorPicker
-          value={device.hosts.find((h) => h.id === colorHost?.id)?.colors}
-          onChange={(colors) => {
-            device.hosts = device.hosts.map((h) => (h.id === colorHost?.id ? { ...h, colors } : h));
-            persistDevice();
-          }}
+        <ListenIntro
+          {bindingFor}
+          bind:device
+          bind:modal
+          {openSettings}
+          {persistDevice}
+          startListening={() => record('dictation', listenIntroTarget)}
+          {task}
+          {voiceReady}
         />
+      {:else if modal === 'voice-setup'}
+        <VoiceSetup
+          {busy}
+          {changeVoiceModel}
+          bind:device
+          {downloadProgress}
+          bind:modal
+          {models}
+          {openSettings}
+          {persistDevice}
+          {setupVoice}
+          {switchingVoice}
+          {task}
+          {voiceCacheLoading}
+          {voiceStatus}
+        />
+      {:else if modal === 'changelog'}
+        <Changelog
+          {availableUpdate}
+          {changelogReturn}
+          {historyStatus}
+          bind:modal
+          bind:releaseFilter
+          {releaseHistory}
+        />
+      {:else if modal === 'delete-host' && deleteHostTarget}
+        <DeleteHost {busy} {deleteHost} {deleteHostTarget} bind:modal {task} />
+      {:else if modal === 'host-colors' && colorHost}
+        <HostColors {colorHost} bind:device {persistDevice} />
       {:else if modal === 'tmux-settings' && tmuxHost}
         <TmuxSettings host={tmuxHost} appScrollback={device.terminal?.scrollback || terminalDefaults.scrollback} />
       {:else if modal === 'pane-colors' && colorPane}
-        {@const owner = workspaces.find((w) => w.panes.some((p) => p.id === colorPane?.id))}
-        <p class="hint">
-          Overrides this terminal only. Other terminals follow their workspace colors.
-        </p>
-        <ColorPicker
-          value={colorPane.colors}
-          inherited={tabColors(
-            owner?.colors,
-            device.hosts.find((h) => h.id === colorPane?.hostId)?.colors,
-          )}
-          resetLabel="Use workspace colors"
-          onChange={(colors) => {
-            if (!owner || !colorPane) return;
-            colorPane.colors = colors;
-            updateWorkspace({
-              ...owner,
-              panes: owner.panes.map((p) => (p.id === colorPane!.id ? { ...p, colors } : p)),
-            });
-          }}
+        <PaneColors bind:colorPane {device} {updateWorkspace} {workspaces} />
+      {:else if modal === 'workspace' && workspaceTarget}
+        <WorkspaceOptions
+          {closeWorkspace}
+          {device}
+          bind:modal
+          bind:profiles
+          bind:renameValue
+          {saved}
+          {updateWorkspace}
+          bind:workspaceTarget
         />
-      {:else if modal === 'workspace' && workspaceTarget}<form
-          onsubmit={(e) => {
-            e.preventDefault();
-            if (workspaceTarget) {
-              updateWorkspace({
-                ...workspaceTarget,
-                name: renameValue.trim() || workspaceTarget.name,
-              });
-              modal = '';
-            }
-          }}
-        >
-          <label>Workspace name<input bind:value={renameValue} /></label>
-          <p class="hint">
-            Applies to this sidebar tab and all terminals without their own color override,
-            including new terminals.
-          </p>
-          <ColorPicker
-            value={workspaceTarget.colors}
-            inherited={device.hosts.find((h) => h.id === workspaceTarget?.hostId)?.colors}
-            resetLabel="Use host colors"
-            onChange={(colors) => {
-              if (workspaceTarget) {
-                workspaceTarget = { ...workspaceTarget, colors };
-                updateWorkspace(workspaceTarget);
-              }
-            }}
-          />
-          <div class="form-row">
-            <button
-              type="button"
-              onclick={() => {
-                if (!workspaceTarget) return;
-                const list = profiles[workspaceTarget.hostId].workspaces;
-                const i = list.findIndex((w) => w.id === workspaceTarget!.id);
-                if (i > 0) {
-                  [list[i - 1], list[i]] = [list[i], list[i - 1]];
-                  saved(workspaceTarget.hostId);
-                }
-              }}>Move up</button
-            ><button
-              type="button"
-              onclick={() => {
-                if (!workspaceTarget) return;
-                const list = profiles[workspaceTarget.hostId].workspaces;
-                const i = list.findIndex((w) => w.id === workspaceTarget!.id);
-                if (i < list.length - 1) {
-                  [list[i + 1], list[i]] = [list[i], list[i + 1]];
-                  saved(workspaceTarget.hostId);
-                }
-              }}>Move down</button
-            >
-          </div>
-          <div class="form-row">
-            <button
-              type="button"
-              onclick={() => {
-                modal = '';
-                closeWorkspace(workspaceTarget!);
-              }}>Delete workspace</button
-            ><button class="primary">Save name</button>
-          </div>
-          <p class="hint">
-            Deleting removes the saved layout and closes plain shells. Attached tmux sessions stay
-            alive.
-          </p>
-        </form>{:else if modal === 'host'}<form
-          onsubmit={(e) => {
-            e.preventDefault();
-            void task(async () => {
-              if (!newHost.name.trim()) throw new Error('Give this connection a name.');
-              device.hosts = device.hosts.some((h) => h.id === newHost.id)
-                ? device.hosts.map((h) => (h.id === newHost.id ? { ...newHost } : h))
-                : [...device.hosts, { ...newHost }];
-              device.activeHost = newHost.id;
-              persistDevice();
-              modal = '';
-              void connect({ ...newHost });
-            });
-          }}
-        >
-          <label
-            >Connection name<input
-              bind:value={newHost.name}
-              placeholder="Development box"
-              required
-            /></label
-          ><label
-            >Location<select bind:value={newHost.kind}
-              ><option value="ssh">SSH · any network</option><option value="tailscale"
-                >Tailscale SSH · device identity</option
-              ><option value="powershell">Local Windows PowerShell</option><option value="wsl"
-                >Local WSL distribution</option
-              ><option value="local">Local macOS / Linux</option></select
-            ></label
-          >{#if newHost.kind === 'ssh' || newHost.kind === 'tailscale'}<label
-              >{newHost.kind === 'tailscale'
-                ? 'Tailscale hostname or IP'
-                : 'SSH alias or hostname'}<input
-                list="ssh-aliases"
-                bind:value={newHost.address}
-                placeholder="dev-box or 100.x.x.x"
-                required
-              /></label
-            >
-            <div class="form-row">
-              <label
-                >SSH user<input
-                  bind:value={newHost.user}
-                  required={newHost.kind === 'tailscale'}
-                  placeholder={newHost.kind === 'tailscale'
-                    ? 'Linux username, e.g. ubuntu'
-                    : 'From SSH config'}
-                /></label
-              >{#if newHost.kind === 'ssh'}<label
-                  >Port<input
-                    type="number"
-                    bind:value={newHost.port}
-                    min="1"
-                    max="65535"
-                    placeholder="22"
-                  /></label
-                >{/if}
-            </div>
-            <details>
-              <summary>Connection options</summary>{#if newHost.kind === 'ssh'}<label
-                  >Private key path<input
-                    bind:value={newHost.key}
-                    placeholder="Use SSH config / agent"
-                  /></label
-                ><label>Jump host<input bind:value={newHost.jump} placeholder="bastion" /></label
-                >{/if}<label
-                >tmux socket name<input bind:value={newHost.socket} placeholder="default" /></label
-              ><label class="check"
-                ><input type="checkbox" bind:checked={newHost.systemSsh} /> Use system OpenSSH</label
-              >
-              <p class="hint">
-                Only for hosts that need hardware security keys, PKCS#11 or other options the
-                built-in client lacks. Each terminal then signs in separately.
-              </p>
-            </details>
-            <datalist id="ssh-aliases"
-              >{#each aliases as alias}<option value={alias}></option>{/each}</datalist
-            >
-            <p class="hint">
-              {#if newHost.kind === 'tailscale'}
-                Uses your signed-in Tailscale device identity and Tailscale-verified host keys. No
-                SSH password or key is needed. The target must enable Tailscale SSH; an accept
-                policy connects directly, while a check policy can require browser reauthentication.
-                Native Windows cannot serve Tailscale SSH. For WSL, use its Linux endpoint's own
-                tailnet name. DazeDev remote hosts need Python 3.9 or newer and tmux.
-              {:else}
-                Your OpenSSH config, keys, certificates and agent are respected. You sign in once
-                per host; every terminal shares that connection. Password and host-key prompts
-                appear next. Passwords are never saved.
-              {/if}
-            </p>{:else if newHost.kind === 'powershell'}
-            <label
-              >Shell<select bind:value={newHost.nativeShell}>
-                <option value="powershell">Windows PowerShell</option><option value="pwsh"
-                  >PowerShell 7 (installed)</option
-                >
-              </select></label
-            >
-            <p class="hint">
-              Runs natively on this Windows machine, with hardware access and no WSL requirement.
-              Sessions can stay running when DazeDev closes. PowerShell 7 must already be installed.
-            </p>
-          {:else if newHost.kind === 'wsl'}<label
-              >Distribution<input
-                bind:value={newHost.distro}
-                placeholder="Default WSL distribution"
-              /></label
-            >{/if}
-          {#if newHost.kind !== 'powershell'}<p class="hint">
-              The host needs Python 3 and tmux. DazeDev runs its management helper in memory.
-            </p>{/if}
-          <button class="primary" disabled={busy}>Save & connect <ArrowUpRight size={15} /></button>
-        </form>
+      {:else if modal === 'host'}
+        <HostForm
+          {aliases}
+          {busy}
+          {connect}
+          bind:device
+          bind:modal
+          bind:newHost
+          {persistDevice}
+          {task}
+        />
       {:else if modal === 'launch'}
         <Launch
           {busy}
