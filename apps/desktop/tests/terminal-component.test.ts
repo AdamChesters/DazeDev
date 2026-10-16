@@ -5,7 +5,7 @@ import { calls, emit, frame, resetTauri } from './support/tauri';
 import { Terminal as FakeTerminal } from './support/xterm';
 import { clipboard, installDom, pasteEvent } from './support/dom';
 import Terminal from '../src/components/Terminal.svelte';
-import { terminalDefaults, type TerminalSettings } from '../src/lib/terminals';
+import { terminals, terminalDefaults, type TerminalSettings } from '../src/lib/terminals';
 import type { Channel } from '@tauri-apps/api/core';
 import type { Host, Pane } from '../src/lib/types';
 
@@ -182,5 +182,23 @@ describe('Terminal output', () => {
     expect(
       screen.getByRole('textbox', { name: /Last received terminal output/ }).textContent,
     ).toContain('last line');
+  });
+});
+
+describe('input typed in the detached window', () => {
+  it('moves the dictation context on for this pane only, as relayed input does', async () => {
+    await attached();
+    const controls = terminals.get('p1')!;
+    const before = controls.context();
+    expect(before).not.toBe('');
+    emit('terminal-window-input', { paneId: 'p1', data: '\x1b[I' });
+    expect(controls.context()).toBe(before);
+    emit('terminal-window-input', { paneId: 'other', data: 'x' });
+    expect(controls.context()).toBe(before);
+    emit('terminal-window-input', { paneId: 'p1', data: 'x' });
+    const after = controls.context();
+    expect(after).not.toBe(before);
+    await expect(controls.submitReviewed!(before)).rejects.toThrow('terminal changed');
+    expect(typed()).toEqual([]);
   });
 });

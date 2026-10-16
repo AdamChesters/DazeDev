@@ -816,6 +816,12 @@
           lost('Disconnected. Reconnecting…');
         }
       }),
+      // Typing in this pane's detached window goes straight to the PTY; the
+      // desktop app reports it here first, so the dictation context moves on
+      // exactly as it does for relayed input.
+      on<{ paneId: string; data: string }>('terminal-window-input', (v) => {
+        if (v.paneId === pane.id && terminalInputChangesContext(v.data)) contextEpoch++;
+      }),
     ]).then((unsubs) => {
       if (disposed) {
         unsubs.forEach((f) => f());
