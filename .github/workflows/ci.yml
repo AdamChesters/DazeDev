@@ -1,0 +1,42 @@
+name: CI
+
+# Runs on the project's self-hosted runner. It uses no GitHub-hosted minutes.
+on:
+  push:
+  pull_request:
+  workflow_dispatch:
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  desktop:
+    runs-on: [self-hosted, linux, dazedev]
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v4
+      - name: Keep tests away from live sessions
+        run: |
+          # Short private folder: Unix socket paths must stay under ~100 bytes.
+          echo "XDG_RUNTIME_DIR=$(mktemp -d -p /tmp dz-ci-XXXXXX)" >> "$GITHUB_ENV"
+          echo "BROWSER=/bin/true" >> "$GITHUB_ENV"
+          echo "TMUX=" >> "$GITHUB_ENV"
+          echo "TMUX_PANE=" >> "$GITHUB_ENV"
+      - name: Frontend gate
+        working-directory: apps/desktop
+        run: |
+          npm ci --no-audit --no-fund
+          npm run gate
+      - name: Host helper
+        run: python3 -m unittest discover -s apps/desktop/tests -p 'test_*.py'
+      - name: Rust
+        run: cargo test --manifest-path apps/desktop/src-tauri/Cargo.toml --no-default-features --locked
+      - name: Built-in SSH against a private sshd
+        run: cargo test --manifest-path apps/desktop/src-tauri/Cargo.toml --no-default-features --locked --lib -- --ignored --test-threads=1 builtin_ssh
+      - name: Clean up
+        if: always()
+        run: rm -rf "$XDG_RUNTIME_DIR" apps/desktop/dist apps/desktop/node_modules
