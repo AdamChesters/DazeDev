@@ -4,11 +4,9 @@
   let {
     colorHost,
     device = $bindable(),
-    persistDevice,
   }: {
     colorHost: Host;
     device: Device;
-    persistDevice: () => void;
   } = $props();
 </script>
 
@@ -20,6 +18,5 @@
   value={device.hosts.find((h) => h.id === colorHost?.id)?.colors}
   onChange={(colors) => {
     device.hosts = device.hosts.map((h) => (h.id === colorHost?.id ? { ...h, colors } : h));
-    persistDevice();
   }}
 />

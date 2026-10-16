@@ -11,7 +11,6 @@
     microphoneError,
     microphoneLoading,
     microphones,
-    persistDevice,
     refreshMicrophones,
     saveShortcut,
     shortcutStatus,
@@ -28,7 +27,6 @@
     microphoneError: string;
     microphoneLoading: boolean;
     microphones: MediaDeviceInfo[];
-    persistDevice: () => void;
     refreshMicrophones: (requestPermission?: boolean) => Promise<void>;
     saveShortcut: (binding: Shortcut, mode?: VoiceMode) => Promise<void>;
     shortcutStatus: string;
@@ -103,7 +101,7 @@
       prompt or implement an IDE command while recording.
     </p>
     <label
-      >Activation<select bind:value={device.inputMode} onchange={persistDevice}
+      >Activation<select bind:value={device.inputMode}
         ><option value="toggle">Press to start / stop</option><option value="hold"
           >Hold to talk</option
         ></select
@@ -130,8 +128,8 @@
           <option value="release">Release models after each recording</option>
         </select></label
       ><label class="check"
-        ><input type="checkbox" bind:checked={device.voice.automatic} onchange={persistDevice} /> Automatically
-        press Enter after paste</label
+        ><input type="checkbox" bind:checked={device.voice.automatic} /> Automatically press Enter after
+        paste</label
       >
     </div>
     <p class="hint">
@@ -146,7 +144,7 @@
   </details>
   <div class="microphone-settings">
     <label
-      >Microphone<select bind:value={device.voice.microphone} onchange={persistDevice}
+      >Microphone<select bind:value={device.voice.microphone}
         ><option value="">System default</option
         >{#if device.voice.microphone && !microphones.some((m) => m.deviceId === device.voice.microphone)}<option
             value={device.voice.microphone}>Selected input unavailable - refresh devices</option

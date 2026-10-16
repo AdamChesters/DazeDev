@@ -9,7 +9,6 @@
     // eslint-disable-next-line @typescript-eslint/no-unused-vars -- write-only $bindable prop
     modal = $bindable(),
     openSettings,
-    persistDevice,
     startListening,
     task,
     voiceReady,
@@ -18,7 +17,6 @@
     device: Device;
     modal: string;
     openSettings: () => Promise<void>;
-    persistDevice: () => void;
     startListening: () => Promise<void>;
     task: Task;
     voiceReady: boolean;
@@ -49,7 +47,6 @@
     class="primary"
     onclick={() => {
       device.listenOnboarded = true;
-      persistDevice();
       if (!voiceReady) {
         modal = 'voice-setup';
         return;
@@ -61,7 +58,6 @@
   <button
     onclick={() => {
       device.listenOnboarded = true;
-      persistDevice();
       void task(async () => {
         await openSettings();
         await tick();
@@ -76,7 +72,6 @@
   <button
     onclick={() => {
       device.listenOnboarded = true;
-      persistDevice();
       modal = '';
     }}>Later</button
   >

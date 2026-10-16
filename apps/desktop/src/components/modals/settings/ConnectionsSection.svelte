@@ -13,7 +13,6 @@
     modal = $bindable(),
     // eslint-disable-next-line @typescript-eslint/no-unused-vars -- write-only $bindable prop
     newHost = $bindable(),
-    persistDevice,
     settingsHost,
     task,
   }: {
@@ -23,7 +22,6 @@
     disconnectHost: (hostId: string) => Promise<void>;
     modal: string;
     newHost: Host;
-    persistDevice: () => void;
     settingsHost: string;
     task: Task;
   } = $props();
@@ -59,7 +57,6 @@
         onchange={(e) => {
           (device.clipboardByHost ||= {})[settingsHost] = e.currentTarget
             .value as TerminalSettings['clipboard'];
-          persistDevice();
         }}><ClipboardOptions /></select
       ></label
     >{/if}

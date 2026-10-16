@@ -284,7 +284,21 @@ export class LiveBufferSearch {
   }
 }
 
-export const searchUpdates = new EventTarget();
+/** A terminal's output changed; `invalidated` means earlier matches may be gone. */
+export type SearchUpdate = { paneId: string; invalidated: boolean };
+const searchListeners = new Set<(update: SearchUpdate) => void>();
+/** Calls `listener` after each terminal output change. Returns the unsubscribe function. */
+export function onSearchUpdate(listener: (update: SearchUpdate) => void) {
+  searchListeners.add(listener);
+  return () => void searchListeners.delete(listener);
+}
 export function notifySearchUpdate(paneId: string, invalidated = false) {
-  searchUpdates.dispatchEvent(new CustomEvent('change', { detail: { paneId, invalidated } }));
+  for (const listener of searchListeners) {
+    // A failing listener must not break terminal output handling.
+    try {
+      listener({ paneId, invalidated });
+    } catch (e) {
+      console.error(e);
+    }
+  }
 }

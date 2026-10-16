@@ -11,7 +11,6 @@
     modal = $bindable(),
     models,
     openSettings,
-    persistDevice,
     setupVoice,
     switchingVoice,
     task,
@@ -25,7 +24,6 @@
     modal: string;
     models: ModelInfo[];
     openSettings: () => Promise<void>;
-    persistDevice: () => void;
     setupVoice: () => Promise<void>;
     switchingVoice: boolean;
     task: Task;
@@ -71,7 +69,6 @@
     disabled={busy}
     onclick={() => {
       device.voiceSetupDismissed = true;
-      persistDevice();
       modal = '';
     }}>Later</button
   >

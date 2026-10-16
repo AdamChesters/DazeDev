@@ -27,8 +27,6 @@ function setup(list: ModelInfo[], overrides: Partial<VoiceModelsDeps> = {}) {
     call,
     device: () => device,
     voiceStatus: () => 'idle',
-    persist: vi.fn(),
-    resetBackend: vi.fn(),
     notice: vi.fn(),
     fail: vi.fn(),
     mediaDevices: () => undefined,
@@ -95,7 +93,7 @@ describe('VoiceModels', () => {
   });
 
   it('selecting a model downloads it, releases the old one and saves the choice', async () => {
-    const { voice, names, device, deps } = setup([...stack(), model('whisper', false)]);
+    const { voice, names, device } = setup([...stack(), model('whisper', false)]);
     await voice.loadModels();
     await voice.selectModel('whisper');
     expect(names()).toEqual([
@@ -107,8 +105,6 @@ describe('VoiceModels', () => {
       'voice_cache',
     ]);
     expect(device.voice.model).toBe('whisper');
-    expect(deps.resetBackend).toHaveBeenCalled();
-    expect(deps.persist).toHaveBeenCalled();
     expect(voice.switching).toBe(false);
   });
 

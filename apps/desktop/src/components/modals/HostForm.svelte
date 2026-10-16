@@ -10,7 +10,6 @@
     // eslint-disable-next-line @typescript-eslint/no-unused-vars -- write-only $bindable prop
     modal = $bindable(),
     newHost = $bindable(),
-    persistDevice,
     task,
   }: {
     aliases: string[];
@@ -19,7 +18,6 @@
     device: Device;
     modal: string;
     newHost: Host;
-    persistDevice: () => void;
     task: Task;
   } = $props();
 </script>
@@ -33,7 +31,6 @@
         ? device.hosts.map((h) => (h.id === newHost.id ? { ...newHost } : h))
         : [...device.hosts, { ...newHost }];
       device.activeHost = newHost.id;
-      persistDevice();
       modal = '';
       void connect({ ...newHost });
     });

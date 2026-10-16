@@ -1,3 +1,4 @@
+import { checked, checkModels } from '../ipc';
 import { recommendVoice, type VoiceHardware } from '../hardware';
 import type { Device, ModelInfo } from '../types';
 import { listMicrophones, requiredVoiceModels, voiceStackReady } from '../voice-setup';
@@ -8,9 +9,6 @@ export interface VoiceModelsDeps {
   device: () => Device;
   /** Current recording phase; models change only while 'idle'. */
   voiceStatus: () => string;
-  persist: () => void;
-  /** Speech backend changes; forget the backend the last recording used. */
-  resetBackend: () => void;
   notice: (message: string) => void;
   fail: (e: unknown) => void;
   mediaDevices: () => MediaDevices | undefined;
@@ -47,7 +45,7 @@ export class VoiceModels {
   }
 
   loadModels = async () => {
-    this.models = (await this.#deps.call('model_list')) as ModelInfo[];
+    this.models = checked('model_list', checkModels, await this.#deps.call('model_list'));
     this.modelsLoaded = true;
     await this.configureCache().catch((e) => {
       this.#deps.notice(`Voice preload failed; recording can retry: ${e}`);
@@ -87,8 +85,6 @@ export class VoiceModels {
     try {
       await deps.call('voice_release');
       this.#cacheSignature = '';
-      deps.resetBackend();
-      deps.persist();
       await this.configureCache();
     } catch (e) {
       deps.fail(e);
@@ -110,8 +106,6 @@ export class VoiceModels {
       await deps.call('voice_release');
       this.#cacheSignature = '';
       deps.device().voice.model = id;
-      deps.resetBackend();
-      deps.persist();
       await this.configureCache();
     } finally {
       delete this.downloadProgress[id];
@@ -152,7 +146,6 @@ export class VoiceModels {
       }
     }
     deps.device().voiceSetupDismissed = true;
-    deps.persist();
     deps.notice('Voice stack ready to go.');
   };
 
