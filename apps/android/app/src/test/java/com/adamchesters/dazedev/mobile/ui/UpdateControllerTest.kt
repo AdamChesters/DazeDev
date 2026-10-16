@@ -15,7 +15,11 @@ import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
+import org.junit.Rule
 import org.junit.Test
+import org.junit.rules.TemporaryFolder
+import java.io.File
+import java.security.MessageDigest
 
 @OptIn(ExperimentalCoroutinesApi::class)
 class UpdateControllerTest {
@@ -56,9 +60,28 @@ class UpdateControllerTest {
         }
 
         override fun history() = historyJson
+
+        var sums: String? = null
+        var apk = "apk".toByteArray()
+        var downloads = 0
+
+        override fun checksums(update: MobileUpdate) = sums
+
+        override fun download(
+            update: MobileUpdate,
+            target: File,
+            progress: (Long) -> Unit,
+        ): String {
+            downloads++
+            target.writeBytes(apk)
+            progress(apk.size.toLong())
+            return MessageDigest.getInstance("SHA-256").digest(apk).joinToString("") { "%02x".format(it) }
+        }
     }
 
-    private class Setup(
+    @get:Rule val temp = TemporaryFolder()
+
+    private inner class Setup(
         test: TestScope,
         now: Long = 0,
     ) {
@@ -67,10 +90,76 @@ class UpdateControllerTest {
         val ui = UiStore(DazeDevMobileUiState())
         val store = Store()
         val source = Source()
-        val updates = UpdateController(ui, scope, store, source, "0.1.0", dispatcher) { now }
+        val folder: File = temp.newFolder()
+        val updates = UpdateController(ui, scope, store, source, "0.1.0", dispatcher, folder) { now }
     }
 
     private val release = MobileUpdate("0.2.0", "https://github.com/x/y.apk", "Notes")
+
+    // sha256("apk")
+    private val apkHash = "dd37c2d7274f7ea982cb83390c36918fee9ce8889073c44b68cdc00bdb8c3e04"
+
+    private fun Setup.offer() {
+        source.update = release
+        updates.checkUpdates()
+    }
+
+    @Test fun matchingDownloadIsOfferedToTheInstaller() =
+        runTest {
+            val s = Setup(this)
+            s.offer()
+            advanceUntilIdle()
+            s.source.sums = "0000000000000000000000000000000000000000000000000000000000000000  other.apk\n$apkHash *y.apk\n"
+            s.updates.downloadUpdate()
+            advanceUntilIdle()
+            assertNull(s.ui.value.updateError)
+            assertNull(s.ui.value.updateProgress)
+            assertEquals(File(s.folder, "y.apk").path, s.ui.value.verifiedUpdate)
+            s.updates.installStarted()
+            assertNull(s.ui.value.mobileUpdate)
+            s.scope.cancel()
+        }
+
+    @Test fun missingChecksumsRefuseBeforeDownloading() =
+        runTest {
+            val s = Setup(this)
+            s.offer()
+            advanceUntilIdle()
+            s.updates.downloadUpdate()
+            advanceUntilIdle()
+            assertTrue(
+                s.ui.value.updateError!!
+                    .contains("no SHA256SUMS"),
+            )
+            assertEquals(0, s.source.downloads)
+            s.source.sums = "$apkHash  other.apk\n"
+            s.updates.downloadUpdate()
+            advanceUntilIdle()
+            assertTrue(
+                s.ui.value.updateError!!
+                    .contains("does not list y.apk"),
+            )
+            assertEquals(0, s.source.downloads)
+            assertNull(s.ui.value.verifiedUpdate)
+            s.scope.cancel()
+        }
+
+    @Test fun wrongChecksumDeletesTheDownload() =
+        runTest {
+            val s = Setup(this)
+            s.offer()
+            advanceUntilIdle()
+            s.source.sums = "${"1".repeat(64)}  y.apk\n"
+            s.updates.downloadUpdate()
+            advanceUntilIdle()
+            assertTrue(
+                s.ui.value.updateError!!
+                    .contains("does not match SHA256SUMS"),
+            )
+            assertNull(s.ui.value.verifiedUpdate)
+            assertFalse(File(s.folder, "y.apk").exists())
+            s.scope.cancel()
+        }
 
     @Test fun manualCheckShowsAnUpdateAndClearsTheBusyFlag() =
         runTest {

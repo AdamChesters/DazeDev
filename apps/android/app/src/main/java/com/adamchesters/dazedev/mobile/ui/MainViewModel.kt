@@ -33,7 +33,7 @@ class MainViewModel(
     private val connections = ConnectionController(ui, registry, terminal)
     private val workspace = WorkspaceController(ui, registry, store, viewModelScope, terminal, connections::connect, connections::showHosts)
     private val sessions = SessionController(ui, registry, store, viewModelScope, terminal, workspace)
-    private val updates = UpdateController(ui, viewModelScope, store, PublicReleaseCatalog, BuildConfig.VERSION_NAME)
+    private val updates = UpdateController(ui, viewModelScope, store, PublicReleaseCatalog, BuildConfig.VERSION_NAME, downloads = java.io.File(application.cacheDir, "updates"))
     private val hostKeys = HostKeyController(ui, registry, viewModelScope, (application as DazeDevApplication)::knownHosts)
 
     init {
@@ -68,6 +68,12 @@ class MainViewModel(
     fun checkUpdates(manual: Boolean = true) = updates.checkUpdates(manual)
 
     fun dismissUpdate() = updates.dismissUpdate()
+
+    fun downloadUpdate() = updates.downloadUpdate()
+
+    fun installStarted() = updates.installStarted()
+
+    fun installFailed(message: String) = updates.installFailed(message)
 
     fun refreshReleaseHistory() = updates.refreshReleaseHistory()
 

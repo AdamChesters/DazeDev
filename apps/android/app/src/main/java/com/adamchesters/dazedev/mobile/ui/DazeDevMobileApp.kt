@@ -1,6 +1,5 @@
 package com.adamchesters.dazedev.mobile.ui
 
-import android.content.Intent
 import android.database.Cursor
 import android.provider.OpenableColumns
 import androidx.activity.compose.BackHandler
@@ -218,21 +217,7 @@ fun DazeDevMobileApp(viewModel: MainViewModel) {
             dismissButton = { TextButton(onClick = viewModel::dismissGroupConnect) { Text("Keep disconnected") } },
         )
     }
-    uiState.mobileUpdate?.let { update ->
-        AlertDialog(
-            onDismissRequest = viewModel::dismissUpdate,
-            title = { Text("Android update available") },
-            text = { Text("DazeDev Mobile ${update.version} is available from the public GitHub repository. Download the APK and confirm installation in Android.\n\n${update.notes.take(1500)}") },
-            confirmButton = {
-                TextButton(onClick = {
-                    runCatching { context.startActivity(Intent(Intent.ACTION_VIEW, android.net.Uri.parse(update.url))) }
-                        .onFailure { coroutineScope.launch { snackbarHostState.showSnackbar("Could not open the download. Try again from Changelog.") } }
-                    viewModel.dismissUpdate()
-                }) { Text("Download APK") }
-            },
-            dismissButton = { TextButton(onClick = viewModel::dismissUpdate) { Text("Later") } },
-        )
-    }
+    uiState.mobileUpdate?.let { update -> UpdateDialog(update, uiState, viewModel) }
     if (uiState.windows.isNotEmpty()) TmuxWindowPicker(uiState.windows, viewModel::selectWindow, viewModel::dismissWindows)
     uiState.draftReview?.let { review -> DraftReview(review, viewModel::applyDraftReview, viewModel::dismissDraftReview) }
     uiState.tmuxSettings?.let { settings -> TmuxSettingsSheet(settings, viewModel::applyTmuxSetting, viewModel::dismissTmuxSettings) }

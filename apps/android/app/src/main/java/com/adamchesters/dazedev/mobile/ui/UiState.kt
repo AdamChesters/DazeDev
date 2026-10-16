@@ -67,6 +67,10 @@ data class DazeDevMobileUiState(
     val releaseHistory: List<ReleaseEntry> = emptyList(),
     val releaseHistoryStatus: String = "",
     val mobileUpdate: MobileUpdate? = null,
+    val updateProgress: String? = null,
+    val updateError: String? = null,
+    /** Path of a downloaded APK whose SHA-256 matched the release's SHA256SUMS. */
+    val verifiedUpdate: String? = null,
     val checkingUpdates: Boolean = false,
     val profile: ConnectionProfile = ConnectionProfile(),
     val hosts: List<HostSummary> = emptyList(),
