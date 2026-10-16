@@ -8,9 +8,11 @@ bridge = importlib.util.module_from_spec(spec); spec.loader.exec_module(bridge)
 class BrowserTests(unittest.TestCase):
  def setUp(self):
   self.temp = tempfile.TemporaryDirectory(); self.root = pathlib.Path(self.temp.name); self.bridges = []; self.opened = []
+  # A python3 for the shim's shebang, without any real browser beside it.
+  self.bin = tempfile.TemporaryDirectory(); os.symlink(sys.executable, os.path.join(self.bin.name, 'python3'))
  def tearDown(self):
   for server in reversed(self.bridges): server.close()
-  self.temp.cleanup()
+  self.temp.cleanup(); self.bin.cleanup()
  def server(self, endpoint=None, desktop=None):
   holder = {}
   def opened(value):
@@ -22,8 +24,10 @@ class BrowserTests(unittest.TestCase):
  def shim(self):
   return self.bridges[-1].environment()['command']
  def environment(self, **extra):
-  value = dict(os.environ, BROWSER=self.shim(), DAZEDEV_BROWSER_TTY='/dev/dazedev-test', DAZEDEV_BROWSER_PID=str(os.getpid()))
-  value.pop('TMUX', None); value.pop('TMUX_PANE', None); value.update(extra); return value
+  # Only the test shim is reachable: no real browser on PATH, no desktop display.
+  value = dict(os.environ, BROWSER=self.shim(), PATH=str(pathlib.Path(self.shim()).parent)+os.pathsep+self.bin.name, DAZEDEV_BROWSER_TTY='/dev/dazedev-test', DAZEDEV_BROWSER_PID=str(os.getpid()))
+  for name in ('TMUX','TMUX_PANE','DISPLAY','WAYLAND_DISPLAY','DAZEDEV_BROWSER_ENDPOINT','DAZEDEV_BROWSER_LAUNCH'): value.pop(name, None)
+  value.update(extra); return value
  def test_real_python_webbrowser_uses_scoped_desktop_bridge(self):
   server=self.server(); self.register(server)
   result=subprocess.run([sys.executable,'-c',"import webbrowser; assert webbrowser.open('https://example.com/auth?code=test')"],env=self.environment(),capture_output=True,text=True,timeout=5)
@@ -84,7 +88,7 @@ class BrowserTests(unittest.TestCase):
  def test_real_tmux_client_routes_program_to_attached_desktop(self):
   server=self.server();name='dazedev-browser-test-'+uuid.uuid4().hex;client=None;master=slave=None
   try:
-   subprocess.run(['tmux','-L',name,'new-session','-d','-s','test','/bin/sh'],check=True)
+   subprocess.run(['tmux','-L',name,'-f','/dev/null','new-session','-d','-s','test','/bin/sh'],check=True,env=dict(self.environment(),PATH=os.environ['PATH']))
    master,slave=pty.openpty();tty=os.ttyname(slave)
    client=subprocess.Popen(['tmux','-L',name,'attach-session','-t','test'],stdin=slave,stdout=slave,stderr=slave,env=dict(os.environ,TERM='xterm-256color'))
    deadline=time.time()+5
@@ -94,8 +98,9 @@ class BrowserTests(unittest.TestCase):
    else:self.fail('Fixture tmux client did not attach')
    bridge.request(self.root,server.endpoint,dict(kind='register',pid=client.pid,tty=tty))
    result=self.root/'tmux-result'
-   program="import pathlib,webbrowser;pathlib.Path("+repr(str(result))+").write_text(str(webbrowser.open('https://example.com/tmux-client')))"
-   command='BROWSER='+shlex.quote(server.environment()['command'])+' '+shlex.quote(sys.executable)+' -c '+shlex.quote(program)
+   shim=server.environment()['command']
+   program="import pathlib,webbrowser;pathlib.Path("+repr(str(result))+").write_text(str(webbrowser.get("+repr(shim+' %s')+").open('https://example.com/tmux-client')))"
+   command='BROWSER='+shlex.quote(shim)+' '+shlex.quote(sys.executable)+' -I -c '+shlex.quote(program)
    subprocess.run(['tmux','-L',name,'send-keys','-t','test','-l',command],check=True)
    subprocess.run(['tmux','-L',name,'send-keys','-t','test','Enter'],check=True)
    deadline=time.time()+5
@@ -113,7 +118,7 @@ class BrowserTests(unittest.TestCase):
   spec=importlib.util.spec_from_file_location('browser_host_fixture',ROOT/'src-tauri/resources/host.py');host=importlib.util.module_from_spec(spec);spec.loader.exec_module(host)
   server=self.server();host.BROWSER=server;host.SOCKET='dazedev-browser-launch-'+uuid.uuid4().hex
   agent=self.root/'fixture-agent'
-  agent.write_text('#!'+sys.executable+'\nimport sys,webbrowser\nif "--help" not in sys.argv: assert webbrowser.open("https://example.com/first-login")\n')
+  agent.write_text('#!'+sys.executable+' -I\nimport os,sys,webbrowser\nif "--help" not in sys.argv: assert webbrowser.get(os.environ["BROWSER"]+" %s").open("https://example.com/first-login")\n')
   agent.chmod(0o700)
   try:
    with patch.object(host,'agent_path',return_value=str(agent)):
