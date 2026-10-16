@@ -3485,10 +3485,18 @@
             'update-progress',
             (v) => (updateProgress = Math.round((v.done / v.total) * 100)),
           ),
-          on<{ hostId: string; attempt: string }>('host-ready', (v) => {
-            if (hostAttempts.get(v.hostId) === v.attempt && reconnectHosts.has(v.hostId))
+          on<{ hostId: string; attempt: string; identity?: { notice?: string } }>(
+            'host-ready',
+            (v) => {
+              if (hostAttempts.get(v.hostId) !== v.attempt || !reconnectHosts.has(v.hostId)) return;
+              // A native host can report that older sessions keep an old broker running.
+              if (v.identity?.notice) {
+                const name = device.hosts.find((h) => h.id === v.hostId)?.name || 'Host';
+                notice = `${name}: ${v.identity.notice}`;
+              }
               void joined(v.hostId);
-          }),
+            },
+          ),
           on<{ hostId: string; text: string; attempt: string }>('host-output', (v) => {
             if (hostAttempts.get(v.hostId) !== v.attempt || !reconnectHosts.has(v.hostId)) return;
             logs[v.hostId] = ((logs[v.hostId] || '') + v.text).slice(-12000);
@@ -5388,7 +5396,13 @@
                 ><label>Jump host<input bind:value={newHost.jump} placeholder="bastion" /></label
                 >{/if}<label
                 >tmux socket name<input bind:value={newHost.socket} placeholder="default" /></label
+              ><label class="check"
+                ><input type="checkbox" bind:checked={newHost.systemSsh} /> Use system OpenSSH</label
               >
+              <p class="hint">
+                Only for hosts that need hardware security keys, PKCS#11 or other options the
+                built-in client lacks. Each terminal then signs in separately.
+              </p>
             </details>
             <datalist id="ssh-aliases"
               >{#each aliases as alias}<option value={alias}></option>{/each}</datalist
@@ -5399,10 +5413,11 @@
                 SSH password or key is needed. The target must enable Tailscale SSH; an accept
                 policy connects directly, while a check policy can require browser reauthentication.
                 Native Windows cannot serve Tailscale SSH. For WSL, use its Linux endpoint's own
-                tailnet name. DazeDev remote hosts need Python 3 and tmux.
+                tailnet name. DazeDev remote hosts need Python 3.9 or newer and tmux.
               {:else}
-                Your OpenSSH config, keys, certificates and agent are respected. Password and
-                host-key prompts appear next. Passwords are never saved.
+                Your OpenSSH config, keys, certificates and agent are respected. You sign in once
+                per host; every terminal shares that connection. Password and host-key prompts
+                appear next. Passwords are never saved.
               {/if}
             </p>{:else if newHost.kind === 'powershell'}
             <label

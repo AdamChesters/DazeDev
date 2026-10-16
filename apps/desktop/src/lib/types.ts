@@ -12,6 +12,8 @@ export interface Host {
   jump: string;
   distro: string;
   socket: string;
+  /** Use the system OpenSSH client instead of the built-in one. */
+  systemSsh?: boolean;
   fingerprint?: string;
 }
 export interface Session {

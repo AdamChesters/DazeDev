@@ -1605,7 +1605,21 @@ impl Transport {
         };
         // Keep the PTY useful after Ctrl-D exits its login shell. Bound rapid
         // failures so a broken shell/profile cannot create an infinite respawn loop.
+        // The marker carries this terminal's nonce, so program output in an
+        // ordinary shell cannot pretend the login shell restarted.
+        let shell_marker = match ready_marker.as_deref() {
+            Some(marker)
+                if marker
+                    .chars()
+                    .all(|c| c.is_ascii_alphanumeric() || c == '-') =>
+            {
+                format!("dazedev-shell:{marker}")
+            }
+            Some(_) => return Err("Invalid terminal marker".into()),
+            None => "dazedev-shell".to_owned(),
+        };
         let shell = r#"dazedev_fast=0; while :; do printf '\033]777;dazedev-shell\007'; dazedev_start=$(date +%s); "${SHELL:-/bin/sh}" -l; dazedev_elapsed=$(($(date +%s)-dazedev_start)); if [ "$dazedev_elapsed" -lt 2 ]; then dazedev_fast=$((dazedev_fast+1)); else dazedev_fast=0; fi; if [ "$dazedev_fast" -ge 3 ]; then printf '%s\n' 'Shell exited repeatedly. Check your login shell configuration, then reconnect.'; exit 1; fi; done"#;
+        let shell = shell.replace("dazedev-shell", &shell_marker);
         let script = if session.is_empty() {
             let cwd = directory.map(quote).unwrap_or_else(|| "~".into());
             format!("cd -- {cwd} || cd ~; {shell}")

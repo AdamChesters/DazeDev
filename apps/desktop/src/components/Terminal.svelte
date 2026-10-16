@@ -548,7 +548,7 @@
         onalert(notification);
         return true;
       }
-      if (data !== 'dazedev-shell') return false;
+      if (data !== `dazedev-shell:${readyMarker}`) return false;
       contextEpoch++;
       onshell();
       onstate('Shell');
