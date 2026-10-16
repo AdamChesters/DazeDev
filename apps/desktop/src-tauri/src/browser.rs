@@ -36,7 +36,7 @@ pub fn validate_url(value: &str) -> Result<String, String> {
 
 // Windows shell handlers may require STA COM. Use a fresh thread rather than
 // changing the apartment of a shared runtime worker or the UI thread.
-#[cfg(any(windows, test))]
+#[cfg(any(all(windows, feature = "desktop"), test))]
 fn on_opener_thread<T: Send + 'static>(
     operation: impl FnOnce() -> Result<T, String> + Send + 'static,
 ) -> Result<T, String> {
@@ -52,9 +52,9 @@ fn on_opener_thread<T: Send + 'static>(
         .map_err(|_| "Browser launcher failed".to_string())?
 }
 
-#[cfg(windows)]
+#[cfg(all(windows, any(feature = "desktop", test)))]
 struct StaApartment;
-#[cfg(windows)]
+#[cfg(all(windows, any(feature = "desktop", test)))]
 impl StaApartment {
     fn initialize() -> Result<Self, String> {
         use windows_sys::Win32::System::Com::{
@@ -75,7 +75,7 @@ impl StaApartment {
         Ok(Self)
     }
 }
-#[cfg(windows)]
+#[cfg(all(windows, any(feature = "desktop", test)))]
 impl Drop for StaApartment {
     fn drop(&mut self) {
         unsafe { windows_sys::Win32::System::Com::CoUninitialize() };

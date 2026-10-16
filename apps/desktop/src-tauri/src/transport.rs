@@ -2031,7 +2031,9 @@ mod tests {
         broker.join().unwrap();
         std::fs::remove_dir_all(root).unwrap();
     }
+    #[cfg(unix)]
     struct RestoreRuntime(Option<std::ffi::OsString>, std::path::PathBuf);
+    #[cfg(unix)]
     impl Drop for RestoreRuntime {
         fn drop(&mut self) {
             match self.0.take() {
