@@ -3245,8 +3245,29 @@
       modal = 'destroy';
     } else if (a.kind === 'worktree') {
       branch = a.branch;
+      worktreeQuestion = null;
       modal = 'worktree';
     }
+  }
+  // The host asks before running a repository's own worktree script.
+  let worktreeRequest: { hostId: string; args: Record<string, unknown> } | null = null;
+  let worktreeQuestion = $state<{ script: string } | null>(null);
+  async function sendWorktree(runScript?: boolean) {
+    const request = worktreeRequest;
+    if (!request) throw new Error('Start the worktree again.');
+    const result = await rpc<{ needsConfirmation?: boolean; script?: string } | null>(
+      request.hostId,
+      'worktree',
+      runScript === undefined ? request.args : { ...request.args, runScript },
+    );
+    if (result?.needsConfirmation && runScript === undefined) {
+      worktreeQuestion = { script: result.script || 'scripts/new-worktree.sh' };
+      return;
+    }
+    worktreeQuestion = null;
+    worktreeRequest = null;
+    await refresh();
+    modal = 'repos';
   }
   function openUpdates() {
     automaticUpdatePending = false;
@@ -6528,28 +6549,49 @@
           </div>{/each}<button onclick={() => void task(() => refresh())}
           ><RefreshCw size={14} /> Refresh discovery</button
         >
-      {:else if modal === 'worktree'}<form
-          onsubmit={(e) => {
-            e.preventDefault();
-            void task(async () => {
-              if (!activePane?.repo) throw new Error('Select a repository terminal first.');
-              await rpc(activePane.hostId, 'worktree', {
-                path: activePane.repo,
-                branch,
-                destination,
-                identity: activePane.identity,
-              });
-              await refresh();
-              modal = 'repos';
-            });
-          }}
-        >
-          <label>Branch<input bind:value={branch} required /></label><label
-            >Worktree directory<input bind:value={destination} required /></label
+      {:else if modal === 'worktree'}{#if worktreeQuestion}<div
+            class="worktree-question"
+            role="group"
+            aria-labelledby="worktree-question-text"
           >
-          <p class="hint">Uses scripts/new-worktree.sh when the repository provides it.</p>
-          <button class="primary" disabled={busy}>Create worktree</button>
-        </form>{/if}
+            <p id="worktree-question-text">
+              This repository has {worktreeQuestion.script}. Run it to create the worktree?
+            </p>
+            <div class="row">
+              <button
+                class="primary"
+                disabled={busy}
+                onclick={() => void task(() => sendWorktree(true))}>Run script</button
+              >
+              <button disabled={busy} onclick={() => void task(() => sendWorktree(false))}
+                >Create without script</button
+              >
+              <button disabled={busy} onclick={() => (worktreeQuestion = null)}>Cancel</button>
+            </div>
+          </div>{:else}<form
+            onsubmit={(e) => {
+              e.preventDefault();
+              void task(async () => {
+                if (!activePane?.repo) throw new Error('Select a repository terminal first.');
+                worktreeRequest = {
+                  hostId: activePane.hostId,
+                  args: {
+                    path: activePane.repo,
+                    branch,
+                    destination,
+                    identity: activePane.identity,
+                  },
+                };
+                await sendWorktree();
+              });
+            }}
+          >
+            <label>Branch<input bind:value={branch} required /></label><label
+              >Worktree directory<input bind:value={destination} required /></label
+            >
+            <p class="hint">Asks first when the repository provides scripts/new-worktree.sh.</p>
+            <button class="primary" disabled={busy}>Create worktree</button>
+          </form>{/if}{/if}
     </div>
   </div>{/if}
 
