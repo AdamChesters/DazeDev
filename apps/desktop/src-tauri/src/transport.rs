@@ -559,6 +559,127 @@ fn spawn(mut cmd: CommandBuilder) -> Result<(Arc<Pty>, Box<dyn Read + Send>), St
     *lock(&pty.exited) = Some(exit_rx);
     Ok((pty, reader))
 }
+/// A WSL or local shell started with plain pipes, for the host helper.
+fn pipe_command(host: &Host, remote: &str) -> Result<std::process::Command, String> {
+    checked(&host.distro)?;
+    let mut c = match host.kind.as_str() {
+        "wsl" => {
+            let mut c = std::process::Command::new("wsl.exe");
+            if !host.distro.is_empty() {
+                c.args(["-d", &host.distro]);
+            }
+            c.args(["-e", "sh", "-lc", remote]);
+            c
+        }
+        "local" if !cfg!(windows) => {
+            let mut c = std::process::Command::new("sh");
+            c.args(["-lc", remote]);
+            c
+        }
+        "local" => return Err("Local tmux on Windows requires a WSL connection".into()),
+        _ => return Err("Unknown connection type".into()),
+    };
+    #[cfg(windows)]
+    {
+        use std::os::windows::process::CommandExt;
+        c.creation_flags(0x08000000);
+    }
+    c.stdin(std::process::Stdio::piped())
+        .stdout(std::process::Stdio::piped())
+        .stderr(std::process::Stdio::piped());
+    Ok(c)
+}
+/// Input side of a process started with pipes.
+struct PipeIo {
+    writer: mpsc::SyncSender<(Vec<u8>, mpsc::Sender<Result<(), String>>)>,
+    child: Arc<Mutex<std::process::Child>>,
+}
+impl Io for PipeIo {
+    fn write(&self, data: &[u8]) -> Result<(), String> {
+        let (tx, rx) = mpsc::channel();
+        self.writer
+            .try_send((data.to_vec(), tx))
+            .map_err(|_| "Host helper input is unavailable".to_string())?;
+        rx.recv_timeout(Duration::from_secs(5))
+            .map_err(|_| "Host helper input timed out; reconnect this host".to_string())?
+    }
+    fn resize(&self, _cols: u16, _rows: u16) -> Result<(), String> {
+        Ok(())
+    }
+    fn kill(&self) {
+        let _ = lock(&self.child).kill();
+    }
+}
+/// Start a process with pipes. Its error output is shown as connection
+/// details; its standard output is returned for the protocol reader.
+fn spawn_piped(
+    mut cmd: std::process::Command,
+    host_id: &str,
+    sink: &EventSink,
+) -> Result<(Arc<Pty>, Box<dyn Read + Send>), String> {
+    let mut child = cmd.spawn().map_err(|e| e.to_string())?;
+    let mut stdin = child.stdin.take().ok_or("Host helper has no input")?;
+    let stdout = child.stdout.take().ok_or("Host helper has no output")?;
+    if let Some(stderr) = child.stderr.take() {
+        let sink = sink.clone();
+        let id = host_id.to_owned();
+        std::thread::spawn(move || {
+            use std::io::BufRead;
+            for line in std::io::BufReader::new(stderr)
+                .lines()
+                .map_while(Result::ok)
+            {
+                sink(
+                    "host-output",
+                    json!({"hostId":id,"text":format!("{line}\n")}),
+                );
+            }
+        });
+    }
+    let (write_tx, write_rx) =
+        mpsc::sync_channel::<(Vec<u8>, mpsc::Sender<Result<(), String>>)>(32);
+    let writable = Arc::new(AtomicBool::new(true));
+    let worker_writable = writable.clone();
+    std::thread::spawn(move || {
+        while let Ok((bytes, reply)) = write_rx.recv() {
+            if !worker_writable.load(Ordering::Acquire) {
+                let _ = reply.send(Err("Host helper is disconnected".into()));
+                continue;
+            }
+            let result = stdin
+                .write_all(&bytes)
+                .and_then(|_| stdin.flush())
+                .map_err(|e| e.to_string());
+            if result.is_err() {
+                worker_writable.store(false, Ordering::Release);
+            }
+            let _ = reply.send(result);
+        }
+    });
+    // Reap the child and report its exit, as for a terminal process.
+    let child = Arc::new(Mutex::new(child));
+    let waited = child.clone();
+    let (exit_tx, exit_rx) = mpsc::channel();
+    std::thread::spawn(move || {
+        loop {
+            match lock(&waited).try_wait() {
+                Ok(None) => {}
+                _ => break,
+            }
+            std::thread::sleep(Duration::from_millis(200));
+        }
+        let _ = exit_tx.send(());
+    });
+    let pty = Pty::new(
+        Box::new(PipeIo {
+            writer: write_tx,
+            child,
+        }),
+        writable,
+    );
+    *lock(&pty.exited) = Some(exit_rx);
+    Ok((pty, Box::new(stdout)))
+}
 // The channel retains an early exit until the caller has installed its connection
 // and callback. EOF and child completion share the same active flag below.
 fn observe_exit(pty: &Pty, finished: impl FnOnce() + Send + 'static) {
@@ -1128,27 +1249,28 @@ impl Transport {
             let script = script(true);
             return self.connect_ssh(host, target, settings, nonce, script, bootstrap, sink);
         }
-        let script = script(false);
-        let process_command = if matches!(host.kind.as_str(), "ssh" | "tailscale") {
-            boot_command(Boot::TerminalControl, &nonce)
+        // WSL and local shells need no terminal for the helper: plain pipes
+        // carry binary frames. The system OpenSSH client needs a terminal for
+        // its own prompts, so it keeps the text protocol.
+        let piped = matches!(host.kind.as_str(), "wsl" | "local");
+        let script = script(piped);
+        let (pty, reader, bootstrap) = if piped {
+            let (pty, reader) = spawn_piped(pipe_command(&host, &script)?, &host.id, &sink)?;
+            (pty, reader, bootstrap)
         } else {
-            // Raw, silent input: the source line is far longer than a
-            // canonical-mode terminal line and must not be echoed back.
-            format!("stty -echo -icanon min 1 time 0 && {script}")
+            let (pty, reader) = spawn(command(
+                &host,
+                &boot_command(Boot::TerminalControl, &nonce),
+            )?)?;
+            (pty, reader, bootstrap.after_script(&nonce, &script))
         };
-        let bootstrap = if matches!(host.kind.as_str(), "ssh" | "tailscale") {
-            bootstrap.after_script(&nonce, &script)
-        } else {
-            bootstrap
-        };
-        let (pty, reader) = spawn(command(&host, &process_command)?)?;
         let conn = Arc::new(Connection {
             pty,
             pending: Mutex::new(HashMap::new()),
             ready: Mutex::new(false),
             browser: crate::browser::Requests::new(nonce.clone()),
             prompts: None,
-            binary: false,
+            binary: piped,
         });
         self.register(&host.id, conn.clone());
         let exited_conn = conn.clone();
