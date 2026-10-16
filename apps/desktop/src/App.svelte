@@ -28,7 +28,7 @@
   import ViewerWindow from './components/ViewerWindow.svelte';
   import Licenses from './components/Licenses.svelte';
   import { hostLabel, terminalPresentation, unknownStatus, type PaneStatus } from './lib/pane-status';
-  import { diagnostic, exportDiagnostics } from './lib/diagnostics';
+  import { diagnostic } from './lib/diagnostics';
   import { onMount, tick, untrack } from 'svelte';
   import { AlertThrottle } from './lib/terminal-alerts';
   import {
@@ -47,10 +47,10 @@
   } from './lib/app-shortcuts';
   import { macPlatform } from './lib/terminal-setup';
   import { sessionNameError } from './lib/session-name';
-  import { recommendVoice, accelerationAdvice, type VoiceHardware } from './lib/hardware';
+  import { recommendVoice, type VoiceHardware } from './lib/hardware';
   import { fade } from 'svelte/transition';
   import HighlightEffect from './components/HighlightEffect.svelte';
-  import { recordingHighlights, recordingHighlight } from './lib/highlights';
+  import { recordingHighlight } from './lib/highlights';
   import { getCurrentWindow } from '@tauri-apps/api/window';
   import {
     Plus,
@@ -59,7 +59,6 @@
     Mic,
     Settings,
     ChevronDown,
-    ChevronRight,
     Columns2,
     Rows2,
     Maximize2,
@@ -69,37 +68,27 @@
     Command,
     ArrowUpRight,
     FolderGit2,
-    GitBranch,
-    SlidersHorizontal,
     Search,
     Download,
     Trash2,
     PanelLeftClose,
     PanelLeftOpen,
-    Square,
     Check,
     Send,
-    MoveHorizontal,
-    MoreHorizontal,
-    Unplug,
     Radio,
     LayoutGrid,
-    Headphones,
     Palette,
     Upload,
   } from '@lucide/svelte';
   import {
     defaultPrompt,
-    promptVariables,
     renderPrompt,
-    unknownVariables,
     type PromptValues,
   } from './lib/prompt';
   import {
     terminals,
     terminalDefaults,
     deliverDictation,
-    type TerminalSettings,
   } from './lib/terminals';
   import ColorPicker from './components/ColorPicker.svelte';
   import { tabColors, retainedPaneColors } from './lib/colors';
@@ -190,6 +179,14 @@
   import { changelog, mergeChangelog, releaseHeading, type ReleaseEntry } from './lib/changelog';
   import { releaseVersion } from './lib/release-version';
   import { focusDialog } from './lib/focus';
+  import AppearanceSection from './components/modals/settings/AppearanceSection.svelte';
+  import ConnectionsSection from './components/modals/settings/ConnectionsSection.svelte';
+  import HostPreferencesSection from './components/modals/settings/HostPreferencesSection.svelte';
+  import ShortcutsSection from './components/modals/settings/ShortcutsSection.svelte';
+  import TerminalSection from './components/modals/settings/TerminalSection.svelte';
+  import UpdatesSection from './components/modals/settings/UpdatesSection.svelte';
+  import VoiceHotkeysSection from './components/modals/settings/VoiceHotkeysSection.svelte';
+  import VoiceModelsSection from './components/modals/settings/VoiceModelsSection.svelte';
   let device = $state<Device>({
       ...defaults(),
       inputMode: 'toggle',
@@ -853,6 +850,23 @@
     } finally {
       delete downloadProgress[id];
       switchingVoice = false;
+    }
+  }
+  async function removeModel(id: string, release: boolean) {
+    if (release) {
+      await call('voice_release');
+      voiceCacheSignature = '';
+    }
+    await call('model_remove', { id });
+    await loadModels();
+  }
+  async function downloadModel(id: string) {
+    downloadProgress[id] = 'Starting';
+    try {
+      await call('model_download', { id });
+      await loadModels();
+    } finally {
+      delete downloadProgress[id];
     }
   }
   let sessionOperation = $state('');
@@ -3376,6 +3390,43 @@
         });
     void refreshMicrophones();
   }
+  function saveHostPreferences() {
+    profiles[settingsHost].preferences.roots = roots
+      .split('\n')
+      .map((x) => x.trim())
+      .filter(Boolean);
+    profiles[settingsHost].preferences.guidance = guidance;
+    profiles[settingsHost].preferences.promptTemplate = promptTemplate;
+    saved(settingsHost);
+    notice = 'Host preferences queued for saving.';
+  }
+  async function reloadHostProfile() {
+    const local = $state.snapshot(profiles[settingsHost] || recovery[settingsHost]);
+    if (local) {
+      (device.profileBackups ||= {})[settingsHost] = [
+        local,
+        ...(device.profileBackups?.[settingsHost] || []),
+      ].slice(0, 3);
+      await call('device_save', {
+        value: { ...$state.snapshot(device), recovery },
+      });
+    }
+    const backup = JSON.stringify(local, null, 2);
+    const url = URL.createObjectURL(new Blob([backup], { type: 'application/json' }));
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = 'dazedev-workspace-recovery.json';
+    a.click();
+    setTimeout(() => URL.revokeObjectURL(url), 1000);
+    replaceProfile(
+      settingsHost,
+      rebindOwner(await rpc<Profile>(settingsHost, 'profile_load'), settingsHost),
+    );
+    profileBlocked[settingsHost] = false;
+    delete recovery[settingsHost];
+    saveState[settingsHost] = 'Restored';
+    persistDevice();
+  }
   let systemReducedMotion = $state(false);
   const highlightMotionAllowed = $derived(
     device.highlightMotion !== 'static' &&
@@ -5837,647 +5888,93 @@
         </form>
       {:else if modal === 'settings'}
         <div class="settings-compact settings-page">
-          <section class="settings-section" aria-label="Updates">
-            <h3>Updates · DazeDev {releaseVersion(clientInfo.version)}</h3>
-
-            {#if clientInfo.updateSupported}<label class="check"
-                ><input
-                  type="checkbox"
-                  checked={device.checkUpdates !== false}
-                  onchange={(e) => {
-                    device.checkUpdates = e.currentTarget.checked;
-                    persistDevice();
-                  }}
-                /> Check at startup and every 30 minutes</label
-              >
-              <div class="settings-actions">
-                <button disabled={updateBusy} onclick={() => void checkUpdates(true)}
-                  >Check for updates</button
-                ><button onclick={() => showChangelog()}>Changelog</button><button
-                  onclick={() => exportDiagnostics(clientInfo.version)}>Export diagnostics</button
-                >
-              </div>{:else}<p class="hint">
-                Test build: download updates manually for this platform.
-              </p>
-              <div class="settings-actions">
-                <button onclick={() => showChangelog()}>Changelog</button><button
-                  onclick={() => exportDiagnostics(clientInfo.version)}>Export diagnostics</button
-                >
-              </div>{/if}
-            <p class="hint">
-              Opening Settings always checks for updates, even when automatic checks are off.
-            </p>
-            {#if availableUpdate}<button onclick={openUpdates}
-                >Update to {releaseVersion(availableUpdate.version)}</button
-              >{/if}
-            <p class="hint" role="status">{updateStatus || updateLabel}</p>
-            {#if clientInfo.migration}<p class="hint">{clientInfo.migration}</p>{/if}
-          </section>
+          <UpdatesSection
+            {availableUpdate}
+            {checkUpdates}
+            {clientInfo}
+            bind:device
+            {openUpdates}
+            {persistDevice}
+            {showChangelog}
+            {updateBusy}
+            {updateLabel}
+            {updateStatus}
+          />
 
           <PinSettings />
           <DictionarySettings
             compact
             hosts={device.hosts.filter((h) => h.kind === 'ssh' || h.kind === 'tailscale')}
           />
-          <div class="voice-readiness" role="status">
-            <span class="readiness-light" class:ready={voiceReady}></span>
-            <strong
-              >{voiceReady
-                ? 'Voice ready'
-                : modelsLoaded
-                  ? 'Voice setup incomplete'
-                  : 'Checking voice models…'}</strong
-            >
-          </div>
-          <details class="settings-section settings-disclosure" open={!voiceReady}>
-            <summary
-              >Voice models <span
-                >{models.find((m) => m.id === device.voice.model)?.name || 'Setup required'}</span
-              ></summary
-            >
-            {#if hardware && recommendation}
-              <p class="hint">
-                {hardware.logicalCpus} CPU threads · {hardware.memory
-                  ? `${(hardware.memory / 1024 ** 3).toFixed(0)} GB RAM`
-                  : 'RAM unknown'} · {hardware.vulkan ? 'Vulkan GPU available' : 'CPU only'}
-              </p>
-              <p class="hint">{recommendation.reason} Hardware guidance, not a speed benchmark.</p>
-            {:else}<p class="hint">{hardwareError || 'Detecting hardware…'}</p>{/if}
-            <div class="model-list" role="radiogroup" aria-label="Transcription model">
-              {#each models.filter((m) => m.family === 'asr') as m}
-                <div class="model-row" class:selected={device.voice.model === m.id}>
-                  <input
-                    type="radio"
-                    name="voice-model"
-                    aria-label={`Select ${m.name}${m.installed ? '' : ' (download required)'}`}
-                    checked={device.voice.model === m.id}
-                    disabled={voiceStatus !== 'idle' || switchingVoice || voiceCacheLoading || busy}
-                    onclick={(e) => {
-                      e.preventDefault();
-                      void task(() => selectVoiceModel(m.id));
-                    }}
-                  />
-                  <div>
-                    <strong>{m.name}</strong>{#if recommendation?.model === m.id}<span
-                        class="recommended">Recommended</span
-                      >{/if}
-                    <small>{Math.round(m.size / 1e6)} MB · {modelDescriptions[m.id]}</small>
-                    {#if hardware && device.voice.model === m.id}<small
-                        >{accelerationAdvice(hardware, m.id, device.voice.backend)}</small
-                      >{/if}
-                  </div>
-                  {#if m.installed}<span class="installed"><Check size={13} /> Installed</span>
-                    <button
-                      class="icon"
-                      aria-label={`Remove ${m.name}`}
-                      disabled={voiceStatus !== 'idle' ||
-                        switchingVoice ||
-                        voiceCacheLoading ||
-                        busy}
-                      onclick={() =>
-                        void task(async () => {
-                          await call('voice_release');
-                          voiceCacheSignature = '';
-                          await call('model_remove', { id: m.id });
-                          await loadModels();
-                        })}><Trash2 size={14} /></button
-                    >
-                  {:else}<button
-                      disabled={voiceStatus !== 'idle' ||
-                        switchingVoice ||
-                        voiceCacheLoading ||
-                        busy}
-                      onclick={() => void task(() => selectVoiceModel(m.id))}
-                      ><Download size={14} />{downloadProgress[m.id] || 'Download & select'}</button
-                    >{/if}
-                  {#if downloadProgress[m.id]}<progress
-                      aria-label={`${m.name} download`}
-                      max="100"
-                      value={downloadProgress[m.id].endsWith('%')
-                        ? parseInt(downloadProgress[m.id])
-                        : undefined}
-                    ></progress>{/if}
-                </div>
-              {/each}
-            </div>
-            {#if switchingVoice}<p role="status">
-                {Object.keys(downloadProgress).length ? 'Downloading model…' : 'Switching model…'}
-              </p>{/if}
-            <label
-              >Acceleration<select
-                bind:value={device.voice.backend}
-                disabled={voiceStatus !== 'idle' || switchingVoice || voiceCacheLoading}
-                onchange={() => void changeVoiceModel()}
-              >
-                <option value="auto">Automatic</option><option value="cpu">CPU</option><option
-                  value="vulkan"
-                  disabled={!!hardware && !hardware.vulkan}>GPU · Vulkan</option
-                >
-              </select></label
-            >
-            <details>
-              <summary>Supporting models · Silero / S1-mini</summary>
-              <div class="model-list">
-                {#each models.filter((m) => m.family !== 'asr') as m}<div class="model-row">
-                    <div>
-                      <strong>{m.name}</strong><small
-                        >{Math.round(m.size / 1e6)} MB · {m.license}</small
-                      >
-                    </div>
-                    {#if m.installed}<span class="installed"><Check size={13} /> Installed</span
-                      ><button
-                        class="icon"
-                        aria-label={`Remove ${m.name}`}
-                        disabled={voiceStatus !== 'idle' ||
-                          switchingVoice ||
-                          voiceCacheLoading ||
-                          busy}
-                        onclick={() =>
-                          void task(async () => {
-                            await call('model_remove', { id: m.id });
-                            await loadModels();
-                          })}><Trash2 size={14} /></button
-                      >{:else}<button
-                        disabled={!!downloadProgress[m.id]}
-                        onclick={() =>
-                          void task(async () => {
-                            downloadProgress[m.id] = 'Starting';
-                            try {
-                              await call('model_download', { id: m.id });
-                              await loadModels();
-                            } finally {
-                              delete downloadProgress[m.id];
-                            }
-                          })}><Download size={14} />{downloadProgress[m.id] || 'Download'}</button
-                      >{/if}
-                    {#if downloadProgress[m.id]}<progress
-                        aria-label={`${m.name} download`}
-                        max="100"
-                        value={downloadProgress[m.id].endsWith('%')
-                          ? parseInt(downloadProgress[m.id])
-                          : undefined}
-                      ></progress>{/if}
-                  </div>{/each}
-              </div>
-            </details>
-            {#if !voiceReady}<button
-                disabled={busy || switchingVoice || voiceStatus !== 'idle'}
-                onclick={() => void task(setupVoice)}
-                ><Download size={14} /> Install missing stack components</button
-              >{/if}
-          </details>
-          <details class="settings-section settings-disclosure" id="voice-shortcuts">
-            <summary
-              >Voice hotkeys and input <span
-                >{bindingFor('dictation').label} · {bindingFor('command').label}</span
-              ></summary
-            >
-            <p class="hint">
-              Choose separate shortcuts for terminal dictation and IDE commands. Capture stops if
-              DazeDev loses focus.
-            </p>
-            <p>
-              In toggle mode: tap to listen, tap to stop, then double-tap to submit the reviewed
-              text. The terminal must still be unchanged. Hold-to-talk keeps its press and release
-              behavior.
-            </p>
-            {#each ['dictation', 'command'] as mode}
-              {@const voiceInput = mode as VoiceMode}
-              <h4>{voiceInput === 'dictation' ? 'Terminal dictation' : 'IDE voice command'}</h4>
-              <div class="hotkey-assignments">
-                <div class="hotkey-record">
-                  <label
-                    >Keyboard / device<input readonly value={bindingFor(voiceInput).label} /></label
-                  >
-                  <button onclick={() => captureShortcut(voiceInput)}
-                    >{capturingShortcut === voiceInput ? 'Press hotkey…' : 'Record hotkey'}</button
-                  >
-                </div>
-                <label
-                  >Mouse / device<select
-                    value=""
-                    onchange={(e) => {
-                      const key = Number(e.currentTarget.value);
-                      if (key)
-                        void task(() =>
-                          saveShortcut(
-                            {
-                              key,
-                              ctrl: false,
-                              alt: false,
-                              shift: false,
-                              meta: false,
-                              label:
-                                e.currentTarget.selectedOptions[0].textContent || 'Device button',
-                            },
-                            voiceInput,
-                          ),
-                        );
-                    }}
-                  >
-                    <option value="">Choose a button</option><option value="4"
-                      >Middle mouse button</option
-                    ><option value="5">Mouse button 4</option><option value="6"
-                      >Mouse button 5</option
-                    ><option value="179">Media play/pause</option><option value="176"
-                      >Media next</option
-                    ><option value="177">Media previous</option><option value="173"
-                      >Volume mute</option
-                    >
-                  </select></label
-                >
-              </div>
-            {/each}
-            {#if shortcutStatus}<p role="status" class="hint">{shortcutStatus}</p>{/if}
-            <details class="settings-advanced">
-              <summary>Recording behavior and model memory</summary>
-              <p class="hint">
-                While listening, Enter finishes transcription and leaves dictated text for review,
-                even when automatic submission is enabled. Escape abandons capture. These keys never
-                submit a terminal prompt or implement an IDE command while recording.
-              </p>
-              <label
-                >Activation<select bind:value={device.inputMode} onchange={persistDevice}
-                  ><option value="toggle">Press to start / stop</option><option value="hold"
-                    >Hold to talk</option
-                  ></select
-                ></label
-              >
-              <div class="settings-checks">
-                <label class="check"
-                  ><input
-                    type="checkbox"
-                    bind:checked={device.voice.cleanup}
-                    disabled={voiceStatus !== 'idle' || switchingVoice || voiceCacheLoading}
-                    onchange={() => void changeVoiceModel()}
-                  /> S1-mini tidy-up</label
-                ><label
-                  >Voice model memory<select
-                    value={device.voice.keepLoaded === false ? 'release' : 'ready'}
-                    disabled={voiceStatus !== 'idle' || switchingVoice || voiceCacheLoading}
-                    onchange={(e) => {
-                      device.voice.keepLoaded = e.currentTarget.value === 'ready';
-                      void changeVoiceModel();
-                    }}
-                  >
-                    <option value="ready">Preload and keep all voice models ready</option>
-                    <option value="release">Release models after each recording</option>
-                  </select></label
-                ><label class="check"
-                  ><input
-                    type="checkbox"
-                    bind:checked={device.voice.automatic}
-                    onchange={persistDevice}
-                  /> Automatically press Enter after paste</label
-                >
-              </div>
-              <p class="hint">
-                {voiceCacheLoading ? 'Preparing voice models… ' : ''}Preload uses more RAM to
-                prepare installed models before recording and retain the cleanup service. Release
-                mode saves RAM between recordings. The current behavior keeps speech recognition
-                after its first use and reloads cleanup when needed. None of these options keeps the
-                microphone on.
-              </p>
-              <p class="hint">
-                Text is pasted when ready. Press Enter to send unless automatic entry is enabled.
-              </p>
-            </details>
-            <div class="microphone-settings">
-              <label
-                >Microphone<select bind:value={device.voice.microphone} onchange={persistDevice}
-                  ><option value="">System default</option
-                  >{#if device.voice.microphone && !microphones.some((m) => m.deviceId === device.voice.microphone)}<option
-                      value={device.voice.microphone}
-                      >Selected input unavailable - refresh devices</option
-                    >{/if}{#each microphones as m}<option value={m.deviceId}
-                      >{m.label || `Audio input ${microphones.indexOf(m) + 1}`}</option
-                    >{/each}</select
-                ></label
-              ><button disabled={microphoneLoading} onclick={() => void refreshMicrophones()}
-                >{microphoneLoading ? 'Checking microphones…' : 'Refresh microphones'}</button
-              >
-              {#if microphoneError}<p class="inline-error" role="alert">{microphoneError}</p>{/if}
-            </div>
-          </details>
-          <details class="settings-section settings-disclosure">
-            <summary>Appearance <span>{device.theme}</span></summary>
-            <div class="settings-grid">
-              <label
-                >Theme<select bind:value={device.theme} onchange={persistDevice}
-                  ><option value="blue">Blue</option><option value="charcoal">Charcoal</option
-                  ><option value="green">Green</option></select
-                ></label
-              >
-              <label
-                >Recording highlight<select
-                  value={recordingHighlight(device.recordingHighlight)}
-                  onchange={(e) => {
-                    device.recordingHighlight = recordingHighlight(e.currentTarget.value);
-                    persistDevice();
-                  }}
-                  >{#each recordingHighlights as effect}<option value={effect.id}
-                      >{effect.name}</option
-                    >{/each}</select
-                ></label
-              >
-              <label
-                >Highlight animation<select
-                  bind:value={device.highlightMotion}
-                  onchange={persistDevice}
-                >
-                  <option value="system">Follow system</option>
-                  <option value="animate">Always animate highlights</option>
-                  <option value="static">Keep highlights still</option>
-                </select></label
-              >
-              {#if systemReducedMotion && (!device.highlightMotion || device.highlightMotion === 'system')}
-                <p class="muted">
-                  Your system has reduced motion enabled. Choose Always animate highlights to enable
-                  movement here.
-                </p>
-              {/if}
-              {#if recordingHighlight(device.recordingHighlight) === 'static'}<label
-                  >Highlight colour<input
-                    type="color"
-                    value={device.recordingHighlightColor || '#39bdd7'}
-                    oninput={(e) => {
-                      device.recordingHighlightColor = e.currentTarget.value;
-                      persistDevice();
-                    }}
-                  /></label
-                >{/if}
-            </div>
-            <div
-              class="recording-highlight highlight-preview"
-              data-highlight={recordingHighlight(device.recordingHighlight)}
-              style:--voice-highlight-color={device.recordingHighlightColor || '#39bdd7'}
-              aria-label="Recording highlight preview"
-            >
-              {#if recordingHighlight(device.recordingHighlight) !== 'static'}<HighlightEffect
-                  kind={recordingHighlight(device.recordingHighlight)}
-                />{/if}
-              Highlight preview
-            </div>
-          </details>
-          {#if device.terminal}<details class="settings-section settings-disclosure">
-              <summary>Terminal <span>Text, notifications and clipboard</span></summary>
-              <label class="check"
-                ><input
-                  type="checkbox"
-                  checked={device.terminalAlerts?.visual || false}
-                  onchange={(e) => {
-                    device.terminalAlerts = {
-                      sound: device.terminalAlerts?.sound || false,
-                      visual: e.currentTarget.checked,
-                    };
-                    persistDevice();
-                  }}
-                /> Show terminal completion notifications</label
-              >
-              <label class="check"
-                ><input
-                  type="checkbox"
-                  checked={device.terminalAlerts?.sound || false}
-                  onchange={(e) => {
-                    device.terminalAlerts = {
-                      visual: device.terminalAlerts?.visual || false,
-                      sound: e.currentTarget.checked,
-                    };
-                    persistDevice();
-                    if (e.currentTarget.checked) void softAlert().catch(fail);
-                  }}
-                /> Play a soft notification sound</label
-              >
-              <p class="hint">
-                Uses explicit terminal notifications or shell command-completion markers. Support
-                depends on the agent or shell integration; DazeDev does not infer completion from
-                inactivity. "Command finished" shows when you are not watching that terminal or the
-                command ran for 10 seconds or more. Each terminal alerts at most once every three
-                seconds.
-              </p>
-              <div class="form-row">
-                <label
-                  >Font size<input
-                    type="number"
-                    min="8"
-                    max="32"
-                    bind:value={device.terminal.fontSize}
-                    onchange={persistDevice}
-                  /></label
-                >
-                <label
-                  >History lines<input
-                    type="number"
-                    min="100"
-                    max="100000"
-                    step="100"
-                    bind:value={device.terminal.scrollback}
-                    onchange={persistDevice}
-                  /></label
-                >
-              </div>
-              <p class="hint">
-                Each open terminal keeps this many lines in memory, including terminals in other
-                workspaces. Default 10,000; up to 100,000.
-              </p>
-              <div class="settings-checks">
-                <label class="check"
-                  ><input
-                    type="checkbox"
-                    bind:checked={device.terminal.gpu}
-                    onchange={persistDevice}
-                  /> GPU rendering</label
-                >
-                <label class="check"
-                  ><input
-                    type="checkbox"
-                    bind:checked={device.terminal.images}
-                    onchange={persistDevice}
-                  /> Terminal images</label
-                >
-                <label class="check"
-                  ><input
-                    type="checkbox"
-                    bind:checked={device.terminal.ligatures}
-                    onchange={persistDevice}
-                  /> Font ligatures</label
-                >
-              </div>
-              <label class="check"
-                ><input
-                  type="checkbox"
-                  bind:checked={device.terminal.screenReader}
-                  onchange={persistDevice}
-                />Screen reader terminal output</label
-              >
-              <label class="check"
-                ><input
-                  type="checkbox"
-                  checked={device.terminal.confirmPaste !== false}
-                  onchange={(e) => setPasteConfirmation(e.currentTarget.checked)}
-                /> Ask before pasting text with line breaks</label
-              >
-              <label
-                >Remote copy (OSC 52)<select
-                  bind:value={device.terminal.clipboard}
-                  onchange={persistDevice}
-                >
-                  {@render clipboardOptions()}
-                </select></label
-              >
-              <p class="hint">
-                Copy: Ctrl+Shift+C. Paste: Ctrl+V or Ctrl+Shift+V. Search: {appShortcut(
-                  device.appShortcuts,
-                  'search',
-                ).label}. Remote paste access lets programs on the host read this device's
-                clipboard.
-              </p>
-            </details>{/if}
-          <details class="settings-section settings-disclosure">
-            <summary>Keyboard shortcuts <span>App actions</span></summary>
-            <p class="hint">
-              Ctrl+letter shortcuts without Shift or Alt are left to the terminal while a terminal
-              has focus, so shell and editor keys such as Ctrl+K keep working there.
-            </p>
-            {#each appActions as action}
-              <div class="hotkey-record">
-                <label
-                  >{action.label}<input
-                    readonly
-                    value={appShortcut(device.appShortcuts, action.id).label}
-                  /></label
-                >
-                <button
-                  onclick={() => {
-                    capturingAppShortcut = action.id;
-                    appShortcutStatus = 'Press the new key combination. Escape cancels.';
-                  }}
-                  >{capturingAppShortcut === action.id ? 'Press keys…' : 'Change'}</button
-                >
-              </div>
-            {/each}
-            <button onclick={resetAppShortcuts}>Reset to defaults</button>
-            {#if appShortcutStatus}<p role="status" class="hint">{appShortcutStatus}</p>{/if}
-          </details>
-          <details class="settings-section settings-disclosure">
-            <summary>Connections <span>{device.hosts.length} hosts</span></summary>
-            <p class="hint">
-              Windows local terminals can use native PowerShell or WSL. Native sessions support
-              background persistence and same-process handoff to a PowerShell window. Remote
-              terminals use the host login shell.
-            </p>
-            {#if !device.hosts.length}<p class="hint">No hosts configured.</p>{/if}
-            <button onclick={addHost}><Plus size={14} /> Add host</button>
-            {#each device.hosts as h}<div class="item-row">
-                <div><strong>{h.name}</strong><small>{h.address || h.kind}</small></div>
-                <button
-                  onclick={() => {
-                    newHost = { ...h, nativeShell: h.nativeShell || 'powershell' };
-                    modal = 'host';
-                  }}>Edit</button
-                ><button
-                  onclick={() =>
-                    void task(async () => {
-                      await disconnectHost(h.id);
-                      connections[h.id] = 'Disconnected';
-                    })}>Disconnect</button
-                >
-              </div>{/each}
-            {#if settingsHost}<label
-                >Clipboard access for selected host<select
-                  value={device.clipboardByHost?.[settingsHost] ||
-                    device.terminal?.clipboard ||
-                    'notify'}
-                  onchange={(e) => {
-                    (device.clipboardByHost ||= {})[settingsHost] = e.currentTarget
-                      .value as TerminalSettings['clipboard'];
-                    persistDevice();
-                  }}
-                  >{@render clipboardOptions()}</select
-                ></label
-              >{/if}
-          </details>
-          {#if profiles[settingsHost]}<details class="settings-section settings-disclosure">
-              <summary>
-                {device.hosts.find((h) => h.id === settingsHost)?.name} preferences
-                <span>Saved on host</span>
-              </summary>
-              <label
-                >Repository roots · one per line<textarea rows="3" bind:value={roots}
-                ></textarea></label
-              ><label
-                >Additional orientation guidance<textarea rows="3" bind:value={guidance}
-                ></textarea></label
-              >
-              <label
-                >Repository-start prompt template<textarea rows="8" bind:value={promptTemplate}
-                ></textarea></label
-              >
-              <p class="hint">
-                Used when starting an agent with orientation enabled and by the terminal Repo
-                picker. Saved on this host.
-              </p>
-              <p class="hint">
-                Variables: {promptVariables.map((v) => '{{' + v + '}}').join(', ')}. Values are
-                inserted literally.
-              </p>
-              {#if unknownVariables(promptTemplate).length}<p class="inline-error">
-                  Unknown variables: {unknownVariables(promptTemplate).join(', ')}
-                </p>{/if}
-              <button onclick={() => (promptTemplate = defaultPrompt)}>Reset template</button>
-              <details>
-                <summary>Preview with example repository</summary>
-                <pre class="prompt-preview">{renderPrompt(promptTemplate, promptValues())}</pre>
-              </details>
-              <div class="form-row">
-                <button
-                  disabled={unknownVariables(promptTemplate).length > 0}
-                  onclick={() => {
-                    profiles[settingsHost].preferences.roots = roots
-                      .split('\n')
-                      .map((x) => x.trim())
-                      .filter(Boolean);
-                    profiles[settingsHost].preferences.guidance = guidance;
-                    profiles[settingsHost].preferences.promptTemplate = promptTemplate;
-                    saved(settingsHost);
-                    notice = 'Host preferences queued for saving.';
-                  }}>Save host preferences</button
-                ><button
-                  onclick={() =>
-                    void task(async () => {
-                      const local = $state.snapshot(
-                        profiles[settingsHost] || recovery[settingsHost],
-                      );
-                      if (local) {
-                        (device.profileBackups ||= {})[settingsHost] = [
-                          local,
-                          ...(device.profileBackups?.[settingsHost] || []),
-                        ].slice(0, 3);
-                        await call('device_save', {
-                          value: { ...$state.snapshot(device), recovery },
-                        });
-                      }
-                      const backup = JSON.stringify(local, null, 2);
-                      const url = URL.createObjectURL(
-                        new Blob([backup], { type: 'application/json' }),
-                      );
-                      const a = document.createElement('a');
-                      a.href = url;
-                      a.download = 'dazedev-workspace-recovery.json';
-                      a.click();
-                      setTimeout(() => URL.revokeObjectURL(url), 1000);
-                      replaceProfile(
-                        settingsHost,
-                        rebindOwner(await rpc<Profile>(settingsHost, 'profile_load'), settingsHost),
-                      );
-                      profileBlocked[settingsHost] = false;
-                      delete recovery[settingsHost];
-                      saveState[settingsHost] = 'Restored';
-                      persistDevice();
-                    })}>Reload host profile</button
-                >
-              </div>
-            </details>{/if}
+          <VoiceModelsSection
+            {busy}
+            {changeVoiceModel}
+            bind:device
+            {downloadModel}
+            {downloadProgress}
+            {hardware}
+            {hardwareError}
+            {models}
+            {modelsLoaded}
+            {recommendation}
+            {removeModel}
+            {selectVoiceModel}
+            {setupVoice}
+            {switchingVoice}
+            {task}
+            {voiceCacheLoading}
+            {voiceReady}
+            {voiceStatus}
+          />
+          <VoiceHotkeysSection
+            {bindingFor}
+            {captureShortcut}
+            {capturingShortcut}
+            {changeVoiceModel}
+            bind:device
+            {microphoneError}
+            {microphoneLoading}
+            {microphones}
+            {persistDevice}
+            {refreshMicrophones}
+            {saveShortcut}
+            {shortcutStatus}
+            {switchingVoice}
+            {task}
+            {voiceCacheLoading}
+            {voiceStatus}
+          />
+          <AppearanceSection bind:device {persistDevice} {systemReducedMotion} />
+          <TerminalSection bind:device {fail} {persistDevice} {setPasteConfirmation} {softAlert} />
+          <ShortcutsSection
+            bind:appShortcutStatus
+            bind:capturingAppShortcut
+            {device}
+            {resetAppShortcuts}
+          />
+          <ConnectionsSection
+            {addHost}
+            bind:connections
+            bind:device
+            {disconnectHost}
+            bind:modal
+            bind:newHost
+            {persistDevice}
+            {settingsHost}
+            {task}
+          />
+          <HostPreferencesSection
+            {device}
+            bind:guidance
+            {profiles}
+            bind:promptTemplate
+            {promptValues}
+            {reloadHostProfile}
+            bind:roots
+            {saveHostPreferences}
+            {settingsHost}
+            {task}
+          />
           <details class="settings-section settings-disclosure">
             <summary>Licenses and credits</summary>
             <p class="hint">Portable data: {clientInfo.dataPath || 'beside the executable'}</p>
@@ -6708,11 +6205,6 @@
     </div>
   </div>
 {/if}
-{#snippet clipboardOptions()}
-  <option value="off">Block</option><option value="notify">Allow and notify</option><option
-    value="write">Allow silently</option
-  ><option value="read-write">Allow, and let programs read this clipboard</option>
-{/snippet}
 {#if closeFailure}
   <div class="modal-backdrop" role="presentation">
     <div
