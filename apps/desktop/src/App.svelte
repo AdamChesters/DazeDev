@@ -993,6 +993,8 @@
     });
     if (actual !== p.agent) {
       p.agent = actual;
+      const owner = workspaces.find((w) => w.panes.some((pane) => pane.id === p.id));
+      if (owner) saved(owner.hostId);
       throw new Error(
         'The agent in this terminal changed. Refresh its controls before choosing a model.',
       );
