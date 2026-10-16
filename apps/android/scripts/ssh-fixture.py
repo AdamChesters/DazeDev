@@ -11,10 +11,21 @@ client_key.write_private_key_file(str(p/'fixture-key.pem'),password='fixture-pas
 (p/'fixture-key.pem').chmod(0o600)
 events=[]
 fixture_socket='dazedev-fixture-'+str(os.getpid())
-env=dict(PATH='/usr/bin:/bin',HOME=str(p/'home'),XDG_CONFIG_HOME=str(p/'config'),SHELL='/bin/sh',LANG='C.UTF-8')
-(p/'home').mkdir(exist_ok=True)
+# Every bridge and temp path stays inside this fixture so a test can never reach a real desktop session.
+for name in ('home','runtime','tmp','helper'):(p/name).mkdir(mode=0o700,exist_ok=True)
+# Socket paths have a short length limit, so tmux and the browser bridge use a private folder directly under /tmp.
+import tempfile,shutil
+tmux_dir=tempfile.mkdtemp(prefix='dazedev-fixture-tmux-',dir='/tmp')
+env=dict(PATH='/usr/bin:/bin',HOME=str(p/'home'),XDG_CONFIG_HOME=str(p/'config'),XDG_RUNTIME_DIR=str(p/'runtime'),TMPDIR=str(p/'tmp'),TMUX_TMPDIR=tmux_dir,SHELL='/bin/sh',LANG='C.UTF-8')
 (p/'fixture-socket.txt').write_text(fixture_socket)
-(p/'fixture-host-source.txt').write_text(str(pathlib.Path(__file__).resolve().parents[2]/'desktop/src-tauri/resources/host.py'))
+resources=pathlib.Path(__file__).resolve().parents[2]/'desktop/src-tauri/resources'
+browser=(resources/'browser.py').read_text()
+shared="P('/tmp') / ('dazedev-browser-'"
+if shared in browser:browser=browser.replace(shared,'P('+repr(tmux_dir)+") / ('dazedev-browser-'")
+if "'/tmp'" in browser or '"/tmp"' in browser:raise RuntimeError('browser.py has a /tmp bridge path this fixture cannot isolate; refusing to run')
+(p/'helper'/'browser.py').write_text(browser)
+(p/'helper'/'host.py').write_text((resources/'host.py').read_text())
+(p/'fixture-host-source.txt').write_text(str(p/'helper'/'host.py'))
 class Server(paramiko.ServerInterface):
  def __init__(self):self.pty_requests={};self.masters={};self.processes={}
  def get_allowed_auths(self,u):return 'publickey,password,keyboard-interactive'
@@ -52,7 +63,7 @@ class Server(paramiko.ServerInterface):
      if c.get_id() in self.pty_requests:
       master,slave=pty.openpty();self.masters[c.get_id()]=master
       (width,height),pty_term=self.pty_requests[c.get_id()];fcntl.ioctl(master,termios.TIOCSWINSZ,struct.pack('HHHH',height,width,0,0))
-      process=subprocess.Popen(cmd.decode(),shell=True,stdin=slave,stdout=slave,stderr=slave,env=dict(env,TERM=pty_term),start_new_session=True)
+      process=subprocess.Popen(cmd.decode(),shell=True,stdin=slave,stdout=slave,stderr=slave,env=dict(env,TERM=pty_term),cwd=env['HOME'],start_new_session=True)
       self.processes[c.get_id()]=process.pid
       os.close(slave)
       def send_input():
@@ -64,7 +75,7 @@ class Server(paramiko.ServerInterface):
       threading.Thread(target=send_input,daemon=True).start()
       while data:=os.read(master,8192):c.sendall(data)
      else:
-      process=subprocess.Popen(cmd.decode(),shell=True,stdin=subprocess.PIPE,stdout=subprocess.PIPE,stderr=subprocess.DEVNULL,env=env,start_new_session=True)
+      process=subprocess.Popen(cmd.decode(),shell=True,stdin=subprocess.PIPE,stdout=subprocess.PIPE,stderr=subprocess.PIPE,env=env,cwd=env['HOME'],start_new_session=True)
       def send_input():
        try:
         while data:=c.recv(8192):process.stdin.write(data);process.stdin.flush()
@@ -72,7 +83,13 @@ class Server(paramiko.ServerInterface):
        finally:
         if process.poll() is None:os.killpg(process.pid,signal.SIGTERM)
       threading.Thread(target=send_input,daemon=True).start()
+      def send_errors():
+       try:
+        while data:=os.read(process.stderr.fileno(),8192):c.sendall_stderr(data)
+       except OSError:pass
+      errors=threading.Thread(target=send_errors,daemon=True);errors.start()
       while data:=os.read(process.stdout.fileno(),8192):c.sendall(data)
+      errors.join(timeout=5)
      status=process.wait();c.send_exit_status(status if status>=0 else 128-status)
     except (OSError,EOFError):pass
     finally:
@@ -110,6 +127,7 @@ if '127.0.0.1' not in sockets:raise RuntimeError('Loopback binding unavailable; 
 (p/'fixture-ports.json.tmp').replace(p/'fixture-ports.json')
 def stop(*_):
  if options.real_host:subprocess.run(['tmux','-L',fixture_socket,'kill-server'],env=env,stdout=subprocess.DEVNULL,stderr=subprocess.DEVNULL)
+ shutil.rmtree(tmux_dir,ignore_errors=True)
  raise SystemExit(0)
 signal.signal(signal.SIGTERM,stop)
 signal.signal(signal.SIGINT,stop)
