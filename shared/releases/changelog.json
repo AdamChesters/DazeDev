@@ -2,9 +2,9 @@
   {
     "platform": "desktop",
     "version": "0.3.9-alpha.0",
-    "date": "2026-10-15",
+    "date": "2026-10-16",
     "channel": "development",
-    "notes": "Dictation recovery\n\n• Stop rejecting tidy-ups that remove repeated words, apply spoken corrections such as “no wait, make that five”, or reformat numbers such as 40,000 or $12.\n• Load the transcription and tidy-up models when DazeDev starts, and keep them loaded after a failed tidy-up.\n• Show unsent dictation in a red banner with Send anyway, Copy and Discard.\n• Let the dictation hotkey start a new recording while text is held."
+    "notes": "Built-in SSH, safer prompts and faster terminals\n\n• SSH and Tailscale hosts now use a built-in SSH client. You sign in once per host and every terminal shares that connection. It follows your ~/.ssh/config, checks known_hosts, refuses a changed host key, and uses your SSH agent, key files and certificates. Turn on \"Use system OpenSSH\" for a host that needs a hardware security key.\n• Hosts with fish, nu or tcsh as their login shell now work. Hosts need Python 3.9 or newer, and an older Python is reported clearly.\n• DazeDev asks before a host opens a link on your computer, before running a repository's worktree script, and before pasting several lines. Remote clipboard writes show a notice by default.\n• Terminal output reaches the window faster, uploads over SSH use larger chunks, and a large reply no longer holds up the connection check.\n• App shortcuts can be changed in Settings. Ctrl with a letter now goes to the terminal, so Ctrl+K works in the shell and in nano. Scrollback defaults to 10,000 lines.\n• Close anyway appears when a check stops DazeDev from closing. Terminal search no longer refreshes on output from other panes.\n• Updates are swapped in safely, old update and runtime copies are cleaned up, and startup no longer rewrites permissions on every data file.\n• Native PowerShell sessions stream output instead of polling and check who owns the session pipe.\n• Dictation keeps long text when the tidy-up changes wording, and shows unsent text in a banner with Send anyway, Copy and Discard.\n• Settings files saved with a UTF-8 byte order mark load correctly."
   },
   {
     "platform": "desktop",
@@ -26,6 +26,13 @@
     "date": "2026-10-13",
     "channel": "development",
     "notes": "Terminal title hotfix\n\n• Update a plain SSH shell’s terminal name and session type when it enters tmux.\n• Follow tmux session renames and switches in main and detached windows.\n• Restore the shell label when leaving tmux."
+  },
+  {
+    "platform": "mobile",
+    "version": "0.1.0-alpha.7",
+    "date": "2026-10-16",
+    "channel": "development",
+    "notes": "Scrolling, connection and security fixes\n\n• Scrolling no longer freezes a tmux pane on every device. A drag scrolls the program, as a mouse wheel does on desktop, so agent history scrolls on the phone.\n• \"Latest output\" appears as a button whenever you scroll back.\n• Timeouts show an error instead of leaving \"Connecting terminal…\" on screen. A lost link shows Disconnected with a Reconnect button.\n• Sessions appear as soon as they load, and a session that ended or restarted can be reopened by name.\n• The terminal opens at the phone's size. Rotating or briefly switching apps keeps it open.\n• A changed SSH host key is refused, and saved host keys can be viewed and forgotten.\n• Links a host opens ask first. Missing Python or tmux on a host is reported clearly.\n• Ed25519 keys work on every Android version. An extra-keys row adds Esc, Tab, Ctrl, Alt and arrows.\n• A \"Private screen\" setting hides the app from screenshots and Recents.\n• Terminal output is faster, and voice keeps its model loaded and waits for the last words.\n• This is the first release build. It is smaller, not debuggable, and signed with a new release key that phones running alpha.6 accept as an update."
   },
   {
     "platform": "mobile",
