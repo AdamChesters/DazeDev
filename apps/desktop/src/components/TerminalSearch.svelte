@@ -282,7 +282,9 @@
             }}>{label}</button
           >{/each}
       </div>
-      <label><input type="checkbox" bind:checked={matchCase} onchange={() => collect()} />Match case</label>
+      <label
+        ><input type="checkbox" bind:checked={matchCase} onchange={() => collect()} />Match case</label
+      >
       <label
         ><input type="checkbox" bind:checked={regex} onchange={() => collect()} />Regular expression</label
       >

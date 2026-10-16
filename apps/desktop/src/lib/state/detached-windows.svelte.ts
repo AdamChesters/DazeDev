@@ -156,7 +156,12 @@ export class DetachedWindows {
       else if (action === 'resize') await terminal.resize?.(Number(args.cols), Number(args.rows));
       else if (action === 'paste') {
         // The terminal window already asked about multi-line text.
-        await terminal.paste(String(args.text || ''), false, String(args.context || ''), 'clipboard');
+        await terminal.paste(
+          String(args.text || ''),
+          false,
+          String(args.context || ''),
+          'clipboard',
+        );
         result = terminal.context();
       } else if (action === 'paste-confirm-off') {
         deps.disablePasteConfirmation();
@@ -193,7 +198,8 @@ export class DetachedWindows {
           }),
         );
       } else if (paneActions.includes(action)) {
-        if (deps.busy()) throw new Error('Finish the current action in the workspace window first.');
+        if (deps.busy())
+          throw new Error('Finish the current action in the workspace window first.');
         deps.selectWorkspace(owner);
         owner.focused = paneId;
         await appWindow().show();

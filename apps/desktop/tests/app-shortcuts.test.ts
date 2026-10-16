@@ -8,11 +8,20 @@ import {
 import { defaultShortcut } from '../src/lib/shortcut';
 
 const key = (code: string, mods: Partial<KeyboardEvent> = {}) =>
-  ({ code, ctrlKey: false, altKey: false, shiftKey: false, metaKey: false, ...mods }) as KeyboardEvent;
+  ({
+    code,
+    ctrlKey: false,
+    altKey: false,
+    shiftKey: false,
+    metaKey: false,
+    ...mods,
+  }) as KeyboardEvent;
 
 it('uses saved bindings and falls back to defaults', () => {
   expect(appActionFor(key('KeyK', { ctrlKey: true }), undefined, false)).toBe('command');
-  expect(appActionFor(key('KeyF', { ctrlKey: true, shiftKey: true }), undefined, false)).toBe('search');
+  expect(appActionFor(key('KeyF', { ctrlKey: true, shiftKey: true }), undefined, false)).toBe(
+    'search',
+  );
   expect(appActionFor(key('F11'), undefined, false)).toBe('fullscreen');
   const saved = { command: { ...appShortcut(undefined, 'command'), key: 80, label: 'Ctrl + P' } };
   expect(appActionFor(key('KeyK', { ctrlKey: true }), saved, false)).toBeUndefined();

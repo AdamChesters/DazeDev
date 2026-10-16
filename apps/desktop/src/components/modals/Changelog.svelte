@@ -1,11 +1,11 @@
 <script lang="ts">
   import { type ReleaseEntry, releaseHeading } from '../../lib/changelog';
   import type { UpdateInfo } from './types';
-  import { desktop } from '../../lib/bridge';
   let {
     availableUpdate,
     changelogReturn,
     historyStatus,
+    // eslint-disable-next-line @typescript-eslint/no-unused-vars -- write-only $bindable prop
     modal = $bindable(),
     releaseFilter = $bindable(),
     releaseHistory,

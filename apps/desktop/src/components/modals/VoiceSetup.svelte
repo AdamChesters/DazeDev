@@ -1,6 +1,5 @@
 <script lang="ts">
   import type { Device, ModelInfo } from '../../lib/types';
-  import { Download } from '@lucide/svelte';
   import type { Task } from './types';
   import { modelDescriptions } from '../../lib/voice-setup';
   let {
@@ -8,6 +7,7 @@
     changeVoiceModel,
     device = $bindable(),
     downloadProgress,
+    // eslint-disable-next-line @typescript-eslint/no-unused-vars -- write-only $bindable prop
     modal = $bindable(),
     models,
     openSettings,
@@ -35,12 +35,12 @@
 </script>
 
 <p>
-  Voice models are downloaded separately from DazeDev to keep the app small and let you
-  choose your stack. Downloads use the verified versions supported by this release.
+  Voice models are downloaded separately from DazeDev to keep the app small and let you choose your
+  stack. Downloads use the verified versions supported by this release.
 </p>
 <p class="hint">
-  Default stack: Parakeet transcription, Silero silence detection and S1-mini cleanup.
-  Download once; everything runs offline on this device with no account or per-use cost.
+  Default stack: Parakeet transcription, Silero silence detection and S1-mini cleanup. Download
+  once; everything runs offline on this device with no account or per-use cost.
 </p>
 <p>
   Selected: <strong

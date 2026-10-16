@@ -22,8 +22,7 @@
 </script>
 
 <p class="hint">
-  Detected on {host?.name || 'the selected host'}. Authentication stays in each agent’s own
-  CLI.
+  Detected on {host?.name || 'the selected host'}. Authentication stays in each agent’s own CLI.
 </p>
 {#each inventories[device.activeHost]?.agents || [] as a}<div class="agent-card">
     <div>

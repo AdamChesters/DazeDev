@@ -84,8 +84,8 @@
           }}
         />
         <div>
-          <strong>{m.name}</strong>{#if recommendation?.model === m.id}<span
-              class="recommended">Recommended</span
+          <strong>{m.name}</strong>{#if recommendation?.model === m.id}<span class="recommended"
+              >Recommended</span
             >{/if}
           <small>{Math.round(m.size / 1e6)} MB · {modelDescriptions[m.id]}</small>
           {#if hardware && device.voice.model === m.id}<small
@@ -96,17 +96,11 @@
           <button
             class="icon"
             aria-label={`Remove ${m.name}`}
-            disabled={voiceStatus !== 'idle' ||
-              switchingVoice ||
-              voiceCacheLoading ||
-              busy}
+            disabled={voiceStatus !== 'idle' || switchingVoice || voiceCacheLoading || busy}
             onclick={() => void task(() => removeModel(m.id, true))}><Trash2 size={14} /></button
           >
         {:else}<button
-            disabled={voiceStatus !== 'idle' ||
-              switchingVoice ||
-              voiceCacheLoading ||
-              busy}
+            disabled={voiceStatus !== 'idle' || switchingVoice || voiceCacheLoading || busy}
             onclick={() => void task(() => selectVoiceModel(m.id))}
             ><Download size={14} />{downloadProgress[m.id] || 'Download & select'}</button
           >{/if}
@@ -140,22 +134,17 @@
     <div class="model-list">
       {#each models.filter((m) => m.family !== 'asr') as m}<div class="model-row">
           <div>
-            <strong>{m.name}</strong><small
-              >{Math.round(m.size / 1e6)} MB · {m.license}</small
-            >
+            <strong>{m.name}</strong><small>{Math.round(m.size / 1e6)} MB · {m.license}</small>
           </div>
-          {#if m.installed}<span class="installed"><Check size={13} /> Installed</span
-            ><button
+          {#if m.installed}<span class="installed"><Check size={13} /> Installed</span><button
               class="icon"
               aria-label={`Remove ${m.name}`}
-              disabled={voiceStatus !== 'idle' ||
-                switchingVoice ||
-                voiceCacheLoading ||
-                busy}
+              disabled={voiceStatus !== 'idle' || switchingVoice || voiceCacheLoading || busy}
               onclick={() => void task(() => removeModel(m.id, false))}><Trash2 size={14} /></button
             >{:else}<button
               disabled={!!downloadProgress[m.id]}
-              onclick={() => void task(() => downloadModel(m.id))}><Download size={14} />{downloadProgress[m.id] || 'Download'}</button
+              onclick={() => void task(() => downloadModel(m.id))}
+              ><Download size={14} />{downloadProgress[m.id] || 'Download'}</button
             >{/if}
           {#if downloadProgress[m.id]}<progress
               aria-label={`${m.name} download`}

@@ -21,21 +21,18 @@
 </script>
 
 <p>
-  This pane stays in its workspace. Its current tmux session stays on the original host; a
-  plain shell will close.
+  This pane stays in its workspace. Its current tmux session stays on the original host; a plain
+  shell will close.
 </p>
 <label
   >Connect this pane to<select bind:value={switchHost} disabled={busy}>
-    {#each device.hosts as h}<option
-        value={h.id}
-        disabled={connections[h.id] !== 'Connected'}
+    {#each device.hosts as h}<option value={h.id} disabled={connections[h.id] !== 'Connected'}
         >{h.name}{connections[h.id] !== 'Connected' ? ' (not connected)' : ''}</option
       >{/each}
   </select></label
 >
 <p class="hint">
-  The new connection starts with a plain shell. Use Tmux to join or create a session on that
-  host.
+  The new connection starts with a plain shell. Use Tmux to join or create a session on that host.
 </p>
 <button
   class="primary"

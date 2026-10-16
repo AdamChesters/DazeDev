@@ -1,7 +1,13 @@
 import { it, expect, vi } from 'vitest';
 const { rpc } = vi.hoisted(() => ({ rpc: vi.fn() }));
 vi.mock('../src/lib/bridge', () => ({ rpc }));
-import { imageLinks, viewerLinks, imagePath, readHostImage, localImageSource } from '../src/lib/images';
+import {
+  imageLinks,
+  viewerLinks,
+  imagePath,
+  readHostImage,
+  localImageSource,
+} from '../src/lib/images';
 it('recognises image destinations without mistaking web URLs for host file paths', () => {
   expect(imagePath('https://example.com/a.PNG?version=1')).toBe(true);
   expect(imagePath('script.svg')).toBe(false);

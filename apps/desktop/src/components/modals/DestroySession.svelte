@@ -6,6 +6,7 @@
     destroySession,
     destroyTarget,
     device,
+    // eslint-disable-next-line @typescript-eslint/no-unused-vars -- write-only $bindable prop
     modal = $bindable(),
     task,
   }: {
@@ -21,10 +22,9 @@
 <p>
   Destroy <strong>{destroyTarget?.name}</strong> on
   <strong
-    >{device.hosts.find((h) => h.id === (destroyTarget?.hostId || device.activeHost))
-      ?.name}</strong
-  > and terminate all its running processes? All unsaved running work will be lost, including
-  work in other clients attached to this session. This cannot be undone.
+    >{device.hosts.find((h) => h.id === (destroyTarget?.hostId || device.activeHost))?.name}</strong
+  > and terminate all its running processes? All unsaved running work will be lost, including work in
+  other clients attached to this session. This cannot be undone.
 </p>
 <div class="form-row">
   <button onclick={() => (modal = 'sessions')}>Keep session</button><button

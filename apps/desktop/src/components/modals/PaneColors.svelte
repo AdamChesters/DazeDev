@@ -16,15 +16,10 @@
   const owner = $derived(workspaces.find((w) => w.panes.some((p) => p.id === colorPane?.id)));
 </script>
 
-<p class="hint">
-  Overrides this terminal only. Other terminals follow their workspace colors.
-</p>
+<p class="hint">Overrides this terminal only. Other terminals follow their workspace colors.</p>
 <ColorPicker
   value={colorPane?.colors}
-  inherited={tabColors(
-    owner?.colors,
-    device.hosts.find((h) => h.id === colorPane?.hostId)?.colors,
-  )}
+  inherited={tabColors(owner?.colors, device.hosts.find((h) => h.id === colorPane?.hostId)?.colors)}
   resetLabel="Use workspace colors"
   onChange={(colors) => {
     if (!owner || !colorPane) return;

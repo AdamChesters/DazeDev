@@ -51,7 +51,7 @@ export function loadDictionary(retry = false) {
     initialized = true;
     try {
       const raw = desktop
-        ? await call<any>('dictionary_load')
+        ? await call<unknown>('dictionary_load')
         : JSON.parse(localStorage.getItem('dazedev-dictionary') || 'null');
       if (raw) {
         if (

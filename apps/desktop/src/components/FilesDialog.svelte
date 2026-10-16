@@ -233,11 +233,15 @@
     capacitySize = file.size;
     if (file.size > checked.maxBytes || checked.requiredBytes > checked.availableBytes)
       throw Error('The selected file exceeds the upload limit or available destination storage.');
-    const transfer = await rpc<{ id: string; path: string; chunk?: number }>(targetHost, 'upload_begin', {
-      directory: checked.directory,
-      name: targetName,
-      size: file.size,
-    });
+    const transfer = await rpc<{ id: string; path: string; chunk?: number }>(
+      targetHost,
+      'upload_begin',
+      {
+        directory: checked.directory,
+        name: targetName,
+        size: file.size,
+      },
+    );
     try {
       for (let offset = 0; offset < file.size;) {
         if (canceled) throw new Error('Upload canceled. No destination file was created.');
@@ -442,6 +446,7 @@
       class="markdown-preview"
       onclick={(event) => openPreviewLink(event, (e) => (error = String(e)))}
     >
+      <!-- eslint-disable-next-line svelte/no-at-html-tags -- markdownPreview escapes its input -->
       {@html markdownPreview(draft)}
     </article>
   {:else if preview && kind === 'html'}<HtmlPreview source={draft} />

@@ -46,7 +46,14 @@ describe('optional add-ons', () => {
         onContextLoss(listener: () => void) {
           addon.lose = listener;
         },
-      } as { kind: string; disposed: boolean; lose?: () => void; activate(): void; dispose(): void; onContextLoss(l: () => void): void };
+      } as {
+        kind: string;
+        disposed: boolean;
+        lose?: () => void;
+        activate(): void;
+        dispose(): void;
+        onContextLoss(l: () => void): void;
+      };
       made.push(addon);
       return addon;
     };

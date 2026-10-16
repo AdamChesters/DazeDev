@@ -82,21 +82,51 @@ it('reorders either direction and preserves workspace objects and host ownership
 });
 
 it('waits for a real native session before returning an attachable new terminal tab', async () => {
-  const pane = {id:'new-tab',hostId:'windows',operation:'abcdefgh-1234',repo:'',sessionId:'',shell:true,name:'Terminal 2'} as Pane;
-  let finish!: (value: {id:string;stamp:string}) => void;
-  const create = vi.fn(() => new Promise<{id:string;stamp:string}>((resolve) => {finish=resolve;}));
+  const pane = {
+    id: 'new-tab',
+    hostId: 'windows',
+    operation: 'abcdefgh-1234',
+    repo: '',
+    sessionId: '',
+    shell: true,
+    name: 'Terminal 2',
+  } as Pane;
+  let finish!: (value: { id: string; stamp: string }) => void;
+  const create = vi.fn(
+    () =>
+      new Promise<{ id: string; stamp: string }>((resolve) => {
+        finish = resolve;
+      }),
+  );
   let attached: Pane | undefined;
-  const pending = createNativeTerminalPane(pane, create).then((value) => {attached=value;});
+  const pending = createNativeTerminalPane(pane, create).then((value) => {
+    attached = value;
+  });
   await Promise.resolve();
   expect(attached).toBeUndefined();
   expect(pane.sessionId).toBe('');
-  finish({id:'real-session',stamp:'owner-stamp'});
+  finish({ id: 'real-session', stamp: 'owner-stamp' });
   await pending;
-  expect(attached).toMatchObject({id:'new-tab',sessionId:'real-session',stamp:'owner-stamp',shell:false,name:'Terminal 2'});
-  expect(create).toHaveBeenCalledWith({name:'shell-abcdefgh',operation:'abcdefgh-1234',agent:'shell',path:''});
+  expect(attached).toMatchObject({
+    id: 'new-tab',
+    sessionId: 'real-session',
+    stamp: 'owner-stamp',
+    shell: false,
+    name: 'Terminal 2',
+  });
+  expect(create).toHaveBeenCalledWith({
+    name: 'shell-abcdefgh',
+    operation: 'abcdefgh-1234',
+    agent: 'shell',
+    path: '',
+  });
 });
 it('does not return an unattachable native tab when session creation fails', async () => {
-  const pane = {operation:'abcdefgh',sessionId:'',repo:''} as Pane;
-  await expect(createNativeTerminalPane(pane, async () => {throw Error('Host unavailable');})).rejects.toThrow('Host unavailable');
+  const pane = { operation: 'abcdefgh', sessionId: '', repo: '' } as Pane;
+  await expect(
+    createNativeTerminalPane(pane, async () => {
+      throw Error('Host unavailable');
+    }),
+  ).rejects.toThrow('Host unavailable');
   expect(pane.sessionId).toBe('');
 });

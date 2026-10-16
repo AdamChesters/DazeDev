@@ -18,8 +18,8 @@
 
 <p>{connectionTarget.name}: {connections[connectionTarget.id] || 'Disconnected'}</p>
 <p>
-  This action applies to every terminal connected to this host. Managed PowerShell and tmux
-  sessions keep running. Disconnecting ends plain shells; their visible output is retained.
+  This action applies to every terminal connected to this host. Managed PowerShell and tmux sessions
+  keep running. Disconnecting ends plain shells; their visible output is retained.
 </p>
 <div class="form-row">
   <button

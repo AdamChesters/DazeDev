@@ -5,8 +5,10 @@
   let {
     attach,
     busy,
+    // eslint-disable-next-line @typescript-eslint/no-unused-vars -- write-only $bindable prop
     destroyTarget = $bindable(),
     device,
+    // eslint-disable-next-line @typescript-eslint/no-unused-vars -- write-only $bindable prop
     modal = $bindable(),
     refreshSessions,
     sessionHost,
@@ -51,10 +53,9 @@
     : 'Create new tmux session'}</button
 >
 <p class="hint">
-  Joining attaches only. It never restarts the agent or sends an orientation prompt.
-  Switching replaces this terminal view; existing sessions keep running. Attached views
-  share input and terminal size. Native PowerShell work stops only when you end the session
-  or shut down Windows.
+  Joining attaches only. It never restarts the agent or sends an orientation prompt. Switching
+  replaces this terminal view; existing sessions keep running. Attached views share input and
+  terminal size. Native PowerShell work stops only when you end the session or shut down Windows.
 </p>
 {#each sessions as s}<div class="item-row">
     <TerminalIcon size={18} />
@@ -71,6 +72,4 @@
         modal = 'destroy';
       }}><Trash2 size={15} /></button
     >
-  </div>{:else}<p class="hint">
-    No sessions on this host. Create a named session above.
-  </p>{/each}
+  </div>{:else}<p class="hint">No sessions on this host. Create a named session above.</p>{/each}

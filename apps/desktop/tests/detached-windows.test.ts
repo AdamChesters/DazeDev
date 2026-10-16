@@ -65,7 +65,9 @@ function setup(overrides: Partial<DetachedWindowsDeps> = {}) {
 }
 
 const replies = (call: DetachedWindowsDeps['call']) =>
-  (call as Mock<DetachedWindowsDeps['call']>).mock.calls.filter(([name]) => name === 'terminal_window_publish').map(([, args]) => args);
+  (call as Mock<DetachedWindowsDeps['call']>).mock.calls
+    .filter(([name]) => name === 'terminal_window_publish')
+    .map(([, args]) => args);
 
 describe('DetachedWindows', () => {
   it('opens a window for a ready terminal', async () => {
@@ -96,7 +98,9 @@ describe('DetachedWindows', () => {
     windows.panes.set('a', 'w');
     await windows.request({ paneId: 'a', requestId: 'r1', action: 'input', args: { data: 'ls' } });
     expect(terminal.input).toHaveBeenCalledWith('ls');
-    expect(replies(deps.call)).toEqual([{ paneId: 'a', value: { requestId: 'r1', result: 'ctx' } }]);
+    expect(replies(deps.call)).toEqual([
+      { paneId: 'a', value: { requestId: 'r1', result: 'ctx' } },
+    ]);
   });
 
   it('routes snapshot, search and paste requests', async () => {
@@ -110,7 +114,12 @@ describe('DetachedWindows', () => {
     await windows.request({ paneId: 'a', requestId: 'r2', action: 'search-open', args: {} });
     expect(deps.search.open).toHaveBeenCalledWith('a');
     expect(appWindow.setFocus).toHaveBeenCalled();
-    await windows.request({ paneId: 'a', requestId: 'r3', action: 'search-step', args: { direction: -1 } });
+    await windows.request({
+      paneId: 'a',
+      requestId: 'r3',
+      action: 'search-step',
+      args: { direction: -1 },
+    });
     expect(deps.search.step).toHaveBeenCalledWith(-1);
     await windows.request({
       paneId: 'a',

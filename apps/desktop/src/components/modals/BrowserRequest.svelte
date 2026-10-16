@@ -17,13 +17,11 @@
 </script>
 
 <h2 id="browser-request-title">
-  {device.hosts.find((h) => h.id === browserRequest.hostId)?.name || 'A connected host'} wants
-  to open
+  {device.hosts.find((h) => h.id === browserRequest.hostId)?.name || 'A connected host'} wants to open
 </h2>
 <p id="browser-request-url" class="browser-request-url"><code>{browserRequest.url}</code></p>
 <label class="check"
-  ><input type="checkbox" bind:checked={browserTrust} /> Allow links from this host until
-  DazeDev restarts</label
+  ><input type="checkbox" bind:checked={browserTrust} /> Allow links from this host until DazeDev restarts</label
 >
 {#if browserRequests.length > 1}<p class="hint">
     {browserRequests.length - 1} more {browserRequests.length === 2 ? 'request' : 'requests'}

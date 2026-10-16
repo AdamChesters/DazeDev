@@ -37,9 +37,7 @@
   </h3>
   <p class="hint">Line breaks can run commands as soon as they are pasted.</p>
   <pre>{preview.lines.join('\n')}{preview.more ? `\n… ${preview.more} more` : ''}</pre>
-  <label class="check"
-    ><input type="checkbox" bind:checked={dontAsk} /> Don't ask again</label
-  >
+  <label class="check"><input type="checkbox" bind:checked={dontAsk} /> Don't ask again</label>
   <div class="actions">
     <button bind:this={pasteButton} class="primary" onclick={() => onpaste(dontAsk)}>Paste</button>
     <button onclick={oncancel}>Cancel</button>

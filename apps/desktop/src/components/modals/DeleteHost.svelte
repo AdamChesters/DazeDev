@@ -5,6 +5,7 @@
     busy,
     deleteHost,
     deleteHostTarget,
+    // eslint-disable-next-line @typescript-eslint/no-unused-vars -- write-only $bindable prop
     modal = $bindable(),
     task,
   }: {
@@ -20,8 +21,8 @@
   Remove <strong>{deleteHostTarget.name}</strong> and its workspace list from this device?
 </p>
 <p class="hint">
-  Plain shells close and tmux terminals detach. Remote tmux sessions and the host's saved
-  workspace configuration stay intact.
+  Plain shells close and tmux terminals detach. Remote tmux sessions and the host's saved workspace
+  configuration stay intact.
 </p>
 <div class="form-row">
   <button disabled={busy} onclick={() => (modal = '')}>Cancel</button><button

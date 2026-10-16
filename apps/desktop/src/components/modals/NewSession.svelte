@@ -1,6 +1,6 @@
 <script lang="ts">
   import RepoPicker from '../../components/RepoPicker.svelte';
-  import type { Device, Inventory, Session } from '../../lib/types';
+  import type { Device, Inventory } from '../../lib/types';
   import type { SessionForm, Task } from './types';
   import { sessionNameError } from '../../lib/session-name';
   let {
@@ -9,6 +9,7 @@
     device,
     form = $bindable(),
     inv,
+    // eslint-disable-next-line @typescript-eslint/no-unused-vars -- write-only $bindable prop
     modal = $bindable(),
     nameError = $bindable(),
     selectedAgent,
@@ -71,9 +72,8 @@
           form.model = '';
           form.effort = '';
         }}
-        ><option value="shell">None · plain shell</option
-        >{#each inv?.agents || [] as a}<option value={a.id}
-            >{a.id}{a.path ? '' : ' · install and start'}</option
+        ><option value="shell">None · plain shell</option>{#each inv?.agents || [] as a}<option
+            value={a.id}>{a.id}{a.path ? '' : ' · install and start'}</option
           >{/each}</select
       ></label
     >
@@ -111,13 +111,12 @@
     <label
       >GitHub identity<select bind:value={form.identity}
         ><option value="">Existing host environment</option
-        >{#each inv?.identities || [] as i}<option value={i.login}>{i.login}</option
-          >{/each}</select
+        >{#each inv?.identities || [] as i}<option value={i.login}>{i.login}</option>{/each}</select
       ></label
     >
     {#if form.repo && form.agent !== 'shell'}<label class="check"
-        ><input type="checkbox" bind:checked={form.brief} /> Read repo instructions and give a
-        concise orientation</label
+        ><input type="checkbox" bind:checked={form.brief} /> Read repo instructions and give a concise
+        orientation</label
       >{/if}
     <p class="hint">
       {form.repo

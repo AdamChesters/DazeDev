@@ -1,7 +1,7 @@
 <script lang="ts">
   import RepoPicker from '../../components/RepoPicker.svelte';
   import { ArrowUpRight } from '@lucide/svelte';
-  import type { Device, Host, Inventory, Workspace } from '../../lib/types';
+  import type { Device, Inventory } from '../../lib/types';
   import type { SessionForm, Task } from './types';
   let {
     busy,
@@ -41,8 +41,7 @@
         bind:value={form.name}
         placeholder="Core · planning"
       /></label
-    ><label>Terminals<input type="number" min="1" step="1" bind:value={form.count} /></label
-    >
+    ><label>Terminals<input type="number" min="1" step="1" bind:value={form.count} /></label>
   </div>
   <label
     >Host<select
@@ -76,8 +75,8 @@
       ></label
     >
     {#if form.agent !== 'shell'}<p class="hint">
-        The agent must already be installed on the selected host. Each terminal starts a
-        separate session.
+        The agent must already be installed on the selected host. Each terminal starts a separate
+        session.
       </p>{/if}
     <label class="check"
       ><input type="checkbox" bind:checked={launchChooseRepo} /> Choose repository before starting</label
@@ -92,19 +91,17 @@
       />
     {:else if form.repo}<p class="hint">Repository: {form.repo}</p>{/if}
     {#if form.agent !== 'shell' && form.repo}<label class="check"
-        ><input type="checkbox" bind:checked={form.brief} /> Read repository instructions and
-        give a concise orientation</label
+        ><input type="checkbox" bind:checked={form.brief} /> Read repository instructions and give a concise
+        orientation</label
       >{/if}
   {:else}
     <p class="hint">
-      Open plain shells in this host’s home directory. Use each terminal’s tmux button to
-      join or create a session.
+      Open plain shells in this host’s home directory. Use each terminal’s tmux button to join or
+      create a session.
     </p>
   {/if}
   <button class="primary" disabled={busy || !form.hostId}
-    >{busy
-      ? 'Starting…'
-      : `Open ${form.count} ${form.count === 1 ? 'terminal' : 'terminals'}`}
+    >{busy ? 'Starting…' : `Open ${form.count} ${form.count === 1 ? 'terminal' : 'terminals'}`}
     <ArrowUpRight size={16} /></button
   >
 </form>

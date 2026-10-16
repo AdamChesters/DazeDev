@@ -1,5 +1,10 @@
 import { afterEach, expect, it, vi } from 'vitest';
-import { UpdateCheck, pollUpdates, UPDATE_CHECK_INTERVAL_MS, canPresentUpdate } from '../src/lib/update-checks';
+import {
+  UpdateCheck,
+  pollUpdates,
+  UPDATE_CHECK_INTERVAL_MS,
+  canPresentUpdate,
+} from '../src/lib/update-checks';
 afterEach(() => vi.useRealTimers());
 it('shares pending checks across settings, manual and periodic callers then allows a fresh check', async () => {
   let resolve!: (value: string) => void;

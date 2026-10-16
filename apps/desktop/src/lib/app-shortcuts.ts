@@ -5,7 +5,15 @@ const key = (
   code: number,
   label: string,
   modifiers: Partial<Pick<Shortcut, 'ctrl' | 'alt' | 'shift' | 'meta'>> = {},
-): Shortcut => ({ key: code, ctrl: false, alt: false, shift: false, meta: false, ...modifiers, label });
+): Shortcut => ({
+  key: code,
+  ctrl: false,
+  alt: false,
+  shift: false,
+  meta: false,
+  ...modifiers,
+  label,
+});
 export const appActions: { id: AppAction; label: string; shortcut: Shortcut }[] = [
   { id: 'command', label: 'Command palette', shortcut: key(75, 'Ctrl + K', { ctrl: true }) },
   {
@@ -36,7 +44,9 @@ export function appActionFor(
 }
 // Ctrl+letter without Shift/Alt sends a control code (Ctrl+K kills to end of
 // line, nano uses many). Inside a terminal those keys belong to the terminal.
-export function terminalOwnsKey(e: Pick<KeyboardEvent, 'ctrlKey' | 'altKey' | 'shiftKey' | 'metaKey'>) {
+export function terminalOwnsKey(
+  e: Pick<KeyboardEvent, 'ctrlKey' | 'altKey' | 'shiftKey' | 'metaKey'>,
+) {
   return e.ctrlKey && !e.altKey && !e.shiftKey && !e.metaKey;
 }
 // Returns the name of the action or voice hotkey that already uses binding.

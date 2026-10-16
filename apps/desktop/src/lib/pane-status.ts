@@ -32,8 +32,15 @@ export function terminalPresentation(
       model: '',
     };
   }
-  if (!pane.shell && pane.sessionId && status?.attachment === 'tmux' && !status.nestedSsh &&
-      status.sessionId === pane.sessionId && status.paneDead === false && status.agent === 'shell') {
+  if (
+    !pane.shell &&
+    pane.sessionId &&
+    status?.attachment === 'tmux' &&
+    !status.nestedSsh &&
+    status.sessionId === pane.sessionId &&
+    status.paneDead === false &&
+    status.agent === 'shell'
+  ) {
     return { name: pane.name, type: 'tmux', model: '' };
   }
   return { name: pane.name, type: pane.agent, model: pane.model };

@@ -1,5 +1,9 @@
 import { SvelteMap } from 'svelte/reactivity';
-import { connectionDeadline, HOST_HEALTH_TIMEOUT, ConnectionOperations } from '../connection-health';
+import {
+  connectionDeadline,
+  HOST_HEALTH_TIMEOUT,
+  ConnectionOperations,
+} from '../connection-health';
 import { diagnostic } from '../diagnostics';
 import { uid, type Host } from '../types';
 

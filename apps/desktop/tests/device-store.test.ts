@@ -60,7 +60,10 @@ describe('DeviceStore', () => {
   });
 
   it('retries an unchanged value after a failed write', async () => {
-    const saveDevice = vi.fn().mockRejectedValueOnce(new Error('disk')).mockResolvedValue(undefined);
+    const saveDevice = vi
+      .fn()
+      .mockRejectedValueOnce(new Error('disk'))
+      .mockResolvedValue(undefined);
     const { store, deps } = setup({ saveDevice });
     store.persist();
     await vi.advanceTimersByTimeAsync(DEVICE_SAVE_DELAY);

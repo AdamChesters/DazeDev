@@ -29,9 +29,7 @@
   } = $props();
 </script>
 
-<button disabled={busy} onclick={() => void task(() => refresh())}
-  >Refresh repositories</button
->
+<button disabled={busy} onclick={() => void task(() => refresh())}>Refresh repositories</button>
 <RepoPicker
   repos={inventories[device.activeHost]?.repos || []}
   hostId={device.activeHost}
@@ -48,13 +46,12 @@
     <label
       >Account<select bind:value={form.identity}
         ><option value="">Select account</option
-        >{#each inventories[device.activeHost]?.identities || [] as i}<option
-            value={i.login}>{i.login}</option
+        >{#each inventories[device.activeHost]?.identities || [] as i}<option value={i.login}
+            >{i.login}</option
           >{/each}</select
       ></label
-    ><button
-      disabled={!form.identity || busy}
-      onclick={() => void task(loadGithubRepos)}>Load repositories</button
+    ><button disabled={!form.identity || busy} onclick={() => void task(loadGithubRepos)}
+      >Load repositories</button
     >
   </div>
   {#each githubRepos.filter((r) => r.full_name
@@ -63,9 +60,6 @@
       <div>
         <strong>{r.full_name}</strong><small>{r.description || 'GitHub repository'}</small>
       </div>
-      <button
-        disabled={busy}
-        onclick={() => void task(() => cloneRepo(r.full_name))}>Clone</button
-      >
+      <button disabled={busy} onclick={() => void task(() => cloneRepo(r.full_name))}>Clone</button>
     </div>{/each}
 </div>

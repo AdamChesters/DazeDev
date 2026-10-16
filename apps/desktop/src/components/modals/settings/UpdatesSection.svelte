@@ -1,5 +1,4 @@
 <script lang="ts">
-  import { Check } from '@lucide/svelte';
   import type { ClientInfo, UpdateInfo } from '../types';
   import type { Device } from '../../../lib/types';
   import { exportDiagnostics } from '../../../lib/diagnostics';
@@ -48,9 +47,7 @@
       ><button onclick={() => showChangelog()}>Changelog</button><button
         onclick={() => exportDiagnostics(clientInfo.version)}>Export diagnostics</button
       >
-    </div>{:else}<p class="hint">
-      Test build: download updates manually for this platform.
-    </p>
+    </div>{:else}<p class="hint">Test build: download updates manually for this platform.</p>
     <div class="settings-actions">
       <button onclick={() => showChangelog()}>Changelog</button><button
         onclick={() => exportDiagnostics(clientInfo.version)}>Export diagnostics</button
