@@ -1,7 +1,6 @@
 <script lang="ts">
   import TerminalSearch from './components/TerminalSearch.svelte';
   import type { SearchTarget, SearchHit, SearchNavigation } from './lib/terminal-search';
-  import { SvelteMap } from 'svelte/reactivity';
   import type { WindowTerminalState } from './lib/terminal-window';
   import { MixedHostRecovery, type HostRecovery } from './lib/mixed-host-recovery';
   import { refreshHostIdentity } from './lib/host-identity';
@@ -69,7 +68,6 @@
     Download,
     PanelLeftClose,
     PanelLeftOpen,
-    Check,
     Send,
     Radio,
     LayoutGrid,
@@ -155,11 +153,6 @@
   import { call, on, rpc, desktop } from './lib/bridge';
   import { parseCommand, type Action } from './lib/commands';
   import { reviewCommand, consumeReview, type CommandReview } from './lib/command-review';
-  import {
-    connectionDeadline,
-    HOST_HEALTH_TIMEOUT,
-    ConnectionOperations,
-  } from './lib/connection-health';
   import { pollUpdates, canPresentUpdate } from './lib/update-checks';
   import { Updates, type UpdateInfo } from './lib/state/updates.svelte';
   import { version as appVersion } from '../package.json';
@@ -175,6 +168,7 @@
   import { releaseVersion } from './lib/release-version';
   import { focusDialog } from './lib/focus';
   import { DeviceStore } from './lib/state/device-store.svelte';
+  import { Connections } from './lib/state/connections.svelte';
   import { DetachedWindows } from './lib/state/detached-windows.svelte';
   import Agents from './components/modals/Agents.svelte';
   import BrowserRequest from './components/modals/BrowserRequest.svelte';
@@ -219,9 +213,24 @@
     }),
     profiles = $state<Record<string, Profile>>({}),
     inventories = $state<Record<string, Inventory>>({}),
-    connections = $state<Record<string, string>>({}),
-    logs = $state<Record<string, string>>({}),
     terminalState = $state<Record<string, string>>({});
+  const net = new Connections({
+    desktop,
+    hosts: () => device.hosts,
+    call: (name, args) => call(name, args),
+    onready: (hostId, hostNotice) => {
+      // A native host can report that older sessions keep an old broker running.
+      if (hostNotice) {
+        const name = device.hosts.find((h) => h.id === hostId)?.name || 'Host';
+        notice = `${name}: ${hostNotice}`;
+      }
+      void joined(hostId);
+    },
+  });
+  const connections = net.connections,
+    logs = net.logs,
+    hostAttempts = net.attempts,
+    reconnectHosts = net.reconnect;
   const deviceStore = new DeviceStore({
     device: () => device,
     profiles: () => profiles,
@@ -672,14 +681,8 @@
         });
     }
   }
-  async function respond(hostId: string, value: string) {
-    const attempt = hostAttempts.get(hostId);
-    logs[hostId] = '';
-    try {
-      await call('host_auth', { hostId, data: value });
-    } catch (e) {
-      if (hostAttempts.get(hostId) === attempt) throw e;
-    }
+  function respond(hostId: string, value: string) {
+    return net.respond(hostId, value);
   }
   async function refreshMicrophones(requestPermission = true) {
     microphoneError = '';
@@ -2038,89 +2041,17 @@
     modal = '';
     if (connections[host.id] !== 'Connected') await connect(host);
   }
-  const reconnectHosts = new Set<string>();
-  const hostOperations = new ConnectionOperations();
-  const checkingHosts = new Map<string, symbol>();
-  const nextConnect = new Map<string, number>();
-  async function disconnectHost(hostId: string) {
-    reconnectHosts.delete(hostId);
-    hostAttempts.delete(hostId);
-    checkingHosts.delete(hostId);
-    connections[hostId] = 'Disconnected';
-    delete logs[hostId];
-    await hostOperations.run(hostId, () => call('host_disconnect', { hostId }));
+  function disconnectHost(hostId: string) {
+    return net.disconnect(hostId);
   }
-  async function checkConnections(onlyHost?: string) {
-    if (!desktop) return;
-    await Promise.all(
-      device.hosts.map(async (h) => {
-        if (onlyHost && h.id !== onlyHost) return;
-        if (!reconnectHosts.has(h.id) || checkingHosts.has(h.id)) return;
-        if (connections[h.id] === 'Connecting') {
-          if (Date.now() < (nextConnect.get(h.id) || 0) + 105000) return;
-          // Invalidate the stalled attempt before replacing its management channel.
-          hostAttempts.delete(h.id);
-          connections[h.id] = 'Disconnected';
-        }
-        if (!onlyHost && Date.now() < (nextConnect.get(h.id) || 0)) return;
-        const check = Symbol();
-        const attempt = hostAttempts.get(h.id);
-        const current = () => reconnectHosts.has(h.id) && hostAttempts.get(h.id) === attempt;
-        checkingHosts.set(h.id, check);
-        try {
-          if (connections[h.id] === 'Connected') {
-            try {
-              await connectionDeadline(
-                call('host_health', { hostId: h.id }),
-                HOST_HEALTH_TIMEOUT,
-                'Host did not respond to its health check.',
-              );
-              return;
-            } catch (e) {
-              if (!current()) return;
-              connections[h.id] = 'Disconnected';
-              logs[h.id] = String(e);
-            }
-          }
-          if (current()) await connect(h);
-        } catch (e) {
-          if (checkingHosts.get(h.id) === check) logs[h.id] = String(e);
-        } finally {
-          if (checkingHosts.get(h.id) === check) checkingHosts.delete(h.id);
-        }
-      }),
-    );
+  function checkConnections(onlyHost?: string) {
+    return net.check(onlyHost);
   }
-  async function reconnectHost(h: Host) {
-    // Explicit retry also replaces an attempt stuck at Connecting.
-    // Replace management only. Healthy terminal PTYs keep running independently.
-    hostAttempts.delete(h.id);
-    checkingHosts.delete(h.id);
-    connections[h.id] = 'Disconnected';
-    await connect(h);
+  function reconnectHost(h: Host) {
+    return net.reconnectHost(h);
   }
-  const hostAttempts = new SvelteMap<string, string>();
-  async function connect(h: Host) {
-    if (connections[h.id] === 'Connecting') return;
-    reconnectHosts.add(h.id);
-    nextConnect.set(h.id, Date.now() + 15000);
-    connections[h.id] = 'Connecting';
-    diagnostic('host.connect', h.id);
-    logs[h.id] = '';
-    const attempt = uid();
-    hostAttempts.set(h.id, attempt);
-    try {
-      await hostOperations.run(h.id, () => {
-        if (hostAttempts.get(h.id) !== attempt || !reconnectHosts.has(h.id))
-          return Promise.resolve();
-        return call('host_connect', { host: h, attempt });
-      });
-    } catch (e) {
-      if (hostAttempts.get(h.id) === attempt) {
-        connections[h.id] = 'Disconnected';
-        logs[h.id] = String(e);
-      }
-    }
+  function connect(h: Host) {
+    return net.connect(h);
   }
   async function refresh(id = device.activeHost) {
     const attempt = hostAttempts.get(id);
@@ -3364,26 +3295,12 @@
           ),
           on<{ hostId: string; attempt: string; identity?: { notice?: string } }>(
             'host-ready',
-            (v) => {
-              if (hostAttempts.get(v.hostId) !== v.attempt || !reconnectHosts.has(v.hostId)) return;
-              // A native host can report that older sessions keep an old broker running.
-              if (v.identity?.notice) {
-                const name = device.hosts.find((h) => h.id === v.hostId)?.name || 'Host';
-                notice = `${name}: ${v.identity.notice}`;
-              }
-              void joined(v.hostId);
-            },
+            (v) => net.ready(v),
           ),
-          on<{ hostId: string; text: string; attempt: string }>('host-output', (v) => {
-            if (hostAttempts.get(v.hostId) !== v.attempt || !reconnectHosts.has(v.hostId)) return;
-            logs[v.hostId] = ((logs[v.hostId] || '') + v.text).slice(-12000);
-          }),
-          on<{ hostId: string; attempt: string }>('host-closed', (v) => {
-            if (hostAttempts.get(v.hostId) === v.attempt) {
-              connections[v.hostId] = 'Disconnected';
-              logs[v.hostId] ||= 'Connection closed.';
-            }
-          }),
+          on<{ hostId: string; text: string; attempt: string }>('host-output', (v) =>
+            net.output(v),
+          ),
+          on<{ hostId: string; attempt: string }>('host-closed', (v) => net.closed(v)),
           on<{ id: string; done: number; total: number }>(
             'model-progress',
             (v) =>
@@ -5026,7 +4943,7 @@
           />
           <ConnectionsSection
             {addHost}
-            bind:connections
+            bind:connections={net.connections}
             bind:device
             {disconnectHost}
             bind:modal
