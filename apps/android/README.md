@@ -18,6 +18,18 @@ Terminal size decides which device sets a tmux window's size. Follow this phone 
 
 Dragging a terminal scrolls it. With tmux mouse on, drags become mouse-wheel scrolls, as on desktop; turn tmux mouse on in Settings to scroll full-screen apps. Rotation and short app switches keep the terminal; after two minutes in the background it detaches. Links that a host opens ask first. Private screen blocks screenshots and the Recents preview.
 
+Release gate: no APK is published without a passing test on a physical phone. Install the exact signed release APK on a phone, test it, and write a record such as:
+
+```json
+{"versionName": "0.1.0-alpha.7", "versionCode": 8, "apkSha256": "<optional, SHA-256 of the tested APK>",
+ "device": "Phone model", "androidVersion": "16", "date": "2026-10-16", "tester": "Name",
+ "checks": [{"name": "install over the previous version", "passed": true},
+            {"name": "connect a host and open a terminal", "passed": true},
+            {"name": "type, extra keys and voice draft", "passed": true}]}
+```
+
+Then run `python3 scripts/release-check.py app-release.apk phone-test.json` (needs `ANDROID_HOME` or `--build-tools`). It checks that the APK's version matches the record, that `apksigner` verifies the signature with APK Signature Scheme v3 and not the debug key, and that every recorded check passed. Only then does it print `READY TO PUBLISH` and the `SHA256SUMS` line for `DazeDev-Mobile-<version>.apk`; otherwise it lists the problems, prints `NOT READY TO PUBLISH` and exits 1. Keep phone-test records out of the public repository.
+
 Updates: the app checks public `android/v*` GitHub releases once a day. Download fetches the APK inside the app, checks its SHA-256 against the release's `SHA256SUMS` asset, then hands it to the Android package installer (you confirm there, and Android asks once to allow installs from DazeDev). If `SHA256SUMS` is missing, does not list the APK or does not match, the app refuses and deletes the file. Open release page stays available as a manual fallback. Each Android release must therefore attach `SHA256SUMS` with a line `<sha256>  DazeDev-Mobile-<version>.apk`.
 
 Built with AndroidX/Compose, JSch, xterm.js and Moonshine. Full notices are available offline in Licenses and credits.
