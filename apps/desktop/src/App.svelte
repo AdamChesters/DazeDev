@@ -2553,6 +2553,20 @@
     await call('app_close');
   }
   let closeFailure = $state('');
+  // Hosts ask to open links in the local browser; the user decides each one.
+  let browserRequests = $state<{ requestId: string; hostId: string; url: string }[]>([]);
+  let browserTrust = $state(false);
+  const browserRequest = $derived(browserRequests[0]);
+  async function decideBrowserRequest(allow: boolean) {
+    const request = browserRequests[0];
+    if (!request) return;
+    const trustHost = allow && browserTrust;
+    browserRequests = browserRequests.slice(1);
+    browserTrust = false;
+    await call('browser_open_decision', { requestId: request.requestId, allow, trustHost }).catch(
+      fail,
+    );
+  }
   let closingApp = $state(false);
   $effect(() => {
     if (modal !== 'close-native') closingApp = false;
@@ -3389,6 +3403,23 @@
           window.dispatchEvent(new Event('blur'));
         }
       }),
+      on<{ requestId: string; hostId: string; url: string }>('browser-open-request', (request) => {
+        if (
+          typeof request?.requestId === 'string' &&
+          typeof request.hostId === 'string' &&
+          typeof request.url === 'string'
+        )
+        {
+          browserRequests = [...browserRequests, request];
+          // The question waits in this window; make sure the user can see it.
+          void (async () => {
+            const window = getCurrentWindow();
+            await window.show();
+            await window.unminimize();
+            await window.setFocus();
+          })().catch(() => {});
+        }
+      }),
       on<{ paneId: string }>('terminal-window-closed', (event) => {
         detachedPanes.delete(event.paneId);
         if (detachedFocus === event.paneId) detachedFocus = '';
@@ -3651,6 +3682,12 @@
         }
         const binding = keyboardShortcut(e);
         if (binding) saveAppShortcut(capturingAppShortcut, binding);
+        return;
+      }
+      if (browserRequest && e.key === 'Escape') {
+        e.preventDefault();
+        e.stopImmediatePropagation();
+        void decideBrowserRequest(false);
         return;
       }
       // Ctrl+letter inside a terminal is a control key for the shell or editor.
@@ -6639,6 +6676,37 @@
       <div class="row">
         <button class="danger" onclick={() => void task(closeAnyway)}>Close anyway</button>
         <button onclick={() => (closeFailure = '')}>Cancel</button>
+      </div>
+    </div>
+  </div>
+{/if}
+{#if browserRequest}
+  <div class="modal-backdrop" role="presentation">
+    <div
+      class="modal"
+      role="alertdialog"
+      aria-modal="true"
+      aria-labelledby="browser-request-title"
+      aria-describedby="browser-request-url"
+      tabindex="-1"
+      use:focusDialog={{ key: browserRequest.requestId }}
+    >
+      <h2 id="browser-request-title">
+        {device.hosts.find((h) => h.id === browserRequest.hostId)?.name || 'A connected host'} wants
+        to open
+      </h2>
+      <p id="browser-request-url" class="browser-request-url"><code>{browserRequest.url}</code></p>
+      <label class="check"
+        ><input type="checkbox" bind:checked={browserTrust} /> Allow links from this host until
+        DazeDev restarts</label
+      >
+      {#if browserRequests.length > 1}<p class="hint">
+          {browserRequests.length - 1} more {browserRequests.length === 2 ? 'request' : 'requests'}
+          waiting.
+        </p>{/if}
+      <div class="row">
+        <button class="primary" onclick={() => void decideBrowserRequest(true)}>Open</button>
+        <button onclick={() => void decideBrowserRequest(false)}>Don't open</button>
       </div>
     </div>
   </div>

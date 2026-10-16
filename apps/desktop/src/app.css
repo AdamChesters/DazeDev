@@ -2204,6 +2204,18 @@ html[data-highlight-motion='static'] .attachment-status i.plain {
   box-shadow: inset 0 -2px var(--accent);
 }
 
+.browser-request-url {
+  margin: 8px 0;
+  padding: 8px;
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  background: var(--bg);
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  word-break: break-all;
+  user-select: text;
+}
+
 .remote-image-ref {
   display: inline-flex;
   flex-wrap: wrap;
