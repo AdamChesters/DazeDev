@@ -62,6 +62,8 @@ export class Profiles {
       ...this.#app.deviceStore.recovery,
       [HOSTLESS]: ui.device.localWorkspaces || blankProfile(),
     };
+    for (const hostId in ui.profiles) this.#app.deviceStore.adopt(hostId);
+    this.#app.deviceStore.loaded();
   }
 
   #forget(hostId: string) {
@@ -142,7 +144,7 @@ export class Profiles {
   };
 
   refresh = async (id = this.#app.ui.device.activeHost) => {
-    const { ui, net, deviceStore } = this.#app;
+    const { ui, net } = this.#app;
     const attempt = net.attempts.get(id);
     const result = await rpc<Inventory>(id, 'inventory');
     if (attempt !== net.attempts.get(id) || !net.reconnect.has(id)) return;
@@ -162,12 +164,8 @@ export class Profiles {
         repos: result.repos.map((r) => ({ path: r.path, branch: r.branch, dirty: r.dirty })),
       };
     const joinedHost = ui.host(id);
-    if (joinedHost) {
-      const changed = refreshHostIdentity(joinedHost, result, Object.values(ui.profiles));
-      for (const [hostId, profile] of Object.entries(ui.profiles))
-        if (changed.has(profile)) deviceStore.saved(hostId);
-    }
-    deviceStore.persist();
+    // Changed host identities in any profile save automatically.
+    if (joinedHost) refreshHostIdentity(joinedHost, result, Object.values(ui.profiles));
     if (id === ui.device.activeHost) ui.sessions = result.sessions;
   };
 
@@ -201,6 +199,7 @@ export class Profiles {
         '.';
     }
     ui.profiles[hostId] = profile;
+    this.#app.deviceStore.adopt(hostId);
   }
 
   /** The host's management channel is ready: load its profile and inventory. */
@@ -224,6 +223,7 @@ export class Profiles {
       if (recovery[id]) {
         if (recovery[id].revision === profile.revision) {
           this.replaceProfile(id, recovery[id]);
+          // The recovery copy holds changes the host has not seen yet.
           deviceStore.saved(id);
         } else {
           this.replaceProfile(id, recovery[id]);
@@ -244,7 +244,6 @@ export class Profiles {
         !this.#app.panes.workspaces.some((w) => w.id === ui.device.activeWorkspace)
       )
         ui.device.activeWorkspace = profile.workspaces[0]?.id || '';
-      deviceStore.persist();
       this.#offerMixedRecovery(id);
     } catch (e) {
       ui.fail(e);
@@ -270,7 +269,6 @@ export class Profiles {
       .filter(Boolean);
     preferences.guidance = this.guidance;
     preferences.promptTemplate = this.promptTemplate;
-    this.#app.deviceStore.saved(this.settingsHost);
     ui.notice = 'Host preferences queued for saving.';
   };
 
@@ -283,7 +281,7 @@ export class Profiles {
         local,
         ...(ui.device.profileBackups?.[this.settingsHost] || []),
       ].slice(0, 3);
-      await call('device_save', { value: deviceStore.value() });
+      await deviceStore.saveNow();
     }
     const backup = JSON.stringify(local, null, 2);
     const url = URL.createObjectURL(new Blob([backup], { type: 'application/json' }));
@@ -296,10 +294,7 @@ export class Profiles {
       this.settingsHost,
       rebindOwner(await rpc<Profile>(this.settingsHost, 'profile_load'), this.settingsHost),
     );
-    deviceStore.blocked[this.settingsHost] = false;
-    delete recovery[this.settingsHost];
-    deviceStore.saveState[this.settingsHost] = 'Restored';
-    deviceStore.persist();
+    deviceStore.restored(this.settingsHost);
   };
 
   deleteHost = async (h: Host, confirmed = false) => {
@@ -351,7 +346,6 @@ export class Profiles {
         device.hosts[0]?.id ||
         '';
     ui.maximize = '';
-    deviceStore.persist();
     ui.modal = '';
     this.deleteHostTarget = null;
     ui.notice = 'Host removed from this device. Remote workspaces and tmux sessions are unchanged.';

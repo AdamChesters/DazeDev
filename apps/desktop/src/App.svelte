@@ -169,7 +169,7 @@
   const deviceStore = (app.deviceStore = new DeviceStore({
     device: () => ui.device,
     profiles: () => ui.profiles,
-    enabled: () => ui.mounted,
+    enabled: () => ui.mounted && ui.loaded,
     connected: (hostId) => connections[hostId] === 'Connected',
     saveDevice: (value) => call('device_save', { value }),
     saveProfile: (hostId, profile) =>
@@ -184,7 +184,6 @@
     call: (name, args) => call(name, args),
     device: () => ui.device,
     voiceStatus: () => dictation.status,
-    persist: () => persistDevice(),
     notice: (message) => {
       ui.notice = message;
     },
@@ -291,7 +290,6 @@
       if (ui.device.activeWorkspace !== owner.id || ui.device.activeHost !== owner.hostId) {
         ui.device.activeWorkspace = owner.id;
         ui.device.activeHost = owner.hostId;
-        persistDevice();
       }
     },
     search: {
@@ -392,7 +390,6 @@
       repoContext,
     );
     if (repoHost === target.hostId) target.repo = repoPath;
-    saved(owner.hostId);
     ui.terminalReturnFocus = target.id;
     ui.modal = '';
     ui.notice = 'Repository prompt pasted for review. Press Enter in the terminal when ready.';
@@ -473,7 +470,6 @@
       ui.device.lastChangelogVersion = pendingChangelog;
       pendingChangelog = '';
       showChangelog('');
-      persistDevice();
     }
   });
   let feedbackMessage = $state('');
@@ -524,7 +520,6 @@
         .then((value) => {
           releaseHistory = mergeChangelog(value, releaseHistory);
           ui.device.releaseHistory = releaseHistory;
-          persistDevice();
           historyStatus = '';
         })
         .catch(() => {
@@ -550,13 +545,11 @@
     ui.device.appShortcuts = { ...ui.device.appShortcuts, [action]: binding };
     capturingAppShortcut = null;
     appShortcutStatus = '';
-    persistDevice();
   }
   function resetAppShortcuts() {
     ui.device.appShortcuts = {};
     capturingAppShortcut = null;
     appShortcutStatus = 'Shortcuts reset to defaults.';
-    persistDevice();
   }
   $effect(() => {
     if (capturingAppShortcut && ui.modal !== 'settings') capturingAppShortcut = null;
@@ -643,17 +636,10 @@
         void call('terminal_window_focus', { paneId: hit.paneId }).catch(fail);
       });
   }
-  function persistDevice() {
-    deviceStore.persist();
-  }
   function setPasteConfirmation(confirm: boolean) {
     ui.device.terminal = { ...(ui.device.terminal || terminalDefaults), confirmPaste: confirm };
-    persistDevice();
     if (!confirm)
       ui.notice = 'Multi-line paste no longer asks first. Change this in Settings > Terminal.';
-  }
-  function saved(hostId: string) {
-    deviceStore.saved(hostId);
   }
   function resizeSidebar(width: number) {
     ui.device.sidebarWidth = Math.round(
@@ -821,6 +807,8 @@
           : null;
         if (desktop) aliases = await call<string[]>('ssh_aliases').catch(() => []);
         if (data) profiles.load(data);
+        // Automatic saving starts once the device file has loaded.
+        ui.loaded = desktop;
         const listeners = await Promise.all([
           on<{ done: number; total: number }>(
             'update-progress',
@@ -866,7 +854,6 @@
             pendingChangelog = clientInfo.version;
           } else if (ui.device.lastChangelogVersion !== clientInfo.version) {
             ui.device.lastChangelogVersion = clientInfo.version;
-            persistDevice();
           }
         }
         if (desktop) unsub.push(await getCurrentWindow().onCloseRequested(closeRequested));
@@ -1065,6 +1052,7 @@
     return () => {
       panes.cancelPaneDrag?.();
       dictation.destroy();
+      deviceStore.destroy();
       clearInterval(healthTimer);
       stopUpdatePolling();
       window.removeEventListener('online', recoverConnections);
@@ -1107,7 +1095,6 @@
       aria-label="Toggle sidebar"
       onclick={() => {
         ui.device.sidebar = !ui.device.sidebar;
-        persistDevice();
       }}
       >{#if ui.device.sidebar}<PanelLeftClose size={17} />{:else}<PanelLeftOpen
           size={17}
@@ -1177,7 +1164,6 @@
         onclick={() => {
           const themes = ['blue', 'charcoal', 'green'] as const;
           ui.device.theme = themes[(themes.indexOf(ui.device.theme || 'blue') + 1) % themes.length];
-          persistDevice();
         }}><Palette size={17} /></button
       ><button class="icon" aria-label="Settings" onclick={() => void task(openSettings)}
         ><Settings size={17} /></button
@@ -1260,11 +1246,9 @@
               ...ui.device.collapsedHosts,
               [h.id]: !ui.device.collapsedHosts?.[h.id],
             };
-            persistDevice();
           }}
           onhost={(h) => {
             ui.device.activeHost = h.id;
-            persistDevice();
           }}
           onhostreorder={(source, target, after) => {
             const list = ui.device.hosts.filter((h) => h.id !== source.id);
@@ -1272,7 +1256,6 @@
             if (index < 0 || source.id === target.id) return;
             list.splice(index + (after ? 1 : 0), 0, source);
             ui.device.hosts = list;
-            persistDevice();
           }}
           onreconnect={(h) => void reconnectHost(h)}
           oncolors={(h) => {
@@ -1298,7 +1281,6 @@
             const reordered = reorderWorkspaces(profile.workspaces, source.id, target.id, after);
             if (reordered !== profile.workspaces) {
               profile.workspaces = reordered;
-              saved(source.hostId);
             }
           }}
           reorderDisabled={dictation.active || !!panes.draggingPane}
@@ -1399,18 +1381,14 @@
         }}
         onpointerup={(e) => {
           e.currentTarget.releasePointerCapture(e.pointerId);
-          persistDevice();
         }}
-        onlostpointercapture={persistDevice}
         ondblclick={() => {
           ui.device.sidebarWidth = 238;
-          persistDevice();
         }}
         onkeydown={(e) => {
           if (e.key === 'ArrowLeft' || e.key === 'ArrowRight') {
             e.preventDefault();
             resizeSidebar((ui.device.sidebarWidth || 238) + (e.key === 'ArrowLeft' ? -16 : 16));
-            persistDevice();
           }
         }}
       ></div>{/if}
@@ -1813,7 +1791,6 @@
                       p.model = '';
                       p.effort = '';
                       p.name = 'Terminal';
-                      saved(w.hostId);
                     }}
                     suppressFocus={!!searchOrigin}
                     onsearch={() => openTerminalSearch(p.id)}
@@ -2127,7 +2104,6 @@
           highlightColor={ui.device.recordingHighlightColor || '#39bdd7'}
           onglowchange={(enabled) => {
             ui.device.supportGlow = enabled;
-            persistDevice();
           }}
           onupdate={() => {
             openUpdates();
@@ -2140,10 +2116,10 @@
           bind:name={ui.device.feedbackContact.name}
           bind:email={ui.device.feedbackContact.email}
           bind:message={feedbackMessage}
+          oncontactchange={() => {}}
           busy={feedbackBusy}
           sent={feedbackSent}
           error={feedbackError}
-          oncontactchange={persistDevice}
           onmessagechange={() => (feedbackSent = false)}
           onsubmit={() => void sendFeedback()}
           onclose={() => (ui.modal = '')}
@@ -2167,7 +2143,6 @@
           bind:device={ui.device}
           bind:modal={ui.modal}
           {openSettings}
-          {persistDevice}
           startListening={() => record('dictation', dictation.listenIntroTarget)}
           {task}
           voiceReady={voiceModels.ready}
@@ -2181,7 +2156,6 @@
           bind:modal={ui.modal}
           models={voiceModels.models}
           {openSettings}
-          {persistDevice}
           {setupVoice}
           switchingVoice={voiceModels.switching}
           {task}
@@ -2206,7 +2180,7 @@
           {task}
         />
       {:else if ui.modal === 'host-colors' && colorHost}
-        <HostColors {colorHost} bind:device={ui.device} {persistDevice} />
+        <HostColors {colorHost} bind:device={ui.device} />
       {:else if ui.modal === 'tmux-settings' && tmuxHost}
         <TmuxSettings
           host={tmuxHost}
@@ -2226,7 +2200,6 @@
           bind:modal={ui.modal}
           bind:profiles={ui.profiles}
           bind:renameValue={ui.renameValue}
-          {saved}
           {updateWorkspace}
           bind:workspaceTarget
         />
@@ -2238,7 +2211,6 @@
           bind:device={ui.device}
           bind:modal={ui.modal}
           bind:newHost
-          {persistDevice}
           {task}
         />
       {:else if ui.modal === 'launch'}
@@ -2337,7 +2309,6 @@
             {clientInfo}
             bind:device={ui.device}
             {openUpdates}
-            {persistDevice}
             {showChangelog}
             updateBusy={updates.busy}
             updateLabel={updates.label}
@@ -2378,7 +2349,6 @@
             microphoneError={voiceModels.microphoneError}
             microphoneLoading={voiceModels.microphoneLoading}
             microphones={voiceModels.microphones}
-            {persistDevice}
             {refreshMicrophones}
             {saveShortcut}
             shortcutStatus={dictation.shortcutStatus}
@@ -2387,14 +2357,8 @@
             voiceCacheLoading={voiceModels.cacheLoading}
             voiceStatus={dictation.status}
           />
-          <AppearanceSection bind:device={ui.device} {persistDevice} {systemReducedMotion} />
-          <TerminalSection
-            bind:device={ui.device}
-            {fail}
-            {persistDevice}
-            {setPasteConfirmation}
-            {softAlert}
-          />
+          <AppearanceSection bind:device={ui.device} {systemReducedMotion} />
+          <TerminalSection bind:device={ui.device} {fail} {setPasteConfirmation} {softAlert} />
           <ShortcutsSection
             bind:appShortcutStatus
             bind:capturingAppShortcut
@@ -2408,7 +2372,6 @@
             {disconnectHost}
             bind:modal={ui.modal}
             bind:newHost
-            {persistDevice}
             settingsHost={profiles.settingsHost}
             {task}
           />
@@ -2516,7 +2479,6 @@
       order={ui.device.paneMenuOrder}
       onorder={(order) => {
         ui.device.paneMenuOrder = order;
-        persistDevice();
       }}
       onsplit={(edge) => addTerminal(edge, ui.paneMenu!.pane)}
       transfers={panes.workspaces.map((w) => ({

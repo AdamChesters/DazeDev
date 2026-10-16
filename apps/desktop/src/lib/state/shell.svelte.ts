@@ -86,6 +86,8 @@ export class Shell {
   terminalReturnFocus = '';
   /** False before mount and after teardown. */
   mounted = false;
+  /** True once the device file has loaded (desktop only); saving waits for it. */
+  loaded = false;
   #pendingTasks = 0;
 
   fail = (e: unknown) => {

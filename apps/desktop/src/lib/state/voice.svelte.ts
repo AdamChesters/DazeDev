@@ -8,7 +8,6 @@ export interface VoiceModelsDeps {
   device: () => Device;
   /** Current recording phase; models change only while 'idle'. */
   voiceStatus: () => string;
-  persist: () => void;
   notice: (message: string) => void;
   fail: (e: unknown) => void;
   mediaDevices: () => MediaDevices | undefined;
@@ -85,7 +84,6 @@ export class VoiceModels {
     try {
       await deps.call('voice_release');
       this.#cacheSignature = '';
-      deps.persist();
       await this.configureCache();
     } catch (e) {
       deps.fail(e);
@@ -107,7 +105,6 @@ export class VoiceModels {
       await deps.call('voice_release');
       this.#cacheSignature = '';
       deps.device().voice.model = id;
-      deps.persist();
       await this.configureCache();
     } finally {
       delete this.downloadProgress[id];
@@ -148,7 +145,6 @@ export class VoiceModels {
       }
     }
     deps.device().voiceSetupDismissed = true;
-    deps.persist();
     deps.notice('Voice stack ready to go.');
   };
 

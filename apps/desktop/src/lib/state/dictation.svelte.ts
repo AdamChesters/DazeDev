@@ -154,7 +154,6 @@ export class Dictation {
     if (mode === 'dictation') device.inputShortcut = binding;
     else device.commandShortcut = binding;
     this.capturingShortcut = null;
-    this.#app.deviceStore.persist();
     await this.configureShortcut();
   };
 

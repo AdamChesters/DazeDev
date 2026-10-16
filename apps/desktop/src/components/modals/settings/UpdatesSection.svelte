@@ -9,7 +9,6 @@
     clientInfo,
     device = $bindable(),
     openUpdates,
-    persistDevice,
     showChangelog,
     updateBusy,
     updateLabel,
@@ -20,7 +19,6 @@
     clientInfo: ClientInfo;
     device: Device;
     openUpdates: () => void;
-    persistDevice: () => void;
     showChangelog: (origin?: string) => void;
     updateBusy: boolean;
     updateLabel: string;
@@ -37,7 +35,6 @@
         checked={device.checkUpdates !== false}
         onchange={(e) => {
           device.checkUpdates = e.currentTarget.checked;
-          persistDevice();
         }}
       /> Check at startup and every 30 minutes</label
     >

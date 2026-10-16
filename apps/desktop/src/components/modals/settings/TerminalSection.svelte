@@ -5,13 +5,11 @@
   let {
     device = $bindable(),
     fail,
-    persistDevice,
     setPasteConfirmation,
     softAlert,
   }: {
     device: Device;
     fail: (e: unknown) => void;
-    persistDevice: () => void;
     setPasteConfirmation: (confirm: boolean) => void;
     softAlert: () => Promise<void>;
   } = $props();
@@ -28,7 +26,6 @@
             sound: device.terminalAlerts?.sound || false,
             visual: e.currentTarget.checked,
           };
-          persistDevice();
         }}
       /> Show terminal completion notifications</label
     >
@@ -41,7 +38,6 @@
             visual: device.terminalAlerts?.visual || false,
             sound: e.currentTarget.checked,
           };
-          persistDevice();
           if (e.currentTarget.checked) void softAlert().catch(fail);
         }}
       /> Play a soft notification sound</label
@@ -59,7 +55,6 @@
           min="8"
           max="32"
           bind:value={device.terminal.fontSize}
-          onchange={persistDevice}
         /></label
       >
       <label
@@ -69,7 +64,6 @@
           max="100000"
           step="100"
           bind:value={device.terminal.scrollback}
-          onchange={persistDevice}
         /></label
       >
     </div>
@@ -79,23 +73,18 @@
     </p>
     <div class="settings-checks">
       <label class="check"
-        ><input type="checkbox" bind:checked={device.terminal.gpu} onchange={persistDevice} /> GPU rendering</label
+        ><input type="checkbox" bind:checked={device.terminal.gpu} /> GPU rendering</label
       >
       <label class="check"
-        ><input type="checkbox" bind:checked={device.terminal.images} onchange={persistDevice} /> Terminal
-        images</label
+        ><input type="checkbox" bind:checked={device.terminal.images} /> Terminal images</label
       >
       <label class="check"
-        ><input type="checkbox" bind:checked={device.terminal.ligatures} onchange={persistDevice} /> Font
-        ligatures</label
+        ><input type="checkbox" bind:checked={device.terminal.ligatures} /> Font ligatures</label
       >
     </div>
     <label class="check"
-      ><input
-        type="checkbox"
-        bind:checked={device.terminal.screenReader}
-        onchange={persistDevice}
-      />Screen reader terminal output</label
+      ><input type="checkbox" bind:checked={device.terminal.screenReader} />Screen reader terminal
+      output</label
     >
     <label class="check"
       ><input
@@ -105,7 +94,7 @@
       /> Ask before pasting text with line breaks</label
     >
     <label
-      >Remote copy (OSC 52)<select bind:value={device.terminal.clipboard} onchange={persistDevice}>
+      >Remote copy (OSC 52)<select bind:value={device.terminal.clipboard}>
         <ClipboardOptions />
       </select></label
     >

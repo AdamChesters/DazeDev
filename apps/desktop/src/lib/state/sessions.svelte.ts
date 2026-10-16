@@ -52,8 +52,6 @@ export class Sessions {
     });
     if (actual !== p.agent) {
       p.agent = actual;
-      const owner = this.#app.panes.owner(p.id);
-      if (owner) this.#app.deviceStore.saved(owner.hostId);
       throw new Error(
         'The agent in this terminal changed. Refresh its controls before choosing a model.',
       );
@@ -91,7 +89,7 @@ export class Sessions {
   };
 
   launch = async () => {
-    const { ui, panes, profiles, deviceStore, net } = this.#app;
+    const { ui, panes, profiles, net } = this.#app;
     const form = ui.form;
     if (!Number.isSafeInteger(form.count) || form.count < 1)
       throw new Error('Choose a positive whole number of terminals.');
@@ -164,7 +162,6 @@ export class Sessions {
         focused: newPanes[0].id,
       };
       ui.profiles[form.hostId].workspaces.push(workspace);
-      deviceStore.saved(form.hostId);
     }
     panes.selectWorkspace(workspace);
     ui.modal = '';
@@ -211,7 +208,6 @@ export class Sessions {
           target.error = String(e);
           failures.push(String(e));
         }
-        deviceStore.saved(workspace.hostId);
       }
       if (failures.length)
         throw new Error(
@@ -233,7 +229,6 @@ export class Sessions {
           ? { ...x, sessionId: s.id, stamp: s.stamp, name: s.name, error: undefined }
           : x,
       );
-      this.#app.deviceStore.saved(owner.hostId);
     }
   };
 
@@ -360,7 +355,6 @@ export class Sessions {
       };
       ui.profiles[this.sessionHost].workspaces.push(workspace);
       panes.selectWorkspace(workspace);
-      this.#app.deviceStore.saved(this.sessionHost);
     }
     ui.modal = '';
     this.sessionPane = null;
@@ -374,15 +368,9 @@ export class Sessions {
       stamp: ui.renameTarget.stamp,
       name: ui.renameValue,
     });
-    for (const w of this.#app.panes.workspaces) {
-      let changed = false;
-      for (const p of w.panes)
-        if (p.hostId === ui.renameTarget.hostId && p.sessionId === ui.renameTarget.sessionId) {
-          p.name = ui.renameValue;
-          changed = true;
-        }
-      if (changed) this.#app.deviceStore.saved(w.hostId);
-    }
+    for (const p of this.#app.panes.workspaces.flatMap((w) => w.panes))
+      if (p.hostId === ui.renameTarget.hostId && p.sessionId === ui.renameTarget.sessionId)
+        p.name = ui.renameValue;
     ui.modal = '';
     await this.#app.profiles.refresh(ui.renameTarget.hostId);
   };

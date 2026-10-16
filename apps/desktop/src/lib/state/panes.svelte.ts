@@ -124,37 +124,27 @@ export class Panes {
         const progress = pruneKeys(ui.terminalProgress, live);
         if (progress !== ui.terminalProgress) ui.terminalProgress = progress;
         this.onprune(live);
-        let changed = false;
         const focus = prunePaneChoices(
           device.localFocus || {},
           byWorkspace,
           this.#seenContainers,
           complete,
         );
-        if (device.localFocus && focus !== device.localFocus) {
-          device.localFocus = focus;
-          changed = true;
-        }
+        if (device.localFocus && focus !== device.localFocus) device.localFocus = focus;
         const tabs = prunePaneChoices(
           device.activeTerminalTabs || {},
           byGroup,
           this.#seenContainers,
           complete,
         );
-        if (device.activeTerminalTabs && tabs !== device.activeTerminalTabs) {
+        if (device.activeTerminalTabs && tabs !== device.activeTerminalTabs)
           device.activeTerminalTabs = tabs;
-          changed = true;
-        }
         for (const key of ['clipboardByHost', 'collapsedHosts'] as const) {
           const record = device[key] as Record<string, unknown> | undefined;
           if (!record) continue;
           const pruned = pruneKeys(record, hostIds);
-          if (pruned !== record) {
-            (device as unknown as Record<string, unknown>)[key] = pruned;
-            changed = true;
-          }
+          if (pruned !== record) (device as unknown as Record<string, unknown>)[key] = pruned;
         }
-        if (changed) this.#app.deviceStore.persist();
       });
     });
     $effect(() => {
@@ -180,7 +170,6 @@ export class Panes {
     const device = this.#ui.device;
     if (device.localFocus?.[workspaceId] === paneId) return;
     (device.localFocus ||= {})[workspaceId] = paneId;
-    this.#app.deviceStore.persist();
   };
 
   selectPane = (paneId: string, workspace: Workspace, additive = false) => {
@@ -188,7 +177,6 @@ export class Panes {
     const group = terminalTabs(workspace, paneId);
     if (group && device.activeTerminalTabs?.[group.id] !== paneId) {
       (device.activeTerminalTabs ||= {})[group.id] = paneId;
-      this.#app.deviceStore.persist();
     }
     if (this.#selectionWorkspace !== workspace.id) this.selectedPanes = [];
     this.#selectionWorkspace = workspace.id;
@@ -222,7 +210,6 @@ export class Panes {
       ) || { kind: 'pane' as const, id: '' },
     };
     p.workspaces = p.workspaces.map((x) => (x.id === w.id ? w : x));
-    this.#app.deviceStore.saved(w.hostId);
   };
 
   selectWorkspace = (w: Workspace) => {
@@ -239,7 +226,6 @@ export class Panes {
     device.activeWorkspace = w.id;
     device.activeHost = w.hostId;
     ui.maximize = '';
-    this.#app.deviceStore.persist();
     if (desktop) void call('terminal_workspace_activate', { workspaceId: w.id }).catch(ui.fail);
     if (w.hostId === HOSTLESS) {
       const needs = workspaceHosts(w, device.hosts, this.#app.net.connections);
@@ -261,7 +247,6 @@ export class Panes {
       focused: '',
     };
     profile.workspaces.push(workspace);
-    this.#app.deviceStore.saved(HOSTLESS);
     this.selectWorkspace(workspace);
     return workspace;
   };
@@ -777,8 +762,6 @@ export class Panes {
 
   toggleStatus = (p: Pane) => {
     p.hideStatus = !p.hideStatus;
-    const owner = this.owner(p.id);
-    if (owner) this.#app.deviceStore.saved(owner.hostId);
     this.#ui.paneMenu = null;
   };
 
@@ -934,14 +917,12 @@ export class Panes {
     ui.profiles[w.hostId].workspaces = ui.profiles[w.hostId].workspaces.filter(
       (x) => x.id !== w.id,
     );
-    this.#app.deviceStore.saved(w.hostId);
     if (device.activeWorkspace === w.id) {
       const next = ui.profiles[w.hostId].workspaces[0] || this.workspaces[0];
       device.activeWorkspace = next?.id || '';
       if (next) device.activeHost = next.hostId;
       ui.maximize = '';
     }
-    this.#app.deviceStore.persist();
     ui.notice = w.panes.some(ui.nativePane)
       ? 'Workspace closed.'
       : 'Workspace deleted. Its tmux sessions are still running.';
@@ -1027,7 +1008,6 @@ export class Panes {
             ],
           });
           (ui.device.activeTerminalTabs ||= {})[group.id] = p.id;
-          this.#app.deviceStore.persist();
         }),
       });
     if (dictation.recent?.target === p.id)

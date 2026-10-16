@@ -8,7 +8,6 @@
     modal = $bindable(),
     profiles = $bindable(),
     renameValue = $bindable(),
-    saved,
     updateWorkspace,
     workspaceTarget = $bindable(),
   }: {
@@ -17,7 +16,6 @@
     modal: string;
     profiles: Record<string, Profile>;
     renameValue: string;
-    saved: (hostId: string) => void;
     updateWorkspace: (w: Workspace) => void;
     workspaceTarget: Workspace | null;
   } = $props();
@@ -60,7 +58,6 @@
         const i = list.findIndex((w) => w.id === workspaceTarget!.id);
         if (i > 0) {
           [list[i - 1], list[i]] = [list[i], list[i - 1]];
-          saved(workspaceTarget.hostId);
         }
       }}>Move up</button
     ><button
@@ -71,7 +68,6 @@
         const i = list.findIndex((w) => w.id === workspaceTarget!.id);
         if (i < list.length - 1) {
           [list[i + 1], list[i]] = [list[i], list[i + 1]];
-          saved(workspaceTarget.hostId);
         }
       }}>Move down</button
     >
