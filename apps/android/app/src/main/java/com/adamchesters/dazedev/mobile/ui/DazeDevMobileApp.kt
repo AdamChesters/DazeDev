@@ -100,6 +100,8 @@ fun DazeDevMobileApp(viewModel: MainViewModel) {
 
     BackHandler(enabled = !uiState.showHosts && uiState.localGroupId == null && uiState.selectedSessionName == null && uiState.connectionPhase != ConnectionPhase.Connected) {viewModel.cancelConnection()}
 
+    val terminalState = remember(uiState.selectedTargetHost,uiState.selectedSessionId,uiState.selectedStamp,uiState.selectedSessionName,uiState.selectedTargetLabel,
+        uiState.selectedPaneId,uiState.terminal,uiState.terminalEpoch,uiState.terminalError,uiState.staleSession,uiState.isSending,uiState.localGroups,uiState.folders,uiState.selectedFolder,uiState.localGroupId) {uiState.terminalScreenState()}
     Scaffold(
         snackbarHost = { SnackbarHost(snackbarHostState) },
     ) { contentPadding ->
@@ -127,7 +129,7 @@ fun DazeDevMobileApp(viewModel: MainViewModel) {
                 onRenameSession = viewModel::renameSession,
             )
             else -> TerminalScreen(
-                uiState = uiState,
+                uiState = terminalState,
                 contentPadding = contentPadding,
                 onBack = viewModel::leaveTerminal,
                 onRefresh = viewModel::refreshTerminal,

@@ -82,16 +82,38 @@ import com.adamchesters.dazedev.mobile.voice.VoiceInputStatus
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withTimeoutOrNull
+import kotlinx.coroutines.withContext
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.TimeoutCancellationException
 import androidx.compose.foundation.background
 import androidx.compose.runtime.key
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Job
 
+/** Only what the terminal screen shows, so unrelated app state (such as a snackbar) does not recompose it. */
+@androidx.compose.runtime.Immutable
+data class TerminalScreenState(
+    val selectedTargetHost: String?,
+    val selectedSessionId: String?,
+    val selectedStamp: String?,
+    val selectedSessionName: String?,
+    val selectedTargetLabel: String,
+    val selectedPaneId: String?,
+    val terminal: com.adamchesters.dazedev.mobile.ssh.TerminalStream?,
+    val terminalEpoch: Long,
+    val terminalError: String?,
+    val staleSession: Boolean,
+    val isSending: Boolean,
+    val tabs: List<com.adamchesters.dazedev.mobile.host.TerminalRow>,
+)
+
+fun DazeDevMobileUiState.terminalScreenState() = TerminalScreenState(selectedTargetHost,selectedSessionId,selectedStamp,selectedSessionName,
+    selectedTargetLabel,selectedPaneId,terminal,terminalEpoch,terminalError,staleSession!=null,isSending,terminalTabs())
+
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun TerminalScreen(
-    uiState: DazeDevMobileUiState,
+    uiState: TerminalScreenState,
     contentPadding: PaddingValues,
     onBack: () -> Unit,
     onRefresh: () -> Unit,
@@ -118,7 +140,7 @@ fun TerminalScreen(
         if(input.isBlank())edit.remove(draftKey) else edit.putString(draftKey,input).putLong("saved:$draftKey",System.currentTimeMillis())
         edit.apply()
     }
-    LaunchedEffect(draftKey){
+    LaunchedEffect(draftKey) { withContext(Dispatchers.IO) {
         val cutoff=System.currentTimeMillis()-7L*24*60*60*1000
         val edit=drafts.edit()
         drafts.all.keys.filter {it.startsWith("original:")}.forEach {key->
@@ -129,7 +151,9 @@ fun TerminalScreen(
             val old=key.removePrefix("saved:");edit.remove(old).remove("original:$old").remove("target:$old").remove(key)
         }
         edit.apply()
-    }
+    } }
+    // The shared voice model stays loaded while this screen is open.
+    DisposableEffect(Unit) { onDispose { Thread { com.adamchesters.dazedev.mobile.voice.VoiceModel.release() }.start() } }
 
     var voiceStatus by remember(draftKey) { mutableStateOf(VoiceInputStatus()) }
     var voicePrefix by remember(draftKey) { mutableStateOf("") }
@@ -226,7 +250,7 @@ fun TerminalScreen(
             try {
                 if (voiceStatus.isActive) {
                     voiceController.stop()
-                    if (withTimeoutOrNull(3_000) { while (voiceStatus.isActive) delay(25) } == null) {
+                    if (withTimeoutOrNull(7_000) { while (voiceStatus.isActive) delay(25) } == null) {
                         reportDraft("Voice input is still finishing. Your draft is saved; tap Enter again in a moment.")
                         return@launch
                     }
@@ -336,7 +360,7 @@ fun TerminalScreen(
             },
         )
 
-        val tabs=uiState.terminalTabs()
+        val tabs=uiState.tabs
         if(tabs.isNotEmpty())Row(Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()).padding(horizontal=12.dp)) {
             tabs.forEach {tab->
                 androidx.compose.material3.FilterChip(selected=uiState.selectedPaneId==tab.paneId,
@@ -364,7 +388,7 @@ fun TerminalScreen(
                     Column(Modifier.fillMaxSize().padding(24.dp), verticalArrangement = Arrangement.Center, horizontalAlignment = Alignment.CenterHorizontally) {
                         Text(problem, color = TerminalForeground, style = MaterialTheme.typography.bodyLarge)
                         Spacer(Modifier.size(12.dp))
-                        if (uiState.staleSession == null) Button(onClick = onReconnect) { Text("Reconnect") }
+                        if (!uiState.staleSession) Button(onClick = onReconnect) { Text("Reconnect") }
                     }
                 } else if (stream == null) Box(Modifier.fillMaxSize().background(TerminalBackground),contentAlignment=Alignment.Center) {Text("Connecting terminal…",color=TerminalForeground)}
                 else if (scrolledBack) FilledTonalButton(
