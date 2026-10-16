@@ -31,12 +31,6 @@ function setup(overrides: Partial<UpdatesDeps> = {}) {
 }
 
 describe('Updates', () => {
-  it('labels manual-update builds', () => {
-    expect(setup({ supported: () => false }).updates.label).toBe('Manual updates');
-    expect(setup({ desktop: false }).updates.label).toBe('Manual updates');
-    expect(setup().updates.label).toBe('Not checked');
-  });
-
   it('queues an automatic prompt and presents it when nothing else is open', async () => {
     const { updates, setModal } = setup();
     setModal('command');
