@@ -173,6 +173,7 @@
   import { changelog, mergeChangelog, type ReleaseEntry } from './lib/changelog';
   import { releaseVersion } from './lib/release-version';
   import { focusDialog } from './lib/focus';
+  import { DeviceStore } from './lib/state/device-store.svelte';
   import Agents from './components/modals/Agents.svelte';
   import BrowserRequest from './components/modals/BrowserRequest.svelte';
   import Changelog from './components/modals/Changelog.svelte';
@@ -218,8 +219,20 @@
     inventories = $state<Record<string, Inventory>>({}),
     connections = $state<Record<string, string>>({}),
     logs = $state<Record<string, string>>({}),
-    saveState = $state<Record<string, string>>({}),
     terminalState = $state<Record<string, string>>({});
+  const deviceStore = new DeviceStore({
+    device: () => device,
+    profiles: () => profiles,
+    enabled: () => mounted,
+    connected: (hostId) => connections[hostId] === 'Connected',
+    saveDevice: (value) => call('device_save', { value }),
+    saveProfile: (hostId, profile) =>
+      rpc<Profile>(hostId, 'profile_save', { profile, revision: profile.revision }),
+    ondevicefail: fail,
+    onprofilefail: (e) => {
+      error = String(e);
+    },
+  });
   let modal = $state(''),
     error = $state(''),
     notice = $state(''),
@@ -650,10 +663,6 @@
     if (maximize === target.id) maximize = replacement.id;
     modal = '';
   }
-  let revisionTimers: Record<string, ReturnType<typeof setTimeout>> = {};
-  let saveChains: Record<string, Promise<void>> = {};
-  let changeSeq: Record<string, number> = {};
-  let deviceTimer: ReturnType<typeof setTimeout>;
   let colorPane = $state<Pane | null>(null);
   let colorHost = $state<Host | null>(null);
   let tmuxHost = $state<Host | null>(null);
@@ -724,8 +733,7 @@
     feedbackSent = false;
     feedbackBusy = true;
     try {
-      clearTimeout(deviceTimer);
-      await call('device_save', { value: { ...$state.snapshot(device), recovery } });
+      await deviceStore.saveNow();
       await call('feedback_send', {
         feedback: { ...$state.snapshot(device.feedbackContact), message: feedbackMessage },
       });
@@ -1760,9 +1768,7 @@
   let launchFromCommand = $state(false);
   let launchChooseRepo = $state(false);
   let launchWorkspaceId = '';
-  let recovery: Record<string, Profile> = {};
   let mounted = false;
-  let profileBlocked: Record<string, boolean> = {};
   const workspaces = $derived(Object.values(profiles).flatMap((p) => p.workspaces));
   const workspaceLayouts = $derived(
     Object.fromEntries(
@@ -1990,19 +1996,8 @@
       busy = --pendingTasks > 0;
     }
   }
-  // Debounced; skips the write when nothing in the saved file changed.
-  let lastDeviceSave = '';
   function persistDevice() {
-    if (!mounted) return;
-    clearTimeout(deviceTimer);
-    deviceTimer = setTimeout(() => {
-      const value = { ...$state.snapshot(device), recovery };
-      const text = JSON.stringify(value);
-      if (text === lastDeviceSave) return;
-      void call('device_save', { value }).then(() => {
-        lastDeviceSave = text;
-      }, fail);
-    }, 180);
+    deviceStore.persist();
   }
   function setPasteConfirmation(confirm: boolean) {
     device.terminal = { ...(device.terminal || terminalDefaults), confirmPaste: confirm };
@@ -2010,46 +2005,7 @@
     if (!confirm) notice = 'Multi-line paste no longer asks first. Change this in Settings > Terminal.';
   }
   function saved(hostId: string) {
-    if (hostId === HOSTLESS) {
-      device.localWorkspaces = $state.snapshot(profiles[HOSTLESS]);
-      persistDevice();
-      return;
-    }
-    recovery[hostId] = $state.snapshot(profiles[hostId]);
-    changeSeq[hostId] = (changeSeq[hostId] || 0) + 1;
-    if (saveState[hostId] !== 'Conflict') saveState[hostId] = 'Pending';
-    persistDevice();
-    clearTimeout(revisionTimers[hostId]);
-    revisionTimers[hostId] = setTimeout(() => flush(hostId), 250);
-  }
-  function flush(hostId: string) {
-    saveChains[hostId] = (saveChains[hostId] || Promise.resolve()).then(async () => {
-      if (connections[hostId] !== 'Connected' || profileBlocked[hostId]) {
-        saveState[hostId] = 'Saved on this device';
-        return;
-      }
-      if (saveState[hostId] === 'Conflict') return;
-      const snapshot = $state.snapshot(profiles[hostId]);
-      const seq = changeSeq[hostId];
-      try {
-        const result = await rpc<Profile>(hostId, 'profile_save', {
-          profile: snapshot,
-          revision: snapshot.revision,
-        });
-        profiles[hostId].revision = result.revision;
-        if (changeSeq[hostId] === seq) {
-          delete recovery[hostId];
-          saveState[hostId] = 'Saved';
-        } else {
-          recovery[hostId] = $state.snapshot(profiles[hostId]);
-          saveState[hostId] = 'Pending';
-        }
-        persistDevice();
-      } catch (e) {
-        saveState[hostId] = String(e).includes('CONFLICT') ? 'Conflict' : 'Save failed';
-        error = String(e);
-      }
-    });
+    deviceStore.saved(hostId);
   }
   function updateWorkspace(w: Workspace) {
     const p = profiles[w.hostId];
@@ -2337,21 +2293,22 @@
       let profile: Profile;
       try {
         profile = rebindOwner(await rpc<Profile>(id, 'profile_load'), id);
-        profileBlocked[id] = false;
+        deviceStore.blocked[id] = false;
       } catch (e) {
-        profileBlocked[id] = true;
+        deviceStore.blocked[id] = true;
         profile = profiles[id] || blankProfile();
         error = `Host configuration unavailable: ${e}. Changes will be saved on this device.`;
-        saveState[id] = 'Saved on this device';
+        deviceStore.saveState[id] = 'Saved on this device';
       }
       if (!currentAttempt()) return;
+      const recovery = deviceStore.recovery;
       if (recovery[id]) {
         if (recovery[id].revision === profile.revision) {
           replaceProfile(id, recovery[id]);
           saved(id);
         } else {
           replaceProfile(id, recovery[id]);
-          saveState[id] = 'Conflict';
+          deviceStore.saveState[id] = 'Conflict';
           error =
             'This host has newer workspace changes. Your local recovery copy is preserved. Reload the host profile in settings to use the remote version.';
         }
@@ -2593,8 +2550,7 @@
     action?.();
   }
   async function destroyApp() {
-    clearTimeout(deviceTimer);
-    await call('device_save', { value: { ...$state.snapshot(device), recovery } });
+    await deviceStore.saveNow();
     await call('app_close');
   }
   let closeFailure = $state('');
@@ -2618,8 +2574,7 @@
   });
   async function closeAnyway() {
     closeFailure = '';
-    clearTimeout(deviceTimer);
-    await call('device_save', { value: { ...$state.snapshot(device), recovery } }).catch(() => {});
+    await deviceStore.saveNow().catch(() => {});
     await call('app_close');
   }
   function closePane(p: Pane, confirmed = false) {
@@ -2705,7 +2660,7 @@
     if (viewers.some((v) => v.locked && (owned.has(v.workspaceId) || v.pane.hostId === h.id)))
       throw new Error('Save or discard viewer edits before removing this host.');
     viewers = viewers.filter((v) => !owned.has(v.workspaceId) && v.pane.hostId !== h.id);
-    clearTimeout(revisionTimers[h.id]);
+    deviceStore.cancel(h.id);
     if (
       workspaces.some((w) => w.panes.some((p) => p.id === voiceTarget && p.hostId === h.id)) &&
       voiceStatus !== 'idle'
@@ -2714,17 +2669,13 @@
     for (const p of workspaces.flatMap((w) => w.panes).filter((p) => p.hostId === h.id))
       await call('terminal_close', { id: p.id });
     await disconnectHost(h.id);
-    await saveChains[h.id];
+    await deviceStore.settled(h.id);
     const removedActive = profiles[h.id]?.workspaces.some((w) => w.id === device.activeWorkspace);
     delete profiles[h.id];
-    delete recovery[h.id];
+    deviceStore.forget(h.id);
     delete inventories[h.id];
     delete connections[h.id];
     delete logs[h.id];
-    delete saveState[h.id];
-    delete profileBlocked[h.id];
-    delete changeSeq[h.id];
-    delete saveChains[h.id];
     device.hosts = device.hosts.filter((x) => x.id !== h.id);
     if (device.collapsedHosts) delete device.collapsedHosts[h.id];
     if (removedActive) device.activeWorkspace = workspaces[0]?.id || '';
@@ -3416,8 +3367,7 @@
     updateStatus = 'Downloading and verifying…';
     try {
       await call('update_download', { version: availableUpdate.version });
-      clearTimeout(deviceTimer);
-      await call('device_save', { value: { ...$state.snapshot(device), recovery } });
+      await deviceStore.saveNow();
       if (voiceStatus !== 'idle' || dictation.trim() || heldDictation)
         throw new Error(
           'Finish dictation before restarting to install. The downloaded update is retained.',
@@ -3468,15 +3418,14 @@
     notice = 'Host preferences queued for saving.';
   }
   async function reloadHostProfile() {
+    const recovery = deviceStore.recovery;
     const local = $state.snapshot(profiles[settingsHost] || recovery[settingsHost]);
     if (local) {
       (device.profileBackups ||= {})[settingsHost] = [
         local,
         ...(device.profileBackups?.[settingsHost] || []),
       ].slice(0, 3);
-      await call('device_save', {
-        value: { ...$state.snapshot(device), recovery },
-      });
+      await call('device_save', { value: deviceStore.value() });
     }
     const backup = JSON.stringify(local, null, 2);
     const url = URL.createObjectURL(new Blob([backup], { type: 'application/json' }));
@@ -3489,9 +3438,9 @@
       settingsHost,
       rebindOwner(await rpc<Profile>(settingsHost, 'profile_load'), settingsHost),
     );
-    profileBlocked[settingsHost] = false;
+    deviceStore.blocked[settingsHost] = false;
     delete recovery[settingsHost];
-    saveState[settingsHost] = 'Restored';
+    deviceStore.saveState[settingsHost] = 'Restored';
     persistDevice();
   }
   let systemReducedMotion = $state(false);
@@ -3595,8 +3544,11 @@
             inputMode: data.inputMode || 'toggle',
             terminal: { ...terminalDefaults, ...data.terminal },
           });
-          recovery = data.recovery || {};
-          profiles = { ...recovery, [HOSTLESS]: device.localWorkspaces || blankProfile() };
+          deviceStore.recovery = data.recovery || {};
+          profiles = {
+            ...deviceStore.recovery,
+            [HOSTLESS]: device.localWorkspaces || blankProfile(),
+          };
         }
         const listeners = await Promise.all([
           on<{ done: number; total: number }>(
