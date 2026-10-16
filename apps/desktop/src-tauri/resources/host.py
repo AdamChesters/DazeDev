@@ -865,13 +865,24 @@ def reply_frames(prefix, reply):
     payload=base64.b64encode(json.dumps(reply,separators=(',',':')).encode()).decode()
     total=(len(payload)+47)//48
     return [prefix+'@'+str(i)+'/'+str(total)+':'+payload[i*48:(i+1)*48] for i in range(total)]
+# Read-only methods share the read lane; everything else stays ordered on the
+# single mutation lane. Inline methods run on the input loop itself.
+INLINE_METHODS = frozenset({'ping','browser_prepare','browser_result'})
+READ_METHODS = frozenset({'inventory','capabilities','repositories','repository_worktrees','github_repos',
+    'sessions','session_context','session_agent','profile_load','documents','file_read','image_read',
+    'document_read','terminal_status','process_context','tmux_settings_read','dictionary_read','upload_preflight'})
+# Discovery calls get a short deadline; clones, uploads and launches get the long one.
+SHORT_DEADLINE_METHODS = frozenset({'inventory','capabilities','repositories','github_repos'})
+def lane_for(method):
+    if method in INLINE_METHODS: return 'inline'
+    return 'read' if method in READ_METHODS else 'mutation'
 _reply_lock = threading.Lock()
 def send_reply(prefix, reply):
     with _reply_lock:
         for frame in reply_frames(prefix,reply): print(frame,flush=True)
 def handle_request(prefix, request):
     try:
-        _operation_deadline.end = time.monotonic() + (30 if request['method'] in ('inventory','capabilities','repos','github_repos') else 240)
+        _operation_deadline.end = time.monotonic() + (30 if request['method'] in SHORT_DEADLINE_METHODS else 240)
         reply={'id':request['id'],'result':dispatch(request['method'],request.get('args',{}))}
     except Exception as e: reply={'id':request.get('id','unknown'),'error':str(e)}
     send_reply(prefix,reply)
@@ -890,7 +901,7 @@ def main():
     # Each lane is bounded. Mutations remain ordered; long discovery/clone jobs
     # cannot starve ping, session lists or profile operations.
     slots=threading.BoundedSemaphore(8)
-    with concurrent.futures.ThreadPoolExecutor(max_workers=2) as reads, concurrent.futures.ThreadPoolExecutor(max_workers=1) as mutations:
+    with concurrent.futures.ThreadPoolExecutor(max_workers=4) as reads, concurrent.futures.ThreadPoolExecutor(max_workers=1) as mutations:
         def finish(request):
             try: handle_request(prefix,request)
             finally: slots.release()
@@ -898,10 +909,10 @@ def main():
             request={}
             try:
                 request=json.loads(base64.b64decode(line.strip()))
-                if request['method'] not in ('ping','browser_prepare','browser_result'):
+                lane = lane_for(request['method'])
+                if lane != 'inline':
                     if not slots.acquire(blocking=False): raise RuntimeError('Host task queue is full; wait for current operations.')
-                    lane = reads if request['method'] in ('inventory','capabilities','repos','github_repos','sessions','profile','profile_load','file_read','file_list','tmux_settings','tmux_windows') else mutations
-                    lane.submit(finish,request)
+                    (reads if lane == 'read' else mutations).submit(finish,request)
                 else: handle_request(prefix,request)
             except Exception as e: send_reply(prefix,{'id':request.get('id','unknown'),'error':str(e)})
 if __name__=='__main__':
