@@ -385,10 +385,12 @@
         await terminal.recover();
       } else if (action === 'focus') {
         owner.focused = paneId;
-        (device.localFocus ||= {})[owner.id] = paneId;
-        device.activeWorkspace = owner.id;
-        device.activeHost = owner.hostId;
-        persistDevice();
+        setLocalFocus(owner.id, paneId);
+        if (device.activeWorkspace !== owner.id || device.activeHost !== owner.hostId) {
+          device.activeWorkspace = owner.id;
+          device.activeHost = owner.hostId;
+          persistDevice();
+        }
       } else if (action === 'dock') {
         await call('terminal_window_publish', { paneId, value: { requestId, result: null } });
         await dockTerminal(paneId);
@@ -858,15 +860,23 @@
   let selectedPanes = $state<string[]>([]);
   let draggingPanes = $state<string[]>([]);
   let selectionWorkspace = '';
+  // Saves only when the remembered focus really changes.
+  function setLocalFocus(workspaceId: string, paneId: string) {
+    if (device.localFocus?.[workspaceId] === paneId) return;
+    (device.localFocus ||= {})[workspaceId] = paneId;
+    persistDevice();
+  }
   function selectPane(paneId: string, workspace: Workspace, additive = false) {
     const group = terminalTabs(workspace, paneId);
-    if (group) (device.activeTerminalTabs ||= {})[group.id] = paneId;
+    if (group && device.activeTerminalTabs?.[group.id] !== paneId) {
+      (device.activeTerminalTabs ||= {})[group.id] = paneId;
+      persistDevice();
+    }
     if (selectionWorkspace !== workspace.id) selectedPanes = [];
     selectionWorkspace = workspace.id;
     selectedPanes = selectPanes(selectedPanes, paneId, additive);
     workspace.focused = paneId;
-    (device.localFocus ||= {})[workspace.id] = paneId;
-    persistDevice();
+    setLocalFocus(workspace.id, paneId);
   }
   const updateCanPresent = $derived(canPresentUpdate(modal, voiceStatus, !!draggingPane));
   $effect(() => {
@@ -1720,6 +1730,45 @@
     Object.fromEntries(workspaces.map((w) => [w.id, rectangles(layoutFor(w))])),
   );
   const current = $derived(workspaces.find((w) => w.id === device.activeWorkspace));
+  // Per-pane state goes when its pane goes, so the device file does not grow.
+  const seenContainers = new Set<string>();
+  $effect(() => {
+    const { byWorkspace, byGroup } = paneContainers(workspaces);
+    const live = new Set(workspaces.flatMap((w) => w.panes.map((p) => p.id)));
+    const hostIds = new Set([HOSTLESS, ...device.hosts.map((h) => h.id)]);
+    const complete = device.hosts.every((h) => !!profiles[h.id]);
+    untrack(() => {
+      for (const id of [...byWorkspace.keys(), ...byGroup.keys()]) seenContainers.add(id);
+      const status = pruneKeys(paneStatus, live);
+      if (status !== paneStatus) paneStatus = status;
+      const states = pruneKeys(terminalState, live);
+      if (states !== terminalState) terminalState = states;
+      const progress = pruneKeys(terminalProgress, live);
+      if (progress !== terminalProgress) terminalProgress = progress;
+      alertThrottle.retain(live);
+      let changed = false;
+      const focus = prunePaneChoices(device.localFocus || {}, byWorkspace, seenContainers, complete);
+      if (device.localFocus && focus !== device.localFocus) {
+        device.localFocus = focus;
+        changed = true;
+      }
+      const tabs = prunePaneChoices(device.activeTerminalTabs || {}, byGroup, seenContainers, complete);
+      if (device.activeTerminalTabs && tabs !== device.activeTerminalTabs) {
+        device.activeTerminalTabs = tabs;
+        changed = true;
+      }
+      for (const key of ['clipboardByHost', 'collapsedHosts'] as const) {
+        const record = device[key] as Record<string, unknown> | undefined;
+        if (!record) continue;
+        const pruned = pruneKeys(record, hostIds);
+        if (pruned !== record) {
+          (device as unknown as Record<string, unknown>)[key] = pruned;
+          changed = true;
+        }
+      }
+      if (changed) persistDevice();
+    });
+  });
   let searchOrigin = $state<SearchTarget | null>(null);
   let searchPanel = $state<TerminalSearch>();
   const searchTargets = $derived(
@@ -1772,8 +1821,7 @@
     if (!owner || !controls?.revealMatch?.(hit.id)) return false;
     selectWorkspace(owner);
     owner.focused = hit.paneId;
-    (device.localFocus ||= {})[owner.id] = hit.paneId;
-    persistDevice();
+    setLocalFocus(owner.id, hit.paneId);
     await tick();
     await new Promise<void>((resolve) =>
       requestAnimationFrame(() => requestAnimationFrame(() => resolve())),
@@ -1876,11 +1924,18 @@
       busy = --pendingTasks > 0;
     }
   }
+  // Debounced; skips the write when nothing in the saved file changed.
+  let lastDeviceSave = '';
   function persistDevice() {
     if (!mounted) return;
     clearTimeout(deviceTimer);
     deviceTimer = setTimeout(() => {
-      void call('device_save', { value: { ...$state.snapshot(device), recovery } }).catch(fail);
+      const value = { ...$state.snapshot(device), recovery };
+      const text = JSON.stringify(value);
+      if (text === lastDeviceSave) return;
+      void call('device_save', { value }).then(() => {
+        lastDeviceSave = text;
+      }, fail);
     }, 180);
   }
   function setPasteConfirmation(confirm: boolean) {
@@ -4117,8 +4172,7 @@
                 style:--voice-pop-scale={box.width === 100 && box.height === 100 ? 1 : 1.012}
                 onfocusin={() => {
                   w.focused = id;
-                  (device.localFocus ||= {})[w.id] = id;
-                  persistDevice();
+                  setLocalFocus(w.id, id);
                 }}
               >
                 {#if voiceTarget === p.id && voiceListening}
@@ -4412,11 +4466,8 @@
                       if (host) await reconnectHost(host);
                     }}
                     onfocus={() => {
-                      if (w.focused !== p.id) {
-                        w.focused = p.id;
-                        (device.localFocus ||= {})[w.id] = p.id;
-                        persistDevice();
-                      }
+                      if (w.focused !== p.id) w.focused = p.id;
+                      setLocalFocus(w.id, p.id);
                     }}
                     onshell={() => {
                       p.sessionId = '';
