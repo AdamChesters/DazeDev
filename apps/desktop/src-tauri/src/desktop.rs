@@ -411,6 +411,16 @@ async fn terminal_window_input(
     state: State<'_, AppState>,
 ) -> Result<(), String> {
     pane_window(&window, &pane_id)?;
+    // Tell the workspace window first: it tracks the dictation context and
+    // must see typed input before the dictation it guards can be submitted.
+    window
+        .app_handle()
+        .emit_to(
+            "main",
+            "terminal-window-input",
+            serde_json::json!({"paneId":pane_id,"data":data}),
+        )
+        .map_err(|e| e.to_string())?;
     let t = state.transport.clone();
     tauri::async_runtime::spawn_blocking(move || t.input(&pane_id, &data))
         .await
@@ -443,9 +453,18 @@ async fn terminal_window_resize(
 ) -> Result<(), String> {
     pane_window(&window, &pane_id)?;
     let t = state.transport.clone();
-    tauri::async_runtime::spawn_blocking(move || t.resize(&pane_id, cols, rows))
+    let id = pane_id.clone();
+    tauri::async_runtime::spawn_blocking(move || t.resize(&id, cols, rows))
         .await
-        .map_err(|e| e.to_string())?
+        .map_err(|e| e.to_string())??;
+    // The workspace window keeps a hidden copy of this terminal; keep its
+    // size in step so its buffer wraps like the real one.
+    let _ = window.app_handle().emit_to(
+        "main",
+        "terminal-window-resize",
+        serde_json::json!({"paneId":pane_id,"cols":cols,"rows":rows}),
+    );
+    Ok(())
 }
 #[tauri::command]
 async fn terminal_close(
