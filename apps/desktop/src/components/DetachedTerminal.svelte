@@ -1,7 +1,6 @@
 <script lang="ts">
   import type { SearchNavigation } from '../lib/terminal-search';
   import { restoreLinkHoverOnReentry } from '../lib/link-hover';
-  import { copySelectedTerminalText } from '../lib/terminal-copy';
   import HtmlPreview from './HtmlPreview.svelte';
   import SourceViewer from './SourceViewer.svelte';
   import { previewKind } from '../lib/source-viewer';
@@ -23,15 +22,22 @@
   import { outputChannel } from '../lib/terminal-bytes';
   import { terminalPresentation } from '../lib/pane-status';
   import { deadPaneTarget } from '../lib/terminal-recovery';
-  import { readClipboardContent, uploadClipboardFiles } from '../lib/clipboard-upload';
+  import { uploadClipboardFiles } from '../lib/clipboard-upload';
   import {
     TerminalStream,
+    WindowRequests,
+    forwardShortcuts,
     type TerminalSnapshot,
     type TerminalOutput,
+    type WindowReply,
     type WindowTerminalState,
   } from '../lib/terminal-window';
-  import { VoiceCaptureKeys } from '../lib/voice-capture-keys';
-  import { matches, mouseMatches } from '../lib/shortcut';
+  import { handleLinkPresses, terminalKeyHandler } from '../lib/terminal-input';
+  import {
+    PasteConfirmation,
+    pasteEventHandler,
+    pasteFromClipboard,
+  } from '../lib/terminal-paste.svelte';
   import { tabColors } from '../lib/colors';
   import {
     OptionalAddons,
@@ -40,12 +46,10 @@
     imageCacheMb,
     macPlatform,
     remoteClipboard,
-    selectionMouseDown,
     terminalOptions,
     terminalTheme,
   } from '../lib/terminal-setup';
   import { terminalDefaults } from '../lib/terminals';
-  import { needsPasteConfirmation } from '../lib/paste';
   import { appShortcut, matchesAppShortcut } from '../lib/app-shortcuts';
   import PasteConfirm from './PasteConfirm.svelte';
   import '@xterm/xterm/css/xterm.css';
@@ -134,40 +138,13 @@
   );
   let inputChain = Promise.resolve();
   const stream = new TerminalStream();
-  const captureKeys = new VoiceCaptureKeys();
-  const pending = new Map<
-    string,
-    {
-      resolve: (value: unknown) => void;
-      reject: (reason: Error) => void;
-      timer: ReturnType<typeof setTimeout>;
-    }
-  >();
+  const requests = new WindowRequests(call);
   const colors = $derived(
     viewState &&
       tabColors(viewState.pane.colors, viewState.workspaceColors, viewState.host?.colors),
   );
   function request<T>(action: string, args: Record<string, unknown> = {}): Promise<T> {
-    if (disposed) return Promise.reject(new Error('Terminal window is closed.'));
-    const requestId = crypto.randomUUID();
-    return new Promise<T>((resolve, reject) => {
-      const timer = setTimeout(() => {
-        pending.delete(requestId);
-        reject(
-          new Error(
-            action === 'input' || action === 'paste'
-              ? 'Delivery uncertain. Input was not retried.'
-              : 'The workspace window did not respond.',
-          ),
-        );
-      }, 20000);
-      pending.set(requestId, { resolve: (value) => resolve(value as T), reject, timer });
-      void call('terminal_window_request', { requestId, action, args }).catch((error) => {
-        clearTimeout(timer);
-        pending.delete(requestId);
-        reject(new Error(String(error)));
-      });
-    });
+    return requests.send<T>(action, args);
   }
   function fail(error: unknown) {
     notice = String(error);
@@ -265,31 +242,16 @@
       uploading = false;
     }
   }
-  async function pasteClipboard() {
-    const destination = context;
-    const content = await readClipboardContent(navigator.clipboard);
-    if (!destination || context !== destination)
-      throw new Error('Terminal changed while reading the clipboard. Paste again.');
-    if (content.files.length) await pasteFiles(content.files);
-    else await pasteText(content.text, destination);
-  }
-  let pasteRequest = $state<{ text: string; resolve: (accepted: boolean) => void } | null>(null);
-  function confirmPaste(text: string): Promise<boolean> {
-    if (!needsPasteConfirmation(text, viewState?.settings.confirmPaste))
-      return Promise.resolve(true);
-    pasteRequest?.resolve(false);
-    return new Promise((resolve) => (pasteRequest = { text, resolve }));
-  }
-  function answerPaste(accepted: boolean, dontAsk = false) {
-    const pending = pasteRequest;
-    pasteRequest = null;
-    if (accepted && dontAsk) void request('paste-confirm-off').catch(fail);
-    pending?.resolve(accepted);
-    terminal.focus();
-  }
+  const pasteClipboard = () =>
+    pasteFromClipboard(() => context, { files: pasteFiles, text: pasteText });
+  const confirmation = new PasteConfirmation(
+    () => viewState?.settings.confirmPaste,
+    () => void request('paste-confirm-off').catch(fail),
+    () => terminal.focus(),
+  );
   // Clipboard text: multi-line text asks first, then follows normal paste rules.
   async function pasteText(text: string, destination = context) {
-    if (!(await confirmPaste(text))) return;
+    if (!(await confirmation.confirm(text))) return;
     if (!destination || context !== destination)
       throw new Error('Terminal changed while pasting. Paste again.');
     context = await request<string>('paste', { text, context: destination });
@@ -349,46 +311,19 @@
     terminal.unicode.activeVersion = '11';
     terminal.open(root);
     cleanup.push(restoreLinkHoverOnReentry(terminal));
-    let imagePress: { url: string; x: number; y: number; modified: boolean } | null = null;
-    const selectionEvents = new WeakSet<Event>();
-    const imageDown = (event: MouseEvent) => {
-      if (selectionEvents.has(event) || event.button !== 0 || !hoveredImage) return;
-      const modified = event.ctrlKey || event.metaKey;
-      if (!modified && terminal.modes.mouseTrackingMode === 'none') return;
-      imagePress = { url: hoveredImage, x: event.clientX, y: event.clientY, modified };
-      event.preventDefault();
-      event.stopImmediatePropagation();
-      if (modified) terminal.focus();
-      else {
-        const selection = selectionMouseDown(event, macPlatform());
-        selectionEvents.add(selection);
-        event.target?.dispatchEvent(selection);
-      }
-    };
-    const imageUp = (event: MouseEvent) => {
-      if (!imagePress || event.button !== 0) return;
-      const pressed = imagePress;
-      imagePress = null;
-      if (
-        root.contains(event.target as Node) &&
-        hoveredImage === pressed.url &&
-        (event.ctrlKey || event.metaKey) === pressed.modified &&
-        Math.hypot(event.clientX - pressed.x, event.clientY - pressed.y) < 5
-      ) {
-        event.preventDefault();
-        event.stopImmediatePropagation();
-        followLink(event, pressed.url);
-      }
-    };
-    const cancelImage = () => (imagePress = null);
-    root.addEventListener('mousedown', imageDown, true);
-    window.addEventListener('mouseup', imageUp, true);
-    window.addEventListener('blur', cancelImage);
-    cleanup.push(() => {
-      root.removeEventListener('mousedown', imageDown, true);
-      window.removeEventListener('mouseup', imageUp, true);
-      window.removeEventListener('blur', cancelImage);
-    });
+    cleanup.push(
+      handleLinkPresses({
+        root,
+        mac: macPlatform(),
+        modified: (event) => event.ctrlKey || event.metaKey,
+        intercept: (modified) =>
+          !!hoveredImage && (modified || terminal.modes.mouseTrackingMode !== 'none'),
+        record: () => hoveredImage,
+        accept: (url) => hoveredImage === url,
+        open: followLink,
+        focus: () => terminal.focus(),
+      }),
+    );
     const data = terminal.onData((value) => {
       if (!viewState?.ready) {
         notice = 'Terminal is disconnected. Reconnect when ready.';
@@ -409,127 +344,44 @@
     const binary = terminal.onBinary((value) => {
       if (viewState?.ready) void request('binary', { data: btoa(value) }).catch(fail);
     });
-    terminal.attachCustomKeyEventHandler((event) => {
-      if (
-        copySelectedTerminalText(
-          event,
-          terminal.getSelection(),
-          (text) =>
-            text.length <= 1048576
-              ? navigator.clipboard.writeText(text)
-              : Promise.reject(new Error('Selection is too large for the clipboard.')),
-          (message) => (notice = message),
-        )
-      )
-        return false;
-      if (event.type !== 'keydown' || !(event.ctrlKey || event.metaKey)) return true;
-      if (!event.altKey && event.code === 'KeyV') {
-        event.preventDefault();
-        void pasteClipboard().catch(fail);
-        return false;
-      }
-      if (
-        matchesAppShortcut(
-          event,
-          viewState?.searchShortcut || appShortcut(undefined, 'search'),
-          macPlatform(),
-        )
-      ) {
-        event.preventDefault();
-        search();
-        return false;
-      }
-      return true;
-    });
-    const paste = (event: ClipboardEvent) => {
-      const files = Array.from(event.clipboardData?.files || []);
-      const text = event.clipboardData?.getData('text/plain') || '';
-      if (!files.length && !needsPasteConfirmation(text, viewState?.settings.confirmPaste)) return;
-      event.preventDefault();
-      event.stopImmediatePropagation();
-      if (files.length) void pasteFiles(files).catch(fail);
-      else void pasteText(text).catch(fail);
-    };
-    const forwardKey = (event: KeyboardEvent) => {
-      if (!viewState) return;
-      const control =
-        event.type === 'keyup'
-          ? captureKeys.up(event.key)
-          : captureKeys.down(event, viewState.voiceStatus, document.hasFocus()).consume;
-      if (
-        !control &&
-        !matches(event, viewState.inputShortcut) &&
-        !matches(event, viewState.commandShortcut)
-      )
-        return;
-      event.preventDefault();
-      event.stopImmediatePropagation();
-      void request('key', {
-        type: event.type,
-        key: event.key,
-        code: event.code,
-        ctrlKey: event.ctrlKey,
-        altKey: event.altKey,
-        shiftKey: event.shiftKey,
-        metaKey: event.metaKey,
-        repeat: event.repeat,
-      }).catch(fail);
-    };
-    const forwardPointer = (event: PointerEvent) => {
-      if (
-        !viewState ||
-        ![viewState.inputShortcut, viewState.commandShortcut].some((binding) =>
-          mouseMatches(event, binding),
-        )
-      )
-        return;
-      event.preventDefault();
-      event.stopImmediatePropagation();
-      void request('pointer', { type: event.type, button: event.button }).catch(fail);
-    };
-    const mouse = (event: MouseEvent) => {
-      if (
-        viewState &&
-        [viewState.inputShortcut, viewState.commandShortcut].some((binding) =>
-          mouseMatches(event, binding),
-        )
-      )
-        event.preventDefault();
-    };
-    window.addEventListener('keydown', forwardKey, true);
-    window.addEventListener('keyup', forwardKey, true);
-    window.addEventListener('auxclick', mouse, true);
-    window.addEventListener('pointerdown', forwardPointer, true);
-    window.addEventListener('pointerup', forwardPointer, true);
-    cleanup.push(() => {
-      window.removeEventListener('keydown', forwardKey, true);
-      window.removeEventListener('keyup', forwardKey, true);
-      window.removeEventListener('auxclick', mouse, true);
-      window.removeEventListener('pointerdown', forwardPointer, true);
-      window.removeEventListener('pointerup', forwardPointer, true);
-      clearTimeout(gapTimer);
-    });
+    terminal.attachCustomKeyEventHandler(
+      terminalKeyHandler({
+        selection: () => terminal.getSelection(),
+        copy: (text) =>
+          text.length <= 1048576
+            ? navigator.clipboard.writeText(text)
+            : Promise.reject(new Error('Selection is too large for the clipboard.')),
+        report: (message) => (notice = message),
+        paste: () => void pasteClipboard().catch(fail),
+        shortcut: (event) => {
+          const shortcut = viewState?.searchShortcut || appShortcut(undefined, 'search');
+          if (!matchesAppShortcut(event, shortcut, macPlatform())) return false;
+          search();
+          return true;
+        },
+      }),
+    );
+    const paste = pasteEventHandler(
+      () => viewState?.settings.confirmPaste,
+      { files: pasteFiles, text: (text) => pasteText(text) },
+      fail,
+    );
+    cleanup.push(forwardShortcuts(() => viewState, request, fail));
+    cleanup.push(() => clearTimeout(gapTimer));
     root.addEventListener('paste', paste, true);
     const observer = new ResizeObserver(fitted);
     observer.observe(root);
     void (async () => {
-      const stop = await on<{
-        kind?: string;
-        requestId?: string;
-        result?: unknown;
-        error?: string;
-        navigation?: SearchNavigation | null;
-        selection?: { start: { x: number; y: number }; end: { x: number; y: number } };
-        state?: WindowTerminalState;
-      }>('terminal-window-message', (message) => {
-        if (message.requestId) {
-          const job = pending.get(message.requestId);
-          if (!job) return;
-          clearTimeout(job.timer);
-          pending.delete(message.requestId);
-          if (message.error) job.reject(new Error(message.error));
-          else job.resolve(message.result);
-        } else if (message.kind === 'search-navigation') {
+      const stop = await on<
+        Partial<WindowReply> & {
+          kind?: string;
+          navigation?: SearchNavigation | null;
+          selection?: { start: { x: number; y: number }; end: { x: number; y: number } };
+          state?: WindowTerminalState;
+        }
+      >('terminal-window-message', (message) => {
+        if (message.requestId) requests.answer(message as WindowReply);
+        else if (message.kind === 'search-navigation') {
           const wasSearching = !!searchNavigation;
           searchNavigation = message.navigation || null;
           if (searchNavigation) requestAnimationFrame(() => navigationInput?.focus());
@@ -599,13 +451,9 @@
       observer.disconnect();
       cancelAnimationFrame(resizeFrame);
       resizer.dispose();
-      pasteRequest?.resolve(false);
+      confirmation.cancel();
       root.removeEventListener('paste', paste, true);
-      for (const job of pending.values()) {
-        clearTimeout(job.timer);
-        job.reject(new Error('Terminal window was closed.'));
-      }
-      pending.clear();
+      requests.close();
       cleanup.forEach((stop) => stop());
       data.dispose();
       binary.dispose();
@@ -731,10 +579,10 @@
         menu = true;
       }}
     ></div>
-    {#if pasteRequest}<PasteConfirm
-        text={pasteRequest.text}
-        onpaste={(dontAsk) => answerPaste(true, dontAsk)}
-        oncancel={() => answerPaste(false)}
+    {#if confirmation.request}<PasteConfirm
+        text={confirmation.request.text}
+        onpaste={(dontAsk) => confirmation.answer(true, dontAsk)}
+        oncancel={() => confirmation.answer(false)}
       />{/if}
   </div>
 </div>
