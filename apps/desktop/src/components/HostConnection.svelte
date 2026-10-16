@@ -1,6 +1,6 @@
 <script lang="ts">
   import type { Host } from '../lib/types';
-  import { authenticationState, verificationUrl } from '../lib/connection';
+  import { authenticationState, credentialLabel, verificationUrl } from '../lib/connection';
 
   let {
     host,
@@ -23,13 +23,7 @@
   let sending = $state(false);
   let error = $state('');
   const authentication = $derived(authenticationState(output, closed));
-  const label = $derived(
-    /passphrase/i.test(output)
-      ? 'Key passphrase'
-      : /code|otp/i.test(output)
-        ? 'Verification code'
-        : 'Password',
-  );
+  const label = $derived(credentialLabel(output));
   async function respond(value: string) {
     if (sending) return;
     sending = true;
