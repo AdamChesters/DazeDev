@@ -1,3 +1,4 @@
+import { checked, checkModels } from '../ipc';
 import { recommendVoice, type VoiceHardware } from '../hardware';
 import type { Device, ModelInfo } from '../types';
 import { listMicrophones, requiredVoiceModels, voiceStackReady } from '../voice-setup';
@@ -44,7 +45,7 @@ export class VoiceModels {
   }
 
   loadModels = async () => {
-    this.models = (await this.#deps.call('model_list')) as ModelInfo[];
+    this.models = checked('model_list', checkModels, await this.#deps.call('model_list'));
     this.modelsLoaded = true;
     await this.configureCache().catch((e) => {
       this.#deps.notice(`Voice preload failed; recording can retry: ${e}`);

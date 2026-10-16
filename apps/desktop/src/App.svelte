@@ -85,7 +85,7 @@
   import { terminalTabs } from './lib/terminal-tabs';
   import { call, on, rpc, desktop } from './lib/bridge';
   import { pollUpdates, canPresentUpdate } from './lib/update-checks';
-  import { Updates, type UpdateInfo } from './lib/state/updates.svelte';
+  import { Updates } from './lib/state/updates.svelte';
   import { version as appVersion } from '../package.json';
   import { VoiceCaptureKeys } from './lib/voice-capture-keys';
   import { voiceStackReady } from './lib/voice-setup';
@@ -95,7 +95,8 @@
   import type { App } from './lib/state/app';
   import { Shell, hostDefaults } from './lib/state/shell.svelte';
   import { Panes } from './lib/state/panes.svelte';
-  import { Profiles, type DeviceFile } from './lib/state/profiles.svelte';
+  import { Profiles } from './lib/state/profiles.svelte';
+  import { checkForUpdate, listRepositories, listSessions, loadDevice } from './lib/ipc';
   import { Sessions as Launcher } from './lib/state/sessions.svelte';
   import { Dictation } from './lib/state/dictation.svelte';
   import { Commands } from './lib/state/commands.svelte';
@@ -362,7 +363,7 @@
     const host = repoHost;
     repoChoices = [];
     repoWarnings = [];
-    const result = await rpc<{ repos: Repo[]; warnings: string[] }>(host, 'repositories');
+    const result = await listRepositories(host);
     if (request !== repoRequest || host !== repoHost || ui.modal !== 'pane-repo') return;
     repoChoices = result.repos;
     repoWarnings = [...new Set(result.warnings)];
@@ -440,7 +441,7 @@
     },
     canPresent: () => updateCanPresent,
     voiceBusy: () => dictation.status !== 'idle' || !!dictation.text.trim() || !!dictation.held,
-    check: () => call<UpdateInfo | null>('update_check'),
+    check: checkForUpdate,
     download: (version) => call('update_download', { version }),
     install: () => call('update_install'),
     saveDevice: () => deviceStore.saveNow(),
@@ -716,7 +717,7 @@
       const native: Pane[] = [];
       for (const host of ui.device.hosts.filter((h) => h.kind === 'powershell')) {
         if (connections[host.id] !== 'Connected') await net.connect(host);
-        const running = await rpc<(Session & { running: boolean })[]>(host.id, 'sessions');
+        const running = await listSessions<Session & { running: boolean }>(host.id);
         for (const session of running.filter((s) => s.running))
           native.push({ hostId: host.id, sessionId: session.id } as Pane);
       }
@@ -800,7 +801,7 @@
     void (async () => {
       try {
         const data = desktop
-          ? await call<DeviceFile>('device_load').catch((e) => {
+          ? await loadDevice().catch((e) => {
               fail(e);
               return null;
             })

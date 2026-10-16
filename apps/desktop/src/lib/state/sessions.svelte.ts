@@ -2,6 +2,7 @@ import { call, rpc } from '../bridge';
 import { balanced, ids, split, swap, tile } from '../layout';
 import { terminals } from '../terminals';
 import { uid, type Pane, type Session, type Workspace } from '../types';
+import { listSessions } from '../ipc';
 import type { App } from './app';
 import { blankForm } from './shell.svelte';
 
@@ -234,7 +235,7 @@ export class Sessions {
 
   refreshSessions = async (hostId: string) => {
     const ui = this.#app.ui;
-    const result = await rpc<Session[]>(hostId, 'sessions');
+    const result = await listSessions(hostId);
     if (ui.inventories[hostId]) ui.inventories[hostId].sessions = result;
     ui.sessions = result;
   };

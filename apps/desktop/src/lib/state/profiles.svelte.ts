@@ -1,25 +1,14 @@
-import { call, rpc } from '../bridge';
+import { call } from '../bridge';
 import { migrateClipboardPolicy } from '../device-state';
 import { refreshHostIdentity } from '../host-identity';
 import { rebindOwner } from '../layout';
 import { MixedHostRecovery, type HostRecovery } from '../mixed-host-recovery';
 import { defaultPrompt, renderPrompt, type PromptValues } from '../prompt';
 import { terminalDefaults, terminals } from '../terminals';
-import {
-  blankProfile,
-  defaults,
-  uid,
-  type Device,
-  type Host,
-  type Inventory,
-  type Pane,
-  type Profile,
-  type Session,
-} from '../types';
+import { blankProfile, defaults, uid, type Host, type Pane, type Profile } from '../types';
 import { HOSTLESS } from '../workspace-groups';
+import { listSessions, loadInventory, loadProfile, type DeviceFile } from '../ipc';
 import type { App } from './app';
-
-export type DeviceFile = Device & { recoveryNotice?: string; recovery?: Record<string, Profile> };
 
 // Host profiles: loading them when a host joins, recovery copies and
 // conflicts, inventories, connecting and removing hosts, and host preferences.
@@ -146,7 +135,7 @@ export class Profiles {
   refresh = async (id = this.#app.ui.device.activeHost) => {
     const { ui, net } = this.#app;
     const attempt = net.attempts.get(id);
-    const result = await rpc<Inventory>(id, 'inventory');
+    const result = await loadInventory(id);
     if (attempt !== net.attempts.get(id) || !net.reconnect.has(id)) return;
     ui.inventories[id] = result;
     // Repository scan notes stay in the picker, not the global title bar.
@@ -210,7 +199,7 @@ export class Profiles {
     try {
       let profile: Profile;
       try {
-        profile = rebindOwner(await rpc<Profile>(id, 'profile_load'), id);
+        profile = rebindOwner(await loadProfile(id), id);
         deviceStore.blocked[id] = false;
       } catch (e) {
         deviceStore.blocked[id] = true;
@@ -292,7 +281,7 @@ export class Profiles {
     setTimeout(() => URL.revokeObjectURL(url), 1000);
     this.replaceProfile(
       this.settingsHost,
-      rebindOwner(await rpc<Profile>(this.settingsHost, 'profile_load'), this.settingsHost),
+      rebindOwner(await loadProfile(this.settingsHost), this.settingsHost),
     );
     deviceStore.restored(this.settingsHost);
   };
@@ -302,7 +291,7 @@ export class Profiles {
     const device = ui.device;
     if (!confirmed && h.kind === 'powershell') {
       if (net.connections[h.id] !== 'Connected') await net.connect(h);
-      const sessions = await rpc<Session[]>(h.id, 'sessions');
+      const sessions = await listSessions(h.id);
       if (
         panes.offerNativeClose(
           sessions.map((s) => ({ hostId: h.id, sessionId: s.id }) as Pane),
