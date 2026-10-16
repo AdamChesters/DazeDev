@@ -22,7 +22,6 @@
   let dictionarySelection = $state<string | null>(null);
 
   import PaneActions from './components/PaneActions.svelte';
-  import RepoPicker from './components/RepoPicker.svelte';
   import { needsChangelog } from './lib/repositories';
   import FilesDialog from './components/FilesDialog.svelte';
   import ViewerWindow from './components/ViewerWindow.svelte';
@@ -46,7 +45,6 @@
     type AppAction,
   } from './lib/app-shortcuts';
   import { macPlatform } from './lib/terminal-setup';
-  import { sessionNameError } from './lib/session-name';
   import { recommendVoice, type VoiceHardware } from './lib/hardware';
   import { fade } from 'svelte/transition';
   import HighlightEffect from './components/HighlightEffect.svelte';
@@ -64,13 +62,11 @@
     Maximize2,
     Minimize2,
     X,
-    RefreshCw,
     Command,
     ArrowUpRight,
     FolderGit2,
     Search,
     Download,
-    Trash2,
     PanelLeftClose,
     PanelLeftOpen,
     Check,
@@ -158,7 +154,7 @@
     tabSelections,
   } from './lib/terminal-tabs';
   import { call, on, rpc, desktop } from './lib/bridge';
-  import { parseCommand, commandCatalogue, type Action } from './lib/commands';
+  import { parseCommand, type Action } from './lib/commands';
   import { reviewCommand, consumeReview, type CommandReview } from './lib/command-review';
   import {
     connectionDeadline,
@@ -179,6 +175,21 @@
   import { changelog, mergeChangelog, releaseHeading, type ReleaseEntry } from './lib/changelog';
   import { releaseVersion } from './lib/release-version';
   import { focusDialog } from './lib/focus';
+  import Agents from './components/modals/Agents.svelte';
+  import CloseNative from './components/modals/CloseNative.svelte';
+  import CloseTerminal from './components/modals/CloseTerminal.svelte';
+  import CommandDialog from './components/modals/CommandDialog.svelte';
+  import DestroySession from './components/modals/DestroySession.svelte';
+  import Launch from './components/modals/Launch.svelte';
+  import NewSession from './components/modals/NewSession.svelte';
+  import PaneHost from './components/modals/PaneHost.svelte';
+  import PaneRepo from './components/modals/PaneRepo.svelte';
+  import RenameSession from './components/modals/RenameSession.svelte';
+  import RepoCollision from './components/modals/RepoCollision.svelte';
+  import Repos from './components/modals/Repos.svelte';
+  import Sessions from './components/modals/Sessions.svelte';
+  import TerminalHostConnection from './components/modals/TerminalHostConnection.svelte';
+  import Worktree from './components/modals/Worktree.svelte';
   import AppearanceSection from './components/modals/settings/AppearanceSection.svelte';
   import ConnectionsSection from './components/modals/settings/ConnectionsSection.svelte';
   import HostPreferencesSection from './components/modals/settings/HostPreferencesSection.svelte';
@@ -2561,6 +2572,16 @@
     modal = '';
     await done?.();
   }
+  function cancelNativeClose() {
+    nativeCloseDone = null;
+    modal = '';
+  }
+  function confirmPendingClose() {
+    const action = pendingClose;
+    pendingClose = null;
+    modal = '';
+    action?.();
+  }
   async function destroyApp() {
     clearTimeout(deviceTimer);
     await call('device_save', { value: { ...$state.snapshot(device), recovery } });
@@ -2785,6 +2806,10 @@
       model: form.model,
       effort: form.effort,
     });
+  }
+  function useSharedWorkingCopy() {
+    acknowledgedRepo = form.repo;
+    void task(createSession);
   }
   async function attach(s: Session, options: Partial<Pane> = {}) {
     const target = sessionPane;
@@ -3282,6 +3307,38 @@
     worktreeRequest = null;
     await refresh();
     modal = 'repos';
+  }
+  async function createWorktree() {
+    if (!activePane?.repo) throw new Error('Select a repository terminal first.');
+    worktreeRequest = {
+      hostId: activePane.hostId,
+      args: {
+        path: activePane.repo,
+        branch,
+        destination,
+        identity: activePane.identity,
+      },
+    };
+    await sendWorktree();
+  }
+  async function loadGithubRepos() {
+    githubRepos = (
+      await rpc<{ full_name: string; description: string }[][]>(
+        device.activeHost,
+        'github_repos',
+        { identity: form.identity },
+      )
+    ).flat();
+  }
+  async function cloneRepo(repo: string) {
+    const root = profiles[device.activeHost].preferences.roots[0];
+    if (!root) throw new Error('Set a repository root in host settings.');
+    await rpc(device.activeHost, 'clone', {
+      repo,
+      root,
+      identity: form.identity,
+    });
+    await refresh();
   }
   function openUpdates() {
     automaticUpdatePending = false;
@@ -4936,88 +4993,38 @@
           onbusy={(value) => (filesLocked = value)}
         />
       {:else if modal === 'pane-host' && switchTarget}
-        <p>
-          This pane stays in its workspace. Its current tmux session stays on the original host; a
-          plain shell will close.
-        </p>
-        <label
-          >Connect this pane to<select bind:value={switchHost} disabled={busy}>
-            {#each device.hosts as h}<option
-                value={h.id}
-                disabled={connections[h.id] !== 'Connected'}
-                >{h.name}{connections[h.id] !== 'Connected' ? ' (not connected)' : ''}</option
-              >{/each}
-          </select></label
-        >
-        <p class="hint">
-          The new connection starts with a plain shell. Use Tmux to join or create a session on that
-          host.
-        </p>
-        <button
-          class="primary"
-          disabled={busy || voiceStatus !== 'idle'}
-          onclick={() => void task(switchPaneHost)}>Change connection</button
-        >
-      {:else if modal === 'pane-repo' && repoTarget}
-        <label
-          >Repository host<select
-            bind:value={repoHost}
-            disabled={busy}
-            onchange={() => {
-              repoPath = '';
-              void task(refreshRepoChoices);
-            }}
-          >
-            {#each device.hosts as h}<option
-                value={h.id}
-                disabled={connections[h.id] !== 'Connected'}>{h.name}</option
-              >{/each}
-          </select></label
-        >
-        <p class="hint">
-          Paste the configured orientation prompt into this existing terminal. Choose a matching
-          host if you have manually opened a nested SSH connection.
-        </p>
-        <RepoPicker
-          repos={repoChoices}
-          hostId={repoHost}
-          bind:value={repoPath}
-          warnings={repoWarnings}
-          disabled={busy}
+        <PaneHost
+          {busy}
+          {connections}
+          {device}
+          bind:switchHost
+          {switchPaneHost}
+          {task}
+          {voiceStatus}
         />
-        {#if repoPath}<label
-            >Prompt preview<textarea
-              readonly
-              rows="7"
-              value={promptFor({ ...repoTarget, hostId: repoHost, repo: repoPath })}
-            ></textarea></label
-          >{/if}
-        <div class="form-row">
-          <button disabled={busy} onclick={() => void task(refreshRepoChoices)}
-            >Refresh repositories</button
-          >
-          <button
-            class="primary"
-            disabled={busy || !repoPath}
-            onclick={() => void task(pasteRepoPrompt)}>Paste for review</button
-          >
-        </div>
+      {:else if modal === 'pane-repo' && repoTarget}
+        <PaneRepo
+          {busy}
+          {connections}
+          {device}
+          {pasteRepoPrompt}
+          {promptFor}
+          {refreshRepoChoices}
+          {repoChoices}
+          bind:repoHost
+          bind:repoPath
+          {repoTarget}
+          {repoWarnings}
+          {task}
+        />
       {:else if modal === 'terminal-host-connection' && connectionTarget}
-        <p>{connectionTarget.name}: {connections[connectionTarget.id] || 'Disconnected'}</p>
-        <p>
-          This action applies to every terminal connected to this host. Managed PowerShell and tmux
-          sessions keep running. Disconnecting ends plain shells; their visible output is retained.
-        </p>
-        <div class="form-row">
-          <button
-            disabled={connections[connectionTarget.id] === 'Connecting'}
-            onclick={() => void task(() => connectHostTerminals(connectionTarget!))}
-            >Connect host and terminals</button
-          >
-          <button onclick={() => void task(() => disconnectHostTerminals(connectionTarget!.id))}
-            >Disconnect host and terminals</button
-          >
-        </div>
+        <TerminalHostConnection
+          {connectHostTerminals}
+          {connectionTarget}
+          {connections}
+          {disconnectHostTerminals}
+          {task}
+        />
       {:else if modal === 'support'}
         <SupportDialog
           version={releaseVersion(clientInfo.version)}
@@ -5054,67 +5061,18 @@
           onclose={() => (modal = '')}
         />
       {:else if modal === 'repo-collision'}
-        <p>
-          Another agent is using this working copy. Concurrent edits can conflict. Separate
-          worktrees still share external ports and databases.
-        </p>
-        <div class="form-row">
-          <button onclick={() => (modal = 'new-session')}>Choose another working copy</button
-          ><button
-            onclick={() => {
-              acknowledgedRepo = form.repo;
-              void task(createSession);
-            }}>Use shared working copy</button
-          >
-        </div>
+        <RepoCollision bind:modal {useSharedWorkingCopy} />
       {:else if modal === 'close-native'}
-        <p>
-          These PowerShell sessions may have running work. Choose what happens when this view
-          closes.
-        </p>
-        <p class="hint">
-          Background sessions can be reattached from Sessions. Continuing in a PowerShell window
-          keeps the same process and waits for the window to attach.
-        </p>
-        <div class="native-close-actions">
-          <button disabled={busy} onclick={() => void task(() => finishNativeClose('background'))}
-            >Keep in background</button
-          >
-          <button disabled={busy} onclick={() => void task(() => finishNativeClose('external'))}
-            >Continue in PowerShell window</button
-          >
-          <button
-            class="danger"
-            disabled={busy}
-            onclick={() => void task(() => finishNativeClose('end'))}>End sessions</button
-          >
-          {#if closingApp}<button disabled={busy} onclick={() => void task(closeAnyway)}
-              >Close anyway</button
-            >{/if}
-          <button
-            disabled={busy}
-            onclick={() => {
-              nativeCloseDone = null;
-              modal = '';
-            }}>Cancel</button
-          >
-        </div>
+        <CloseNative
+          {busy}
+          {closeAnyway}
+          {closingApp}
+          {finishNativeClose}
+          {cancelNativeClose}
+          {task}
+        />
       {:else if modal === 'close-terminal'}
-        <p>
-          Closing a plain terminal stops its shell and may stop running work. Attached tmux sessions
-          keep running.
-        </p>
-        <div class="form-row">
-          <button onclick={() => (modal = '')}>Cancel</button><button
-            class="danger"
-            onclick={() => {
-              const action = pendingClose;
-              pendingClose = null;
-              modal = '';
-              action?.();
-            }}>Close terminal</button
-          >
-        </div>
+        <CloseTerminal bind:modal {confirmPendingClose} />
       {:else if modal === 'listen-intro'}
         <h2>Speak into your terminal</h2>
         <p>
@@ -5493,272 +5451,51 @@
             </p>{/if}
           <button class="primary" disabled={busy}>Save & connect <ArrowUpRight size={15} /></button>
         </form>
-      {:else if modal === 'launch'}<form
-          onsubmit={(e) => {
-            e.preventDefault();
-            void task(launch);
-          }}
-        >
-          <div class="form-row">
-            <label
-              >Workspace name<input
-                required={!launchAxis}
-                bind:value={form.name}
-                placeholder="Core · planning"
-              /></label
-            ><label>Terminals<input type="number" min="1" step="1" bind:value={form.count} /></label
-            >
-          </div>
-          <label
-            >Host<select
-              bind:value={form.hostId}
-              onchange={() => {
-                form.repo = '';
-                form.identity = '';
-                form.model = '';
-                form.effort = '';
-              }}
-              ><option value="">Choose a connected host</option>{#each device.hosts as h}<option
-                  value={h.id}>{h.name} · {connections[h.id] || 'disconnected'}</option
-                >{/each}</select
-            ></label
-          >
-          {#if launchFromCommand}
-            <p class="hint">
-              {launchAxis ? 'Add to the current workspace' : 'Create a new workspace'} · {form.agent ===
-              'shell'
-                ? form.repo
-                  ? 'New tmux shells'
-                  : 'Plain shells'
-                : `New ${form.agent} sessions`}. Review these options before starting.
-            </p>
-            <label
-              >Agent<select bind:value={form.agent}
-                ><option value="shell">Plain shell</option
-                >{#each ['codex', 'claude', 'gemini', 'opencode'] as agent}<option value={agent}
-                    >{agent}</option
-                  >{/each}</select
-              ></label
-            >
-            {#if form.agent !== 'shell'}<p class="hint">
-                The agent must already be installed on the selected host. Each terminal starts a
-                separate session.
-              </p>{/if}
-            <label class="check"
-              ><input type="checkbox" bind:checked={launchChooseRepo} /> Choose repository before starting</label
-            >
-            {#if launchChooseRepo}
-              <RepoPicker
-                repos={inventories[form.hostId]?.repos || []}
-                hostId={form.hostId}
-                bind:value={form.repo}
-                warnings={inventories[form.hostId]?.warnings || []}
-                disabled={busy}
-              />
-            {:else if form.repo}<p class="hint">Repository: {form.repo}</p>{/if}
-            {#if form.agent !== 'shell' && form.repo}<label class="check"
-                ><input type="checkbox" bind:checked={form.brief} /> Read repository instructions and
-                give a concise orientation</label
-              >{/if}
-          {:else}
-            <p class="hint">
-              Open plain shells in this host’s home directory. Use each terminal’s tmux button to
-              join or create a session.
-            </p>
-          {/if}
-          <button class="primary" disabled={busy || !form.hostId}
-            >{busy
-              ? 'Starting…'
-              : `Open ${form.count} ${form.count === 1 ? 'terminal' : 'terminals'}`}
-            <ArrowUpRight size={16} /></button
-          >
-        </form>
+      {:else if modal === 'launch'}
+        <Launch
+          {busy}
+          {connections}
+          {device}
+          bind:form
+          {inventories}
+          {launch}
+          {launchAxis}
+          bind:launchChooseRepo
+          {launchFromCommand}
+          {task}
+        />
       {:else if modal === 'sessions'}
-        <div class="list-toolbar">
-          <p>
-            {device.hosts.find((h) => h.id === sessionHost)?.name}{sessionPane
-              ? ' · ' + sessionPane.name
-              : ''}
-          </p>
-          <button
-            aria-label="Refresh sessions"
-            disabled={busy}
-            onclick={() =>
-              void task(async () => {
-                await refreshSessions(sessionHost);
-              })}><RefreshCw size={16} /></button
-          >
-        </div>
-        <button class="primary" disabled={busy} onclick={() => void task(startSession)}
-          ><Plus size={16} />
-          {device.hosts.find((h) => h.id === sessionHost)?.kind === 'powershell'
-            ? 'Create new PowerShell session'
-            : 'Create new tmux session'}</button
-        >
-        <p class="hint">
-          Joining attaches only. It never restarts the agent or sends an orientation prompt.
-          Switching replaces this terminal view; existing sessions keep running. Attached views
-          share input and terminal size. Native PowerShell work stops only when you end the session
-          or shut down Windows.
-        </p>
-        {#each sessions as s}<div class="item-row">
-            <TerminalIcon size={18} />
-            <div>
-              <strong>{s.name}</strong><small>{s.windows} windows · {s.attached} attached</small>
-            </div>
-            <button disabled={busy} onclick={() => void task(() => attach(s))}>Join</button>
-            <button
-              class="icon danger"
-              disabled={busy}
-              aria-label={`Delete ${s.name}`}
-              onclick={() => {
-                destroyTarget = { ...s, hostId: sessionHost };
-                modal = 'destroy';
-              }}><Trash2 size={15} /></button
-            >
-          </div>{:else}<p class="hint">
-            No sessions on this host. Create a named session above.
-          </p>{/each}
+        <Sessions
+          {attach}
+          {busy}
+          bind:destroyTarget
+          {device}
+          bind:modal
+          {refreshSessions}
+          {sessionHost}
+          {sessionPane}
+          {sessions}
+          {startSession}
+          {task}
+        />
       {:else if modal === 'new-session'}
-        <p class="hint">
-          Step {sessionStep + 1} of 3 · {device.hosts.find((h) => h.id === sessionHost)?.name}
-        </p>
-        <form
-          onsubmit={(e) => {
-            e.preventDefault();
-            nameError = sessionNameError(form.name);
-            if (nameError) {
-              sessionStep = 0;
-              return;
-            }
-            if (sessionStep < 2) sessionStep += 1;
-            else void task(createSession);
-          }}
-        >
-          {#if sessionStep === 0}
-            <label
-              >Session name<input
-                required
-                aria-invalid={!!nameError}
-                aria-describedby="session-name-error"
-                oninput={() => {
-                  nameError = '';
-                }}
-                bind:value={form.name}
-                placeholder="planning"
-              /></label
-            >
-            {#if nameError}<p id="session-name-error" class="inline-error" role="alert">
-                {nameError}
-              </p>{:else}<p id="session-name-error" class="hint">
-                Use letters, numbers, underscores or hyphens.
-              </p>{/if}
-          {:else if sessionStep === 1}
-            <label
-              >Agent<select
-                bind:value={form.agent}
-                onchange={() => {
-                  form.model = '';
-                  form.effort = '';
-                }}
-                ><option value="shell">None · plain shell</option
-                >{#each inv?.agents || [] as a}<option value={a.id}
-                    >{a.id}{a.path ? '' : ' · install and start'}</option
-                  >{/each}</select
-              ></label
-            >
-            {#if form.agent !== 'shell'}
-              <label
-                >Model<input
-                  bind:value={form.model}
-                  disabled={!selectedAgent?.modelFlag}
-                  placeholder="Agent default"
-                  list="session-models"
-                /></label
-              >
-              <datalist id="session-models"
-                >{#each selectedAgent?.models || [] as m}<option value={m.id}>{m.name}</option
-                  >{/each}</datalist
-              >
-              <label
-                >Effort<select bind:value={form.effort} disabled={!selectedAgent?.effortFlag}
-                  ><option value="">Agent default</option
-                  >{#each selectedAgent?.models.find((m) => m.id === form.model)?.efforts || ['low', 'medium', 'high'] as effort}<option
-                      value={effort}>{effort}</option
-                    >{/each}</select
-                ></label
-              >
-            {/if}
-          {:else}
-            <button type="button" onclick={() => (form.repo = '')}>Use host home directory</button>
-            <RepoPicker
-              repos={inv?.repos || []}
-              hostId={form.hostId || device.activeHost}
-              bind:value={form.repo}
-              warnings={inv?.warnings || []}
-              disabled={busy}
-            />
-            <label
-              >GitHub identity<select bind:value={form.identity}
-                ><option value="">Existing host environment</option
-                >{#each inv?.identities || [] as i}<option value={i.login}>{i.login}</option
-                  >{/each}</select
-              ></label
-            >
-            {#if form.repo && form.agent !== 'shell'}<label class="check"
-                ><input type="checkbox" bind:checked={form.brief} /> Read repo instructions and give a
-                concise orientation</label
-              >{/if}
-            <p class="hint">
-              {form.repo
-                ? 'Starts in the selected working copy. No branch or worktree is created automatically.'
-                : 'Starts in the host’s home directory without a repository orientation prompt.'}
-            </p>
-          {/if}
-          <div class="form-row">
-            <button
-              type="button"
-              disabled={busy}
-              onclick={() => {
-                if (sessionStep) sessionStep -= 1;
-                else modal = 'sessions';
-              }}>Back</button
-            ><button class="primary" disabled={busy}
-              >{busy
-                ? 'Creating…'
-                : sessionStep < 2
-                  ? 'Next'
-                  : form.agent !== 'shell' && !selectedAgent?.path
-                    ? 'Trust upstream installer and start session'
-                    : 'Create session & join'}</button
-            >
-          </div>
-        </form>
-      {:else if modal === 'rename'}<form
-          onsubmit={(e) => {
-            e.preventDefault();
-            void task(renameSession);
-          }}
-        >
-          <label
-            >Session name<input bind:value={renameValue} required pattern="[A-Za-z0-9_-]+" /></label
-          ><button class="primary" disabled={busy}>Rename</button>
-        </form>
-      {:else if modal === 'destroy'}<p>
-          Destroy <strong>{destroyTarget?.name}</strong> on
-          <strong
-            >{device.hosts.find((h) => h.id === (destroyTarget?.hostId || device.activeHost))
-              ?.name}</strong
-          > and terminate all its running processes? All unsaved running work will be lost, including
-          work in other clients attached to this session. This cannot be undone.
-        </p>
-        <div class="form-row">
-          <button onclick={() => (modal = 'sessions')}>Keep session</button><button
-            class="danger"
-            disabled={busy}
-            onclick={() => void task(destroySession)}>Destroy session</button
-          >
-        </div>
+        <NewSession
+          {busy}
+          {createSession}
+          {device}
+          bind:form
+          {inv}
+          bind:modal
+          bind:nameError
+          {selectedAgent}
+          {sessionHost}
+          bind:sessionStep
+          {task}
+        />
+      {:else if modal === 'rename'}
+        <RenameSession {busy} {renameSession} bind:renameValue {task} />
+      {:else if modal === 'destroy'}
+        <DestroySession {busy} {destroySession} {destroyTarget} {device} bind:modal {task} />
       {:else if modal === 'broadcast'}
         <BroadcastDialog
           bind:text={broadcastText}
@@ -5780,112 +5517,20 @@
             }
           }}
         />
-      {:else if modal === 'command'}<form
-          onsubmit={(e) => {
-            e.preventDefault();
-            commandSubmit();
-          }}
-        >
-          <p role="note">
-            <strong
-              >Early alpha: commands may be interpreted incorrectly. Review before running.</strong
-            >
-          </p>
-          <p class="hint">
-            IDE commands control DazeDev. They are never pasted into a terminal. While listening,
-            Enter finishes transcription and Escape abandons it.
-          </p>
-          <label
-            >Command<textarea
-              bind:value={commandText}
-              rows="3"
-              onkeydown={(e) => {
-                if (
-                  e.key === 'Enter' &&
-                  !e.repeat &&
-                  !e.isComposing &&
-                  e.keyCode !== 229 &&
-                  !e.shiftKey &&
-                  !e.ctrlKey &&
-                  !e.altKey &&
-                  !e.metaKey
-                ) {
-                  e.preventDefault();
-                  commandSubmit();
-                }
-              }}
-              readonly={voiceStatus !== 'idle'}
-              oninput={() => {
-                commandReview = null;
-                commandError = '';
-              }}
-              placeholder="Open four new terminals with Codex"></textarea></label
-          >
-          {#if voiceMode === 'command' && voiceStatus !== 'idle'}<p role="status">
-              {voiceStatus === 'finishing-recording'
-                ? 'Finishing recording…'
-                : voiceStatus === 'listening'
-                  ? 'Listening…'
-                  : voiceStatus === 'loading'
-                    ? voicePreparing
-                    : 'Finishing transcription…'}
-            </p>{/if}
-          {#if commandError}<p role="alert">{commandError}</p>{/if}
-          {#if commandReview}
-            <section class="settings-section" aria-label="Proposed command">
-              <h3>Proposed action</h3>
-              <p>{commandReview.summary}</p>
-            </section>
-            <div class="form-row">
-              <button
-                type="button"
-                onclick={() => {
-                  commandReview = null;
-                  commandError = '';
-                }}>Decline / edit</button
-              >
-              <button
-                type="button"
-                class="primary"
-                disabled={busy || voiceStatus !== 'idle'}
-                onclick={() => void implementCommand()}>Implement</button
-              >
-            </div>
-          {:else}
-            <div class="form-row">
-              <button
-                type="button"
-                disabled={voiceStatus !== 'idle' && voiceStatus !== 'listening'}
-                onclick={() => void task(() => record('command'))}
-                ><Mic size={15} />{voiceMode === 'command' && voiceStatus === 'listening'
-                  ? 'Stop and review'
-                  : 'Speak command'}</button
-              >
-              <button
-                class="primary"
-                disabled={!commandText.trim() || busy || voiceStatus !== 'idle'}>Interpret</button
-              >
-            </div>
-            <details>
-              <summary>Command library</summary>
-              <p class="hint">
-                Choose an example, edit it, then interpret. “Codecs” is accepted as Codex here.
-              </p>
-              <div class="command-examples">
-                {#each commandCatalogue as command}<button
-                    type="button"
-                    disabled={voiceStatus !== 'idle'}
-                    title={command.description}
-                    onclick={() => {
-                      commandText = command.example;
-                      commandReview = null;
-                      commandError = '';
-                    }}>{command.example}<ArrowUpRight size={13} /></button
-                  >{/each}
-              </div>
-            </details>
-          {/if}
-        </form>
+      {:else if modal === 'command'}
+        <CommandDialog
+          {busy}
+          bind:commandError
+          bind:commandReview
+          {commandSubmit}
+          bind:commandText
+          {implementCommand}
+          {record}
+          {task}
+          {voiceMode}
+          {voicePreparing}
+          {voiceStatus}
+        />
       {:else if modal === 'settings'}
         <div class="settings-compact settings-page">
           <UpdatesSection
@@ -5982,127 +5627,32 @@
           </details>
         </div>
       {:else if modal === 'repos'}
-        <button disabled={busy} onclick={() => void task(() => refresh())}
-          >Refresh repositories</button
-        >
-        <RepoPicker
-          repos={inventories[device.activeHost]?.repos || []}
-          hostId={device.activeHost}
-          warnings={inventories[device.activeHost]?.warnings || []}
-          disabled={busy}
-          onchoose={(repo) => {
-            showLaunch();
-            form.repo = repo.path;
-          }}
+        <Repos
+          {busy}
+          {cloneRepo}
+          {device}
+          bind:form
+          {githubRepos}
+          {inventories}
+          {loadGithubRepos}
+          {refresh}
+          {search}
+          {showLaunch}
+          {task}
         />
-        <div class="settings-section">
-          <h3>GitHub repositories</h3>
-          <div class="form-row">
-            <label
-              >Account<select bind:value={form.identity}
-                ><option value="">Select account</option
-                >{#each inventories[device.activeHost]?.identities || [] as i}<option
-                    value={i.login}>{i.login}</option
-                  >{/each}</select
-              ></label
-            ><button
-              disabled={!form.identity || busy}
-              onclick={() =>
-                void task(async () => {
-                  githubRepos = (
-                    await rpc<{ full_name: string; description: string }[][]>(
-                      device.activeHost,
-                      'github_repos',
-                      { identity: form.identity },
-                    )
-                  ).flat();
-                })}>Load repositories</button
-            >
-          </div>
-          {#each githubRepos.filter((r) => r.full_name
-              .toLowerCase()
-              .includes(search.toLowerCase())) as r}<div class="item-row">
-              <div>
-                <strong>{r.full_name}</strong><small>{r.description || 'GitHub repository'}</small>
-              </div>
-              <button
-                disabled={busy}
-                onclick={() =>
-                  void task(async () => {
-                    const root = profiles[device.activeHost].preferences.roots[0];
-                    if (!root) throw new Error('Set a repository root in host settings.');
-                    await rpc(device.activeHost, 'clone', {
-                      repo: r.full_name,
-                      root,
-                      identity: form.identity,
-                    });
-                    await refresh();
-                  })}>Clone</button
-              >
-            </div>{/each}
-        </div>
-      {:else if modal === 'agents'}<p class="hint">
-          Detected on {host?.name || 'the selected host'}. Authentication stays in each agent’s own
-          CLI.
-        </p>
-        {#each inventories[device.activeHost]?.agents || [] as a}<div class="agent-card">
-            <div>
-              <strong>{a.id}</strong><span class="badge">{a.path ? 'Installed' : 'Not found'}</span>
-            </div>
-            <small>{a.path || a.install}</small>{#if a.path}<small>{a.version}</small>{/if}
-            <button disabled={busy} onclick={() => void task(() => startAgentFromPicker(a.id))}>
-              {#if !a.path}<Download size={14} />{/if}{a.path
-                ? host?.kind === 'powershell'
-                  ? 'Start in new PowerShell session'
-                  : 'Start in new tmux session'
-                : 'Install and start'}</button
-            >
-          </div>{/each}<button onclick={() => void task(() => refresh())}
-          ><RefreshCw size={14} /> Refresh discovery</button
-        >
-      {:else if modal === 'worktree'}{#if worktreeQuestion}<div
-            class="worktree-question"
-            role="group"
-            aria-labelledby="worktree-question-text"
-          >
-            <p id="worktree-question-text">
-              This repository has {worktreeQuestion.script}. Run it to create the worktree?
-            </p>
-            <div class="row">
-              <button
-                class="primary"
-                disabled={busy}
-                onclick={() => void task(() => sendWorktree(true))}>Run script</button
-              >
-              <button disabled={busy} onclick={() => void task(() => sendWorktree(false))}
-                >Create without script</button
-              >
-              <button disabled={busy} onclick={() => (worktreeQuestion = null)}>Cancel</button>
-            </div>
-          </div>{:else}<form
-            onsubmit={(e) => {
-              e.preventDefault();
-              void task(async () => {
-                if (!activePane?.repo) throw new Error('Select a repository terminal first.');
-                worktreeRequest = {
-                  hostId: activePane.hostId,
-                  args: {
-                    path: activePane.repo,
-                    branch,
-                    destination,
-                    identity: activePane.identity,
-                  },
-                };
-                await sendWorktree();
-              });
-            }}
-          >
-            <label>Branch<input bind:value={branch} required /></label><label
-              >Worktree directory<input bind:value={destination} required /></label
-            >
-            <p class="hint">Asks first when the repository provides scripts/new-worktree.sh.</p>
-            <button class="primary" disabled={busy}>Create worktree</button>
-          </form>{/if}{/if}
+      {:else if modal === 'agents'}
+        <Agents {busy} {device} {host} {inventories} {refresh} {startAgentFromPicker} {task} />
+      {:else if modal === 'worktree'}
+        <Worktree
+          bind:branch
+          {busy}
+          {createWorktree}
+          bind:destination
+          {sendWorktree}
+          {task}
+          bind:worktreeQuestion
+        />
+      {/if}
     </div>
   </div>{/if}
 
