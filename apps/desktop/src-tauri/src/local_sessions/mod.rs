@@ -8,7 +8,6 @@ use portable_pty::ChildKiller;
 #[cfg(windows)]
 mod job;
 use base64::{engine::general_purpose::STANDARD, Engine};
-use fs2::FileExt;
 use portable_pty::{native_pty_system, CommandBuilder, MasterPty, PtySize};
 use serde_json::{json, Value};
 use std::{
@@ -516,7 +515,7 @@ pub fn serve(root: &Path) -> Result<(), String> {
         .write(true)
         .open(root.join("broker.lock"))
         .map_err(|e| e.to_string())?;
-    if lock.try_lock_exclusive().is_err() {
+    if lock.try_lock().is_err() {
         return Ok(());
     }
     let server = Arc::new(Server {

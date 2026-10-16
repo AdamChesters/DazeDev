@@ -69,12 +69,12 @@ pub fn download_cancellable(
         .find(|m| m.id == id)
         .ok_or("Unknown model")?;
     fs::create_dir_all(dir).map_err(|e| e.to_string())?;
-    if fs2::available_space(dir).map_err(|e| e.to_string())? < m.size + 64 * 1024 * 1024 {
+    if crate::platform::available_space(dir).map_err(|e| e.to_string())? < m.size + 64 * 1024 * 1024 {
         return Err("Not enough free space for this model and its download staging file.".into());
     }
     let tmp = dir.join(format!("{}.{}.part", m.file, uuid::Uuid::new_v4()));
     let result = (|| {
-        let client = reqwest::blocking::Client::builder()
+        let client = crate::local_http::builder()
             .connect_timeout(Duration::from_secs(20))
             .timeout(Duration::from_secs(7200))
             .build()

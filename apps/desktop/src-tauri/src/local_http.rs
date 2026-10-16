@@ -1,7 +1,15 @@
 //! Local inference transport must never inherit proxy routing or follow redirects.
 use std::time::Duration;
-pub fn client(timeout: Duration) -> Result<reqwest::blocking::Client, String> {
+/// Every HTTP client starts here so rustls always has its ring provider.
+pub fn builder() -> reqwest::blocking::ClientBuilder {
+    static TLS: std::sync::Once = std::sync::Once::new();
+    TLS.call_once(|| {
+        let _ = rustls::crypto::ring::default_provider().install_default();
+    });
     reqwest::blocking::Client::builder()
+}
+pub fn client(timeout: Duration) -> Result<reqwest::blocking::Client, String> {
+    builder()
         .no_proxy()
         .redirect(reqwest::redirect::Policy::none())
         .timeout(timeout)

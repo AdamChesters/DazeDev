@@ -1,5 +1,4 @@
 //! Portable client storage and verified migration from the installer releases.
-use fs2::FileExt;
 use sha2::{Digest, Sha256};
 use std::{
     fs,
@@ -179,7 +178,7 @@ pub fn prepare(root: &Path, old_app_data: &Path) -> Result<(PathBuf, fs::File), 
         .write(true)
         .open(data.join("instance.lock"))
         .map_err(|e| e.to_string())?;
-    lock.try_lock_exclusive().map_err(|_| {
+    lock.try_lock().map_err(|_| {
         "DazeDev is already running from this folder. Close it before opening another copy."
             .to_string()
     })?;

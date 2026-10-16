@@ -1,8 +1,6 @@
 //! Signed, consent-driven portable updates. No credentials are shipped to clients.
 use base64::{engine::general_purpose::STANDARD, Engine};
 use ed25519_dalek::{Signature, VerifyingKey};
-#[cfg(windows)]
-use fs2::FileExt;
 use semver::Version;
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
@@ -94,7 +92,7 @@ fn github_asset(value: &str) -> bool {
         && !value.contains('%')
 }
 fn asset_client(timeout: u64) -> Result<reqwest::blocking::Client, String> {
-    reqwest::blocking::Client::builder()
+    crate::local_http::builder()
         .user_agent("DazeDev-updater")
         .connect_timeout(Duration::from_secs(5))
         .timeout(Duration::from_secs(timeout))
@@ -364,7 +362,7 @@ pub fn download(
                 .saturating_mul(2),
         );
     }
-    if fs2::available_space(root).map_err(|e| e.to_string())? < required {
+    if crate::platform::available_space(root).map_err(|e| e.to_string())? < required {
         return Err(
             "Not enough free space to stage the update and preserve a rollback copy.".into(),
         );
@@ -487,7 +485,7 @@ pub fn run_helper(root: &Path, pid: u32) -> Result<(), String> {
             .write(true)
             .open(data.join("instance.lock"))
             .map_err(|e| e.to_string())?;
-        lock.try_lock_exclusive()
+        lock.try_lock()
             .map_err(|_| "Another DazeDev instance is using this folder")?;
         let exe = std::env::current_exe().map_err(|e| e.to_string())?;
         let stage =

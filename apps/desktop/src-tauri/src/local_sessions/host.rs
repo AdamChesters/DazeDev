@@ -313,7 +313,7 @@ fn size(a: &Value) -> Result<u64, String> {
     Ok(n)
 }
 fn space(files: &Files, folder: &Path, size: u64, exclude: Option<&str>) -> Result<Value, String> {
-    let free = fs2::available_space(folder).map_err(|e| e.to_string())?;
+    let free = crate::platform::available_space(folder).map_err(|e| e.to_string())?;
     let reserved: u64 = files
         .uploads
         .iter()
