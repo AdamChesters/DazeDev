@@ -24,6 +24,7 @@ I got tired of typing The Lord of the Rings into agents [(seriously, I proved it
 ## Quality of life
 
 - Persistent PowerShell sessions and detachable windows for extra monitors.
+- A built-in SSH client: one sign-in per host for every terminal, using your `~/.ssh/config` and known_hosts.
 - File uploads, source viewing, Markdown editing and image previews.
 - Dictation dictionary, configurable hotkeys and transcript recovery.
 - Custom colours, terminal notifications and an optional startup PIN.
@@ -32,7 +33,7 @@ I got tired of typing The Lord of the Rings into agents [(seriously, I proved it
 ## Get started
 
 - [Download the Windows portable ZIP](https://github.com/AdamChesters/DazeDev/releases), extract it and run `DazeDev.exe`.
-- Requires Windows x64 and WebView2. WSL and remote Unix hosts also need Python 3 and tmux.
+- Requires Windows x64 and WebView2. WSL and remote Unix hosts also need Python 3.9 or newer and tmux.
 - Keep the adjacent `data/` folder when moving or manually updating the app.
 
 ## Coming soon
