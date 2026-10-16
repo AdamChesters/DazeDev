@@ -1,3 +1,4 @@
+use crate::sync::LockExt;
 use crate::{
     transport::{EventSink, Host, Transport},
     voice::{self, Voice},
@@ -17,6 +18,7 @@ struct AppState {
     update_downloading: std::sync::atomic::AtomicBool,
     downloads:
         std::sync::Mutex<std::collections::HashMap<String, Arc<std::sync::atomic::AtomicBool>>>,
+    links: crate::browser::Prompts,
 }
 fn sink(app: &tauri::AppHandle) -> EventSink {
     let app = app.clone();
@@ -59,6 +61,93 @@ fn input_configure(
 ) -> Result<bool, String> {
     state.input.configure(binding)
 }
+/// Open a link now: PIN, connection and launch checks, then report back.
+fn open_link(app: &tauri::AppHandle, prompt: &crate::browser::Prompt) {
+    let state = app.state::<AppState>();
+    let result = if !state.pin.permits("open_external") {
+        Err("Unlock DazeDev before opening a browser link".into())
+    } else if !state.transport.browser_current(&prompt.host, &prompt.nonce) {
+        Err("Browser connection has expired".into())
+    } else {
+        crate::browser::validate_url(&prompt.url).and_then(crate::browser::launch_url)
+    };
+    state
+        .transport
+        .browser_result(&prompt.host, &prompt.nonce, &prompt.id, result.err());
+}
+fn refuse_link(app: &tauri::AppHandle, prompt: &crate::browser::Prompt, error: &str) {
+    app.state::<AppState>().transport.browser_result(
+        &prompt.host,
+        &prompt.nonce,
+        &prompt.id,
+        Some(error.into()),
+    );
+}
+/// A host asked to open a link. Trusted hosts open it directly; otherwise
+/// the main window asks the user, and no answer within two minutes denies it.
+fn request_link(app: &tauri::AppHandle, mut prompt: crate::browser::Prompt) {
+    let state = app.state::<AppState>();
+    prompt.url = match crate::browser::validate_url(&prompt.url) {
+        Ok(url) => url,
+        Err(error) => return refuse_link(app, &prompt, &error),
+    };
+    if state.links.trusted(&prompt.host) {
+        return open_link(app, &prompt);
+    }
+    let request = match state.links.add(prompt.clone()) {
+        Ok(request) => request,
+        Err(error) => return refuse_link(app, &prompt, &error),
+    };
+    if app
+        .emit_to(
+            "main",
+            "browser-open-request",
+            serde_json::json!({"requestId":request,"hostId":prompt.host,"url":prompt.url}),
+        )
+        .is_err()
+    {
+        if let Some(prompt) = state.links.take(&request) {
+            refuse_link(app, &prompt, crate::browser::NOT_OPENED);
+        }
+        return;
+    }
+    let app = app.clone();
+    std::thread::spawn(move || {
+        std::thread::sleep(crate::browser::PROMPT_TIMEOUT);
+        if let Some(prompt) = app.state::<AppState>().links.take(&request) {
+            refuse_link(&app, &prompt, crate::browser::NOT_OPENED);
+        }
+    });
+}
+/// The user's answer to `browser-open-request`. `trust_host` with `allow`
+/// opens later links from that host without asking until the app restarts.
+#[tauri::command]
+async fn browser_open_decision(
+    request_id: String,
+    allow: bool,
+    trust_host: bool,
+    window: tauri::WebviewWindow,
+    app: tauri::AppHandle,
+) -> Result<(), String> {
+    main_window(&window)?;
+    let prompt = app
+        .state::<AppState>()
+        .links
+        .take(&request_id)
+        .ok_or("This link request has expired")?;
+    if allow && trust_host {
+        app.state::<AppState>().links.trust(&prompt.host);
+    }
+    tauri::async_runtime::spawn_blocking(move || {
+        if allow {
+            open_link(&app, &prompt)
+        } else {
+            refuse_link(&app, &prompt, crate::browser::NOT_OPENED)
+        }
+    })
+    .await
+    .map_err(|e| e.to_string())
+}
 #[tauri::command]
 async fn host_connect(
     attempt: Option<String>,
@@ -89,21 +178,13 @@ async fn host_connect(
                     }
                     let app = app.clone();
                     tauri::async_runtime::spawn_blocking(move || {
-                        let state = app.state::<AppState>();
-                        let host = value["hostId"].as_str().unwrap_or("");
-                        let nonce = value["nonce"].as_str().unwrap_or("");
-                        let id = value["id"].as_str().unwrap_or("");
-                        let result = if !state.pin.permits("open_external") {
-                            Err("Unlock DazeDev before opening a browser link".into())
-                        } else if !state.transport.browser_current(host, nonce) {
-                            Err("Browser connection has expired".into())
-                        } else {
-                            crate::browser::validate_url(value["url"].as_str().unwrap_or(""))
-                                .and_then(crate::browser::launch_url)
+                        let prompt = crate::browser::Prompt {
+                            host: value["hostId"].as_str().unwrap_or("").into(),
+                            nonce: value["nonce"].as_str().unwrap_or("").into(),
+                            id: value["id"].as_str().unwrap_or("").into(),
+                            url: value["url"].as_str().unwrap_or("").into(),
                         };
-                        state
-                            .transport
-                            .browser_result(host, nonce, id, result.err());
+                        request_link(&app, prompt);
                     });
                     return;
                 }
@@ -258,8 +339,11 @@ fn device_load(state: State<'_, AppState>) -> Result<Value, String> {
     crate::storage::load_device(&state.data)
 }
 #[tauri::command]
-fn device_save(value: Value, state: State<'_, AppState>) -> Result<(), String> {
-    crate::storage::save_device(&state.data, &value)
+async fn device_save(value: Value, state: State<'_, AppState>) -> Result<(), String> {
+    let data = state.data.clone();
+    tauri::async_runtime::spawn_blocking(move || crate::storage::save_device(&data, &value))
+        .await
+        .map_err(|e| e.to_string())?
 }
 #[tauri::command]
 fn dictionary_load(state: State<'_, AppState>) -> Result<Value, String> {
@@ -271,14 +355,16 @@ fn dictionary_load(state: State<'_, AppState>) -> Result<Value, String> {
     )
 }
 #[tauri::command]
-fn dictionary_save(value: Value, state: State<'_, AppState>) -> Result<(), String> {
-    crate::dictionary::save_for_device(
-        &state.data,
-        &dirs::config_dir()
-            .ok_or("User configuration directory unavailable")?
-            .join("DazeDev"),
-        &value,
-    )
+async fn dictionary_save(value: Value, state: State<'_, AppState>) -> Result<(), String> {
+    let data = state.data.clone();
+    let config = dirs::config_dir()
+        .ok_or("User configuration directory unavailable")?
+        .join("DazeDev");
+    tauri::async_runtime::spawn_blocking(move || {
+        crate::dictionary::save_for_device(&data, &config, &value)
+    })
+    .await
+    .map_err(|e| e.to_string())?
 }
 #[tauri::command]
 fn model_list(state: State<'_, AppState>) -> Vec<voice::ModelEntry> {
@@ -292,7 +378,7 @@ async fn model_download(
 ) -> Result<(), String> {
     let cancelled = Arc::new(std::sync::atomic::AtomicBool::new(false));
     {
-        let mut downloads = state.downloads.lock().unwrap();
+        let mut downloads = state.downloads.locked();
         if downloads.contains_key(&id) {
             return Err("This model is already downloading".into());
         }
@@ -305,12 +391,12 @@ async fn model_download(
     })
     .await
     .map_err(|e| e.to_string());
-    state.downloads.lock().unwrap().remove(&id);
+    state.downloads.locked().remove(&id);
     result?
 }
 #[tauri::command]
 fn model_cancel(id: String, state: State<'_, AppState>) {
-    if let Some(flag) = state.downloads.lock().unwrap().get(&id) {
+    if let Some(flag) = state.downloads.locked().get(&id) {
         flag.store(true, std::sync::atomic::Ordering::Release);
     }
 }
@@ -343,8 +429,13 @@ async fn voice_start(
     .await
     .map_err(|e| e.to_string())?
 }
+/// Async so frames never wait on the UI thread. The frontend sends frames one
+/// at a time, so order is kept; `audio` only queues the frame.
 #[tauri::command]
-fn voice_audio(request: tauri::ipc::Request<'_>, state: State<'_, AppState>) -> Result<(), String> {
+async fn voice_audio(
+    request: tauri::ipc::Request<'_>,
+    state: State<'_, AppState>,
+) -> Result<(), String> {
     let tauri::ipc::InvokeBody::Raw(bytes) = request.body() else {
         return Err("Expected binary PCM audio".into());
     };
@@ -404,10 +495,14 @@ async fn voice_cancel(state: State<'_, AppState>) -> Result<(), String> {
 }
 
 #[tauri::command]
-fn ssh_aliases() -> Vec<String> {
-    dirs::home_dir()
-        .map(|home| crate::ssh_config::aliases(&home))
-        .unwrap_or_default()
+async fn ssh_aliases() -> Result<Vec<String>, String> {
+    tauri::async_runtime::spawn_blocking(|| {
+        dirs::home_dir()
+            .map(|home| crate::ssh_config::aliases(&home))
+            .unwrap_or_default()
+    })
+    .await
+    .map_err(|e| e.to_string())
 }
 
 #[tauri::command]
@@ -428,7 +523,7 @@ async fn update_check(
         tauri::async_runtime::spawn_blocking(|| crate::updates::check(env!("CARGO_PKG_VERSION")))
             .await
             .map_err(|e| e.to_string())??;
-    *state.update_release.lock().unwrap() = release.clone();
+    *state.update_release.locked() = release.clone();
     Ok(release)
 }
 #[tauri::command]
@@ -444,8 +539,7 @@ async fn update_download(
     let result = async {
         let release = state
             .update_release
-            .lock()
-            .unwrap()
+            .locked()
             .clone()
             .filter(|r| r.version == version)
             .ok_or("Check for updates again before downloading")?;
@@ -460,7 +554,7 @@ async fn update_download(
         })
         .await
         .map_err(|e| e.to_string())??;
-        *state.update_stage.lock().unwrap() = Some(stage);
+        *state.update_stage.locked() = Some(stage);
         Ok(())
     }
     .await;
@@ -468,19 +562,29 @@ async fn update_download(
     result
 }
 #[tauri::command]
-fn update_install(state: State<'_, AppState>, app: tauri::AppHandle) -> Result<(), String> {
-    if !state.downloads.lock().unwrap().is_empty() {
+async fn update_install(state: State<'_, AppState>, app: tauri::AppHandle) -> Result<(), String> {
+    if !state.downloads.locked().is_empty() {
         return Err("Wait for voice model downloads to finish before updating".into());
     }
     let stage = state
         .update_stage
-        .lock()
-        .unwrap()
+        .locked()
         .clone()
         .ok_or("Download and verify the update first")?;
-    crate::updates::launch_helper(state.data.parent().unwrap(), &stage)?;
-    state.voice.shutdown();
-    state.transport.shutdown();
+    let root = state
+        .data
+        .parent()
+        .ok_or("Portable folder unavailable")?
+        .to_path_buf();
+    let (voice, transport) = (state.voice.clone(), state.transport.clone());
+    tauri::async_runtime::spawn_blocking(move || {
+        crate::updates::launch_helper(&root, &stage)?;
+        voice.shutdown();
+        transport.shutdown();
+        Ok::<(), String>(())
+    })
+    .await
+    .map_err(|e| e.to_string())??;
     app.exit(0);
     Ok(())
 }
@@ -772,6 +876,7 @@ pub fn run() {
                 update_stage: Default::default(),
                 update_downloading: Default::default(),
                 downloads: Default::default(),
+                links: Default::default(),
             });
             let config = app.config().app.windows[0].clone();
             tauri::WebviewWindowBuilder::from_config(app, &config)?
@@ -801,6 +906,7 @@ pub fn run() {
                 pin_unlock,
                 pin_configure,
                 open_external,
+                browser_open_decision,
                 feedback_send,
                 input_configure,
                 update_check,

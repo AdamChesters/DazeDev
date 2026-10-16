@@ -1,20 +1,45 @@
 //! Restrict app-owned data without replacing or deleting existing settings.
 use std::{fs, io, path::Path};
 
+/// Folders that hold large third-party state. They inherit the data root's
+/// rules and are never walked: WebView2 keeps its own sandbox entries.
+const UNWALKED: [&str; 2] = ["webview", "models"];
+/// Folders whose existing contents must be private too.
+const PRIVATE_TREES: [&str; 2] = ["native-sessions", "migration-recovery"];
+
+fn is_link(meta: &fs::Metadata) -> bool {
+    if meta.file_type().is_symlink() {
+        return true;
+    }
+    #[cfg(windows)]
+    {
+        use std::os::windows::fs::MetadataExt;
+        // FILE_ATTRIBUTE_REPARSE_POINT: junctions, mount points, cloud files.
+        if meta.file_attributes() & 0x400 != 0 {
+            return true;
+        }
+    }
+    false
+}
 pub fn protect(path: &Path) -> io::Result<()> {
     let meta = fs::symlink_metadata(path)?;
-    if meta.file_type().is_symlink() {
+    if is_link(&meta) {
         return Err(io::Error::other(
-            "Private storage cannot contain symbolic links",
+            "Private storage cannot contain links or reparse points",
         ));
     }
+    restrict(path, meta.is_dir())
+}
+/// Make `path` current-user only, unless it already is.
+fn restrict(path: &Path, dir: bool) -> io::Result<()> {
     #[cfg(unix)]
     {
         use std::os::unix::fs::PermissionsExt;
-        fs::set_permissions(
-            path,
-            fs::Permissions::from_mode(if meta.is_dir() { 0o700 } else { 0o600 }),
-        )?;
+        let wanted = if dir { 0o700 } else { 0o600 };
+        if fs::metadata(path)?.permissions().mode() & 0o777 == wanted {
+            return Ok(());
+        }
+        fs::set_permissions(path, fs::Permissions::from_mode(wanted))?;
         if fs::metadata(path)?.permissions().mode() & 0o077 != 0 {
             return Err(io::Error::other(
                 "Filesystem did not enforce private permissions",
@@ -23,12 +48,6 @@ pub fn protect(path: &Path) -> io::Result<()> {
     }
     #[cfg(windows)]
     {
-        use std::os::windows::fs::MetadataExt;
-        if meta.file_attributes() & 0x400 != 0 {
-            return Err(io::Error::other(
-                "Private storage cannot contain reparse points",
-            ));
-        }
         use std::os::windows::ffi::OsStrExt;
         use windows_sys::Win32::{
             Foundation::LocalFree,
@@ -40,12 +59,15 @@ pub fn protect(path: &Path) -> io::Result<()> {
             },
         };
         let sid = crate::local_sessions::ipc::sid().map_err(io::Error::other)?;
-        let inheritance = if meta.is_dir() { "OICI" } else { "" };
+        let name: Vec<u16> = path.as_os_str().encode_wide().chain(Some(0)).collect();
+        if unsafe { already_private(&name, &sid, dir) } {
+            return Ok(());
+        }
+        let inheritance = if dir { "OICI" } else { "" };
         let sddl: Vec<u16> = format!("D:P(A;{inheritance};FA;;;{sid})")
             .encode_utf16()
             .chain(Some(0))
             .collect();
-        let name: Vec<u16> = path.as_os_str().encode_wide().chain(Some(0)).collect();
         unsafe {
             use windows_sys::Win32::Storage::FileSystem::{
                 GetVolumeInformationW, GetVolumePathNameW,
@@ -98,15 +120,109 @@ pub fn protect(path: &Path) -> io::Result<()> {
     }
     Ok(())
 }
+/// True when the DACL is protected and is exactly one full-access entry for
+/// `sid`, inheritable on folders.
+#[cfg(windows)]
+unsafe fn already_private(name: &[u16], sid: &str, dir: bool) -> bool {
+    use windows_sys::Win32::{
+        Foundation::LocalFree,
+        Security::{
+            Authorization::{ConvertSidToStringSidW, GetNamedSecurityInfoW, SE_FILE_OBJECT},
+            GetAce, GetSecurityDescriptorControl, ACCESS_ALLOWED_ACE, DACL_SECURITY_INFORMATION,
+            SE_DACL_PROTECTED,
+        },
+    };
+    let mut acl = std::ptr::null_mut();
+    let mut descriptor = std::ptr::null_mut();
+    if GetNamedSecurityInfoW(
+        name.as_ptr(),
+        SE_FILE_OBJECT,
+        DACL_SECURITY_INFORMATION,
+        std::ptr::null_mut(),
+        std::ptr::null_mut(),
+        &mut acl,
+        std::ptr::null_mut(),
+        &mut descriptor,
+    ) != 0
+    {
+        return false;
+    }
+    let result = (|| {
+        let mut control = 0u16;
+        let mut revision = 0u32;
+        if GetSecurityDescriptorControl(descriptor, &mut control, &mut revision) == 0
+            || control & SE_DACL_PROTECTED == 0
+            || acl.is_null()
+            || (*acl).AceCount != 1
+        {
+            return false;
+        }
+        let mut ace = std::ptr::null_mut();
+        if GetAce(acl, 0, &mut ace) == 0 {
+            return false;
+        }
+        let allowed = &*(ace as *const ACCESS_ALLOWED_ACE);
+        // ACCESS_ALLOWED_ACE_TYPE, OBJECT_INHERIT_ACE | CONTAINER_INHERIT_ACE,
+        // FILE_ALL_ACCESS.
+        let flags = if dir { 0x3 } else { 0 };
+        if allowed.Header.AceType != 0
+            || allowed.Header.AceFlags != flags
+            || allowed.Mask != 0x1F01FF
+        {
+            return false;
+        }
+        let mut text = std::ptr::null_mut();
+        let sid_ptr = std::ptr::addr_of!(allowed.SidStart) as *mut std::ffi::c_void;
+        if ConvertSidToStringSidW(sid_ptr, &mut text) == 0 {
+            return false;
+        }
+        let mut n = 0;
+        while *text.add(n) != 0 {
+            n += 1;
+        }
+        let same = String::from_utf16_lossy(std::slice::from_raw_parts(text, n)) == sid;
+        LocalFree(text.cast());
+        same
+    })();
+    LocalFree(descriptor.cast());
+    result
+}
 pub fn directory(path: &Path) -> io::Result<()> {
     fs::create_dir_all(path)?;
     protect(path)
 }
+/// Protect a folder and everything in it. Links and reparse points are
+/// skipped, never followed.
 pub fn tree(path: &Path) -> io::Result<()> {
-    protect(path)?;
-    if fs::symlink_metadata(path)?.is_dir() {
+    let meta = fs::symlink_metadata(path)?;
+    if is_link(&meta) {
+        return Ok(());
+    }
+    restrict(path, meta.is_dir())?;
+    if meta.is_dir() {
         for child in fs::read_dir(path)? {
             tree(&child?.path())?;
+        }
+    }
+    Ok(())
+}
+/// Protect the data root once, with rules its new files inherit, plus the
+/// files and private folders already in it. Large folders are not walked.
+pub fn secure_root(data: &Path) -> io::Result<()> {
+    restrict(data, true)?;
+    for entry in fs::read_dir(data)? {
+        let entry = entry?;
+        let Ok(meta) = entry.path().symlink_metadata() else {
+            continue;
+        };
+        let name = entry.file_name();
+        if is_link(&meta) || UNWALKED.iter().any(|n| name == *n) {
+            continue;
+        }
+        if meta.is_file() {
+            restrict(&entry.path(), false)?;
+        } else if meta.is_dir() && PRIVATE_TREES.iter().any(|n| name == *n) {
+            tree(&entry.path())?;
         }
     }
     Ok(())
@@ -152,6 +268,48 @@ mod tests {
         );
         assert_eq!(fs::read(root.join("device.json.bak")).unwrap(), b"backup");
         fs::remove_dir_all(root).unwrap();
+    }
+}
+
+#[cfg(all(test, unix))]
+mod root_tests {
+    use super::*;
+    use std::os::unix::fs::PermissionsExt;
+    fn mode(path: &Path) -> u32 {
+        fs::symlink_metadata(path).unwrap().permissions().mode() & 0o777
+    }
+    #[test]
+    fn data_root_is_protected_without_walking_large_folders_or_links() {
+        let root = std::env::temp_dir().join(format!("dazedev-root-{}", uuid::Uuid::new_v4()));
+        let outside = root.with_extension("outside");
+        fs::create_dir_all(root.join("webview/Default")).unwrap();
+        fs::create_dir_all(root.join("models")).unwrap();
+        fs::create_dir_all(root.join("native-sessions/runtime")).unwrap();
+        fs::create_dir_all(&outside).unwrap();
+        for file in [
+            "device.json",
+            "webview/Default/Cookies",
+            "models/model.bin",
+            "native-sessions/runtime/a",
+        ] {
+            fs::write(root.join(file), b"x").unwrap();
+            fs::set_permissions(root.join(file), fs::Permissions::from_mode(0o644)).unwrap();
+        }
+        fs::set_permissions(&root, fs::Permissions::from_mode(0o755)).unwrap();
+        fs::set_permissions(&outside, fs::Permissions::from_mode(0o755)).unwrap();
+        std::os::unix::fs::symlink(&outside, root.join("linked")).unwrap();
+        std::os::unix::fs::symlink(&outside, root.join("native-sessions/linked")).unwrap();
+        secure_root(&root).unwrap();
+        assert_eq!(mode(&root), 0o700);
+        assert_eq!(mode(&root.join("device.json")), 0o600);
+        assert_eq!(mode(&root.join("native-sessions/runtime/a")), 0o600);
+        assert_eq!(mode(&root.join("webview/Default/Cookies")), 0o644);
+        assert_eq!(mode(&root.join("models/model.bin")), 0o644);
+        assert_eq!(mode(&outside), 0o755);
+        // A second start changes nothing and still succeeds.
+        secure_root(&root).unwrap();
+        fs::remove_dir_all(&root).unwrap();
+        fs::remove_dir_all(&outside).unwrap();
     }
 }
 

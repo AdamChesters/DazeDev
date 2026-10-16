@@ -3,44 +3,126 @@ use serde_json::Value;
 use std::{
     io::{Read, Write},
     path::Path,
+    time::Duration,
 };
 pub const LIMIT: usize = 2 * 1024 * 1024;
-pub fn receive(stream: &mut impl Read) -> Result<Value, String> {
+/// How long a request may wait for the other side before it times out.
+pub const TIMEOUT: Duration = Duration::from_secs(15);
+
+/// What went wrong, so callers can tell an ended session from a missing broker.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ErrorKind {
+    /// The session ended or no longer exists.
+    Ended,
+    /// The broker is not running, or closed the connection.
+    Unavailable,
+    /// The broker did not answer in time.
+    Timeout,
+    /// Any other failure, including errors the broker reports.
+    Failed,
+}
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Error {
+    pub kind: ErrorKind,
+    pub message: String,
+}
+impl Error {
+    pub fn new(kind: ErrorKind, message: impl Into<String>) -> Self {
+        Self {
+            kind,
+            message: message.into(),
+        }
+    }
+}
+impl std::fmt::Display for Error {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(&self.message)
+    }
+}
+impl std::error::Error for Error {}
+impl From<Error> for String {
+    fn from(error: Error) -> Self {
+        error.message
+    }
+}
+impl From<std::io::Error> for Error {
+    fn from(error: std::io::Error) -> Self {
+        use std::io::ErrorKind as Io;
+        let kind = match (error.kind(), error.raw_os_error()) {
+            // Windows: file not found, pipe busy, broken pipe, pipe closing,
+            // pipe not connected.
+            (_, Some(2 | 231 | 109 | 232 | 233)) if cfg!(windows) => ErrorKind::Unavailable,
+            (
+                Io::NotFound
+                | Io::ConnectionRefused
+                | Io::ConnectionReset
+                | Io::ConnectionAborted
+                | Io::BrokenPipe
+                | Io::UnexpectedEof
+                | Io::NotConnected,
+                _,
+            ) => ErrorKind::Unavailable,
+            (Io::TimedOut | Io::WouldBlock, _) => ErrorKind::Timeout,
+            _ => ErrorKind::Failed,
+        };
+        Self::new(kind, error.to_string())
+    }
+}
+
+pub fn receive(stream: &mut impl Read) -> Result<Value, Error> {
     let mut size = [0; 4];
-    stream.read_exact(&mut size).map_err(|e| e.to_string())?;
+    stream.read_exact(&mut size)?;
     let size = u32::from_le_bytes(size) as usize;
     if size > LIMIT {
-        return Err("Session message too large".into());
+        return Err(Error::new(ErrorKind::Failed, "Session message too large"));
     }
     let mut bytes = vec![0; size];
-    stream.read_exact(&mut bytes).map_err(|e| e.to_string())?;
-    serde_json::from_slice(&bytes).map_err(|e| e.to_string())
+    stream.read_exact(&mut bytes)?;
+    serde_json::from_slice(&bytes).map_err(|e| Error::new(ErrorKind::Failed, e.to_string()))
 }
-pub fn send(stream: &mut impl Write, value: &Value) -> Result<(), String> {
-    let bytes = serde_json::to_vec(value).map_err(|e| e.to_string())?;
+pub fn send(stream: &mut impl Write, value: &Value) -> Result<(), Error> {
+    let bytes =
+        serde_json::to_vec(value).map_err(|e| Error::new(ErrorKind::Failed, e.to_string()))?;
     if bytes.len() > LIMIT {
-        return Err("Session message too large".into());
+        return Err(Error::new(ErrorKind::Failed, "Session message too large"));
     }
     stream
         .write_all(&(bytes.len() as u32).to_le_bytes())
         .and_then(|_| stream.write_all(&bytes))
-        .and_then(|_| stream.flush())
-        .map_err(|e| e.to_string())
+        .and_then(|_| stream.flush())?;
+    Ok(())
 }
+
 #[cfg(unix)]
 pub type Stream = std::os::unix::net::UnixStream;
 #[cfg(unix)]
 pub fn endpoint(root: &Path) -> String {
-    root.join("sessions.sock").to_string_lossy().into_owned()
+    endpoint_version(root, super::PROTOCOL)
+}
+/// Each protocol version has its own endpoint, so an older broker can keep
+/// serving its sessions next to a newer one.
+#[cfg(unix)]
+pub fn endpoint_version(root: &Path, version: u64) -> String {
+    let name = if version == super::PROTOCOL {
+        "sessions.sock".to_string()
+    } else {
+        format!("sessions-v{version}.sock")
+    };
+    root.join(name).to_string_lossy().into_owned()
 }
 #[cfg(unix)]
-pub fn connect(root: &Path) -> Result<Stream, String> {
-    let s = Stream::connect(endpoint(root)).map_err(|e| e.to_string())?;
-    s.set_read_timeout(Some(std::time::Duration::from_secs(15)))
-        .map_err(|e| e.to_string())?;
-    s.set_write_timeout(Some(std::time::Duration::from_secs(15)))
-        .map_err(|e| e.to_string())?;
+pub fn connect_version(root: &Path, version: u64) -> Result<Stream, Error> {
+    let mut s = Stream::connect(endpoint_version(root, version))?;
+    set_blocking(&mut s, false)?;
     Ok(s)
+}
+/// Blocking streams wait for data without a deadline; others time out.
+#[cfg(unix)]
+pub fn set_blocking(stream: &mut Stream, blocking: bool) -> Result<(), Error> {
+    let timeout = (!blocking).then_some(TIMEOUT);
+    stream.set_read_timeout(timeout)?;
+    stream.set_write_timeout(timeout)?;
+    Ok(())
 }
 #[cfg(unix)]
 pub fn listen(root: &Path, handle: impl Fn(Stream) + Send + Sync + 'static) -> Result<(), String> {
@@ -51,29 +133,40 @@ pub fn listen(root: &Path, handle: impl Fn(Stream) + Send + Sync + 'static) -> R
     std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o600))
         .map_err(|e| e.to_string())?;
     for s in l.incoming() {
-        handle(s.map_err(|e| e.to_string())?)
+        let mut s = s.map_err(|e| e.to_string())?;
+        if set_blocking(&mut s, false).is_ok() {
+            handle(s)
+        }
     }
     Ok(())
 }
+
 #[cfg(windows)]
-pub struct Stream(std::fs::File);
+pub struct Stream {
+    file: std::fs::File,
+    blocking: bool,
+}
+#[cfg(windows)]
+const ERROR_NO_DATA: i32 = 232;
 #[cfg(windows)]
 impl Read for Stream {
     fn read(&mut self, bytes: &mut [u8]) -> std::io::Result<usize> {
+        if self.blocking {
+            // Ok(0) is end of file: the other side closed the pipe.
+            return self.file.read(bytes);
+        }
         let started = std::time::Instant::now();
         loop {
-            match self.0.read(bytes) {
-                Ok(0)
-                    if !bytes.is_empty()
-                        && started.elapsed() < std::time::Duration::from_secs(15) =>
-                {
-                    std::thread::sleep(std::time::Duration::from_millis(2))
-                }
-                Err(e)
-                    if e.raw_os_error() == Some(232)
-                        && started.elapsed() < std::time::Duration::from_secs(15) =>
-                {
-                    std::thread::sleep(std::time::Duration::from_millis(2))
+            match self.file.read(bytes) {
+                // A nonblocking pipe with nothing to read reports ERROR_NO_DATA.
+                Err(e) if e.raw_os_error() == Some(ERROR_NO_DATA) => {
+                    if started.elapsed() >= TIMEOUT {
+                        return Err(std::io::Error::new(
+                            std::io::ErrorKind::TimedOut,
+                            "Local session manager did not answer",
+                        ));
+                    }
+                    std::thread::sleep(Duration::from_millis(2))
                 }
                 result => return result,
             }
@@ -83,22 +176,26 @@ impl Read for Stream {
 #[cfg(windows)]
 impl Write for Stream {
     fn write(&mut self, bytes: &[u8]) -> std::io::Result<usize> {
+        if self.blocking {
+            return self.file.write(bytes);
+        }
         let started = std::time::Instant::now();
         loop {
             // Nonblocking pipe writes can return zero forever when a single
             // request exceeds the available buffer; write_all advances chunks.
-            match self.0.write(&bytes[..bytes.len().min(4096)]) {
-                Ok(0)
-                    if !bytes.is_empty()
-                        && started.elapsed() < std::time::Duration::from_secs(15) =>
-                {
-                    std::thread::sleep(std::time::Duration::from_millis(2))
+            match self.file.write(&bytes[..bytes.len().min(4096)]) {
+                Ok(0) if !bytes.is_empty() => {
+                    if started.elapsed() >= TIMEOUT {
+                        return Err(std::io::Error::new(
+                            std::io::ErrorKind::TimedOut,
+                            "Local session manager is not reading",
+                        ));
+                    }
+                    std::thread::sleep(Duration::from_millis(2))
                 }
-                Err(e)
-                    if matches!(e.raw_os_error(), Some(232 | 231))
-                        && started.elapsed() < std::time::Duration::from_secs(15) =>
-                {
-                    std::thread::sleep(std::time::Duration::from_millis(2))
+                // On writes, ERROR_NO_DATA means the pipe is being closed.
+                Err(e) if e.raw_os_error() == Some(ERROR_NO_DATA) => {
+                    return Err(std::io::Error::new(std::io::ErrorKind::BrokenPipe, e))
                 }
                 result => return result,
             }
@@ -109,33 +206,71 @@ impl Write for Stream {
     }
 }
 #[cfg(windows)]
+pub fn set_blocking(stream: &mut Stream, blocking: bool) -> Result<(), Error> {
+    set_mode(&stream.file, blocking)?;
+    stream.blocking = blocking;
+    Ok(())
+}
+#[cfg(windows)]
+fn set_mode(file: &std::fs::File, blocking: bool) -> std::io::Result<()> {
+    use std::os::windows::io::AsRawHandle;
+    use windows_sys::Win32::System::Pipes::{
+        SetNamedPipeHandleState, PIPE_NOWAIT, PIPE_READMODE_BYTE, PIPE_WAIT,
+    };
+    let mode = PIPE_READMODE_BYTE | if blocking { PIPE_WAIT } else { PIPE_NOWAIT };
+    if unsafe {
+        SetNamedPipeHandleState(
+            file.as_raw_handle(),
+            &mode,
+            std::ptr::null(),
+            std::ptr::null(),
+        )
+    } == 0
+    {
+        return Err(std::io::Error::last_os_error());
+    }
+    Ok(())
+}
+/// The TOKEN_USER of a token, in a usize buffer for alignment.
+#[cfg(windows)]
+unsafe fn token_user(token: windows_sys::Win32::Foundation::HANDLE) -> Result<Vec<usize>, String> {
+    use windows_sys::Win32::Security::{GetTokenInformation, TokenUser};
+    let mut n = 0;
+    GetTokenInformation(token, TokenUser, std::ptr::null_mut(), 0, &mut n);
+    let mut buf = vec![
+        0usize;
+        (n as usize + std::mem::size_of::<usize>() - 1)
+            / std::mem::size_of::<usize>()
+    ];
+    if GetTokenInformation(token, TokenUser, buf.as_mut_ptr().cast(), n, &mut n) == 0 {
+        return Err(std::io::Error::last_os_error().to_string());
+    }
+    Ok(buf)
+}
+#[cfg(windows)]
+unsafe fn process_user(
+    process: windows_sys::Win32::Foundation::HANDLE,
+) -> Result<Vec<usize>, String> {
+    use windows_sys::Win32::{
+        Foundation::CloseHandle, Security::TOKEN_QUERY, System::Threading::OpenProcessToken,
+    };
+    let mut token = std::ptr::null_mut();
+    if OpenProcessToken(process, TOKEN_QUERY, &mut token) == 0 {
+        return Err(std::io::Error::last_os_error().to_string());
+    }
+    let user = token_user(token);
+    CloseHandle(token);
+    user
+}
+#[cfg(windows)]
 pub(crate) fn sid() -> Result<String, String> {
     use windows_sys::Win32::{
-        Foundation::{CloseHandle, LocalFree},
-        Security::{
-            Authorization::ConvertSidToStringSidW, GetTokenInformation, TokenUser, TOKEN_QUERY,
-            TOKEN_USER,
-        },
-        System::Threading::{GetCurrentProcess, OpenProcessToken},
+        Foundation::LocalFree,
+        Security::{Authorization::ConvertSidToStringSidW, TOKEN_USER},
+        System::Threading::GetCurrentProcess,
     };
     unsafe {
-        let mut token = std::ptr::null_mut();
-        if OpenProcessToken(GetCurrentProcess(), TOKEN_QUERY, &mut token) == 0 {
-            return Err(std::io::Error::last_os_error().to_string());
-        }
-        let mut n = 0;
-        GetTokenInformation(token, TokenUser, std::ptr::null_mut(), 0, &mut n);
-        // usize allocation supplies alignment required by TOKEN_USER.
-        let mut buf = vec![
-            0usize;
-            (n as usize + std::mem::size_of::<usize>() - 1)
-                / std::mem::size_of::<usize>()
-        ];
-        let ok = GetTokenInformation(token, TokenUser, buf.as_mut_ptr().cast(), n, &mut n);
-        CloseHandle(token);
-        if ok == 0 {
-            return Err(std::io::Error::last_os_error().to_string());
-        }
+        let buf = process_user(GetCurrentProcess())?;
         let mut ptr = std::ptr::null_mut();
         if ConvertSidToStringSidW((*(buf.as_ptr() as *const TOKEN_USER)).User.Sid, &mut ptr) == 0 {
             return Err(std::io::Error::last_os_error().to_string());
@@ -149,22 +284,67 @@ pub(crate) fn sid() -> Result<String, String> {
         Ok(s)
     }
 }
+/// Refuse a pipe whose server process runs as another user.
+#[cfg(windows)]
+fn verify_server_owner(file: &std::fs::File) -> Result<(), Error> {
+    use std::os::windows::io::AsRawHandle;
+    use windows_sys::Win32::{
+        Foundation::CloseHandle,
+        Security::{EqualSid, TOKEN_USER},
+        System::{
+            Pipes::GetNamedPipeServerProcessId,
+            Threading::{GetCurrentProcess, OpenProcess, PROCESS_QUERY_LIMITED_INFORMATION},
+        },
+    };
+    let refused = |detail: String| {
+        Error::new(
+            ErrorKind::Failed,
+            format!("Local session pipe is not owned by you; refusing to use it ({detail})"),
+        )
+    };
+    unsafe {
+        let mut pid = 0u32;
+        if GetNamedPipeServerProcessId(file.as_raw_handle(), &mut pid) == 0 {
+            return Err(refused(std::io::Error::last_os_error().to_string()));
+        }
+        let process = OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION, 0, pid);
+        if process.is_null() {
+            return Err(refused(std::io::Error::last_os_error().to_string()));
+        }
+        let server = process_user(process);
+        CloseHandle(process);
+        let server = server.map_err(refused)?;
+        let current = process_user(GetCurrentProcess()).map_err(refused)?;
+        let same = EqualSid(
+            (*(server.as_ptr() as *const TOKEN_USER)).User.Sid,
+            (*(current.as_ptr() as *const TOKEN_USER)).User.Sid,
+        );
+        if same == 0 {
+            return Err(refused("different user".into()));
+        }
+    }
+    Ok(())
+}
 #[cfg(windows)]
 pub fn endpoint(root: &Path) -> String {
+    endpoint_version(root, super::PROTOCOL)
+}
+/// Each protocol version has its own pipe, so an older broker can keep
+/// serving its sessions next to a newer one.
+#[cfg(windows)]
+pub fn endpoint_version(root: &Path, version: u64) -> String {
     use sha2::{Digest, Sha256};
     format!(
-        r"\\.\pipe\DazeDev-sessions-v1-{:x}",
+        r"\\.\pipe\DazeDev-sessions-v{version}-{:x}",
         Sha256::digest(format!("{}:{}", root.display(), sid().unwrap_or_default()))
     )
 }
 #[cfg(windows)]
-pub fn connect(root: &Path) -> Result<Stream, String> {
+pub fn connect_version(root: &Path, version: u64) -> Result<Stream, Error> {
     use windows_sys::Win32::System::Pipes::WaitNamedPipeW;
-    let path = endpoint(root);
+    let path = endpoint_version(root, version);
     let wide: Vec<u16> = path.encode_utf16().chain(Some(0)).collect();
-    use std::os::windows::io::AsRawHandle;
-    use windows_sys::Win32::System::Pipes::{SetNamedPipeHandleState, PIPE_NOWAIT};
-    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(3);
+    let deadline = std::time::Instant::now() + Duration::from_secs(3);
     let file = loop {
         match std::fs::OpenOptions::new()
             .read(true)
@@ -179,24 +359,17 @@ pub fn connect(root: &Path) -> Result<Stream, String> {
                 unsafe {
                     WaitNamedPipeW(wide.as_ptr(), 100);
                 }
-                std::thread::sleep(std::time::Duration::from_millis(2));
+                std::thread::sleep(Duration::from_millis(2));
             }
-            Err(error) => return Err(error.to_string()),
+            Err(error) => return Err(error.into()),
         }
     };
-    let mode = PIPE_NOWAIT;
-    if unsafe {
-        SetNamedPipeHandleState(
-            file.as_raw_handle(),
-            &mode,
-            std::ptr::null(),
-            std::ptr::null(),
-        )
-    } == 0
-    {
-        return Err(std::io::Error::last_os_error().to_string());
-    }
-    Ok(Stream(file))
+    verify_server_owner(&file)?;
+    set_mode(&file, false)?;
+    Ok(Stream {
+        file,
+        blocking: false,
+    })
 }
 #[cfg(windows)]
 pub fn listen(root: &Path, handle: impl Fn(Stream) + Send + Sync + 'static) -> Result<(), String> {
@@ -211,10 +384,10 @@ pub fn listen(root: &Path, handle: impl Fn(Stream) + Send + Sync + 'static) -> R
             },
             SECURITY_ATTRIBUTES,
         },
-        Storage::FileSystem::PIPE_ACCESS_DUPLEX,
+        Storage::FileSystem::{FILE_FLAG_FIRST_PIPE_INSTANCE, PIPE_ACCESS_DUPLEX},
         System::Pipes::{
             ConnectNamedPipe, CreateNamedPipeW, PIPE_READMODE_BYTE, PIPE_REJECT_REMOTE_CLIENTS,
-            PIPE_TYPE_BYTE, PIPE_WAIT,
+            PIPE_TYPE_BYTE, PIPE_UNLIMITED_INSTANCES, PIPE_WAIT,
         },
     };
     let name: Vec<u16> = endpoint(root).encode_utf16().chain(Some(0)).collect();
@@ -238,39 +411,49 @@ pub fn listen(root: &Path, handle: impl Fn(Stream) + Send + Sync + 'static) -> R
             lpSecurityDescriptor: descriptor,
             bInheritHandle: 0,
         };
+        // The first instance must create the pipe. If the name already
+        // exists, another process got there first and we must not join it.
+        let mut first = true;
         loop {
             let h = CreateNamedPipeW(
                 name.as_ptr(),
-                PIPE_ACCESS_DUPLEX,
+                PIPE_ACCESS_DUPLEX
+                    | if first {
+                        FILE_FLAG_FIRST_PIPE_INSTANCE
+                    } else {
+                        0
+                    },
                 PIPE_TYPE_BYTE | PIPE_READMODE_BYTE | PIPE_WAIT | PIPE_REJECT_REMOTE_CLIENTS,
-                32,
+                PIPE_UNLIMITED_INSTANCES,
                 65536,
                 65536,
                 3000,
                 &sa,
             );
             if h == INVALID_HANDLE_VALUE {
+                let error = std::io::Error::last_os_error();
                 LocalFree(descriptor);
-                return Err(std::io::Error::last_os_error().to_string());
+                return Err(if first {
+                    format!("Local session pipe is already in use by another program: {error}")
+                } else {
+                    error.to_string()
+                });
             }
+            first = false;
             if ConnectNamedPipe(h, std::ptr::null_mut()) == 0
                 && GetLastError() != ERROR_PIPE_CONNECTED
             {
                 CloseHandle(h);
                 continue;
             }
-            let mode = windows_sys::Win32::System::Pipes::PIPE_NOWAIT;
-            if windows_sys::Win32::System::Pipes::SetNamedPipeHandleState(
-                h,
-                &mode,
-                std::ptr::null(),
-                std::ptr::null(),
-            ) == 0
-            {
-                CloseHandle(h);
+            let file = std::fs::File::from_raw_handle(h);
+            if set_mode(&file, false).is_err() {
                 continue;
             }
-            handle(Stream(std::fs::File::from_raw_handle(h)));
+            handle(Stream {
+                file,
+                blocking: false,
+            });
         }
     }
 }
@@ -334,10 +517,10 @@ mod windows_tests {
             }
         });
         let started = std::time::Instant::now();
-        let reopened = connect(&root);
+        let reopened = connect_version(&root, crate::local_sessions::PROTOCOL);
         let _ = done.send(());
         server.join().unwrap();
-        assert!(reopened.is_ok(), "{}", reopened.err().unwrap_or_default());
+        assert!(reopened.is_ok(), "{:?}", reopened.err());
         assert!(started.elapsed() >= std::time::Duration::from_millis(150));
     }
 }

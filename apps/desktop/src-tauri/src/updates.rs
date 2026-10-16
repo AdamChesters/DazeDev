@@ -1,8 +1,6 @@
 //! Signed, consent-driven portable updates. No credentials are shipped to clients.
 use base64::{engine::general_purpose::STANDARD, Engine};
 use ed25519_dalek::{Signature, VerifyingKey};
-#[cfg(windows)]
-use fs2::FileExt;
 use semver::Version;
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
@@ -94,7 +92,7 @@ fn github_asset(value: &str) -> bool {
         && !value.contains('%')
 }
 fn asset_client(timeout: u64) -> Result<reqwest::blocking::Client, String> {
-    reqwest::blocking::Client::builder()
+    crate::local_http::builder()
         .user_agent("DazeDev-updater")
         .connect_timeout(Duration::from_secs(5))
         .timeout(Duration::from_secs(timeout))
@@ -267,7 +265,7 @@ fn retry_file_lock<T>(mut operation: impl FnMut() -> std::io::Result<T>) -> std:
         match operation() {
             Err(e)
                 if cfg!(windows)
-                    && matches!(e.raw_os_error(), Some(32 | 33))
+                    && matches!(e.raw_os_error(), Some(5 | 32 | 33))
                     && std::time::Instant::now() < deadline =>
             {
                 std::thread::sleep(Duration::from_millis(100));
@@ -289,13 +287,121 @@ fn extract_files(bytes: &[u8], root: &Path, selected: Option<&[PathBuf]>) -> Res
             continue;
         }
         let out = root.join(relative);
-        let error = |e| format!("Could not write {}: {e}", out.display());
-        fs::create_dir_all(out.parent().unwrap()).map_err(error)?;
-        let mut dest = retry_file_lock(|| fs::File::create(&out)).map_err(error)?;
-        std::io::copy(&mut f, &mut dest).map_err(error)?;
-        dest.sync_all().map_err(error)?;
+        replace_file(&mut f, &out)
+            .map_err(|e| format!("Could not write {}: {e}", out.display()))?;
     }
     Ok(())
+}
+/// Write beside the target, then swap it in. A crash leaves either the old or
+/// the new file in place, never a truncated one.
+fn replace_file(source: &mut impl Read, out: &Path) -> std::io::Result<()> {
+    fs::create_dir_all(
+        out.parent()
+            .ok_or_else(|| std::io::Error::other("No parent folder"))?,
+    )?;
+    let mut name = out.as_os_str().to_owned();
+    name.push(".new");
+    let staged = PathBuf::from(name);
+    let result = (|| {
+        let mut dest = fs::File::create(&staged)?;
+        std::io::copy(source, &mut dest)?;
+        dest.sync_all()?;
+        drop(dest);
+        retry_file_lock(|| swap_in(&staged, out))
+    })();
+    if result.is_err() {
+        let _ = fs::remove_file(&staged);
+    }
+    result
+}
+#[cfg(windows)]
+fn swap_in(staged: &Path, out: &Path) -> std::io::Result<()> {
+    use std::os::windows::ffi::OsStrExt;
+    use windows_sys::Win32::Storage::FileSystem::{
+        MoveFileExW, MOVEFILE_REPLACE_EXISTING, MOVEFILE_WRITE_THROUGH,
+    };
+    let from: Vec<u16> = staged.as_os_str().encode_wide().chain(Some(0)).collect();
+    let to: Vec<u16> = out.as_os_str().encode_wide().chain(Some(0)).collect();
+    if unsafe {
+        MoveFileExW(
+            from.as_ptr(),
+            to.as_ptr(),
+            MOVEFILE_REPLACE_EXISTING | MOVEFILE_WRITE_THROUGH,
+        )
+    } == 0
+    {
+        return Err(std::io::Error::last_os_error());
+    }
+    Ok(())
+}
+#[cfg(not(windows))]
+fn swap_in(staged: &Path, out: &Path) -> std::io::Result<()> {
+    fs::rename(staged, out)?;
+    if let Some(parent) = out.parent() {
+        fs::File::open(parent)?.sync_all()?;
+    }
+    Ok(())
+}
+/// Remove older update folders. Keep the newest `staged` and `backups`, and
+/// never the folder this process runs from.
+fn prune_updates(root: &Path, staged: usize, backups: usize) {
+    let running = std::env::current_exe()
+        .ok()
+        .and_then(|exe| fs::canonicalize(exe).ok());
+    let Ok(entries) = fs::read_dir(root.join(".updates")) else {
+        return;
+    };
+    let mut found: Vec<(bool, std::time::SystemTime, PathBuf)> = entries
+        .flatten()
+        .filter_map(|entry| {
+            let name = entry.file_name().to_string_lossy().into_owned();
+            let kind = if name.starts_with("staged-") {
+                true
+            } else if name.starts_with("backup-") {
+                false
+            } else {
+                return None;
+            };
+            let meta = entry.path().symlink_metadata().ok()?;
+            if !meta.is_dir() {
+                return None;
+            }
+            let time = meta.modified().unwrap_or(std::time::UNIX_EPOCH);
+            Some((kind, time, entry.path()))
+        })
+        .collect();
+    found.sort_by(|a, b| b.1.cmp(&a.1));
+    for kind in [true, false] {
+        let keep = if kind { staged } else { backups };
+        for (_, _, path) in found.iter().filter(|f| f.0 == kind).skip(keep) {
+            let in_use = running.as_ref().is_some_and(|exe| {
+                fs::canonicalize(path).is_ok_and(|folder| exe.starts_with(folder))
+            });
+            if !in_use {
+                let _ = fs::remove_dir_all(path);
+            }
+        }
+    }
+}
+/// Progress events at most every 100 ms or 1%, plus the final one.
+struct Throttle {
+    last: Option<(std::time::Instant, u64)>,
+}
+impl Throttle {
+    fn ready(&mut self, done: u64, total: u64, now: std::time::Instant) -> bool {
+        let due = match self.last {
+            None => true,
+            Some((time, at)) => {
+                done >= total
+                    || now.duration_since(time) >= Duration::from_millis(100)
+                    || done.saturating_sub(at) >= total / 100
+            }
+        };
+        if due {
+            self.last = Some((now, done));
+        }
+        due
+    }
 }
 fn verify_zip(bytes: &[u8], release: &Release) -> Result<(), String> {
     if bytes.len() as u64 != release.size
@@ -337,6 +443,7 @@ pub fn download(
         .map_err(|e| e.to_string())?;
     let mut bytes = Vec::with_capacity(release.size as usize);
     let mut buf = [0u8; 65536];
+    let mut throttle = Throttle { last: None };
     loop {
         let n = response.read(&mut buf).map_err(|e| e.to_string())?;
         if n == 0 {
@@ -346,7 +453,9 @@ pub fn download(
             return Err("Update exceeded its signed size".into());
         }
         bytes.extend_from_slice(&buf[..n]);
-        progress(bytes.len() as u64, release.size);
+        if throttle.ready(bytes.len() as u64, release.size, std::time::Instant::now()) {
+            progress(bytes.len() as u64, release.size);
+        }
     }
     verify_zip(&bytes, &release)?;
     let staging = root
@@ -364,7 +473,7 @@ pub fn download(
                 .saturating_mul(2),
         );
     }
-    if fs2::available_space(root).map_err(|e| e.to_string())? < required {
+    if crate::platform::available_space(root).map_err(|e| e.to_string())? < required {
         return Err(
             "Not enough free space to stage the update and preserve a rollback copy.".into(),
         );
@@ -378,6 +487,8 @@ pub fn download(
     })();
     if result.is_err() {
         let _ = fs::remove_dir_all(&staging);
+    } else {
+        prune_updates(root, 1, 2);
     }
     result
 }
@@ -436,7 +547,8 @@ pub fn apply_archive(root: &Path, bytes: &[u8]) -> Result<PathBuf, String> {
     if let Err(e) = extract_files(bytes, root, Some(&paths)) {
         for p in &paths {
             if saved.contains(p) {
-                let _ = fs::copy(backup.join(p), root.join(p));
+                let _ = fs::File::open(backup.join(p))
+                    .and_then(|mut old| replace_file(&mut old, &root.join(p)));
             } else {
                 let _ = fs::remove_file(root.join(p));
             }
@@ -487,7 +599,7 @@ pub fn run_helper(root: &Path, pid: u32) -> Result<(), String> {
             .write(true)
             .open(data.join("instance.lock"))
             .map_err(|e| e.to_string())?;
-        lock.try_lock_exclusive()
+        lock.try_lock()
             .map_err(|_| "Another DazeDev instance is using this folder")?;
         let exe = std::env::current_exe().map_err(|e| e.to_string())?;
         let stage =
@@ -501,6 +613,7 @@ pub fn run_helper(root: &Path, pid: u32) -> Result<(), String> {
         let bytes = fs::read(stage.join("update.zip")).map_err(|e| e.to_string())?;
         verify_zip(&bytes, &release)?;
         let backup = apply_archive(root, &bytes)?;
+        prune_updates(root, 1, 2);
         drop(lock);
         if let Err(e) = std::process::Command::new(root.join("DazeDev.exe"))
             .current_dir(root)
@@ -508,7 +621,8 @@ pub fn run_helper(root: &Path, pid: u32) -> Result<(), String> {
         {
             for p in inspect_zip(&bytes)? {
                 if backup.join(&p).exists() {
-                    let _ = fs::copy(backup.join(&p), root.join(&p));
+                    let _ = fs::File::open(backup.join(&p))
+                        .and_then(|mut old| replace_file(&mut old, &root.join(&p)));
                 }
             }
             let _ = std::process::Command::new(root.join("DazeDev.exe")).spawn();
@@ -928,6 +1042,60 @@ mod tests {
         assert_eq!(fs::read(root.join("DazeDev.exe")).unwrap(), b"MZold");
         assert_eq!(fs::read(root.join("runtime")).unwrap(), b"blocking file");
         fs::remove_dir_all(root).unwrap();
+    }
+    #[test]
+    fn replacement_leaves_no_staged_file_and_keeps_old_file_on_failure() {
+        let root = std::env::temp_dir().join(format!("daze-swap-{}", uuid::Uuid::new_v4()));
+        fs::create_dir_all(&root).unwrap();
+        let target = root.join("DazeDev.exe");
+        fs::write(&target, b"MZold").unwrap();
+        replace_file(&mut b"MZnew".as_slice(), &target).unwrap();
+        assert_eq!(fs::read(&target).unwrap(), b"MZnew");
+        assert!(!root.join("DazeDev.exe.new").exists());
+        struct Broken;
+        impl Read for Broken {
+            fn read(&mut self, _: &mut [u8]) -> std::io::Result<usize> {
+                Err(std::io::Error::other("connection lost"))
+            }
+        }
+        assert!(replace_file(&mut Broken, &target).is_err());
+        assert_eq!(fs::read(&target).unwrap(), b"MZnew");
+        assert!(!root.join("DazeDev.exe.new").exists());
+        fs::remove_dir_all(root).unwrap();
+    }
+    #[test]
+    fn old_update_folders_are_pruned_to_the_newest() {
+        let root = std::env::temp_dir().join(format!("daze-prune-{}", uuid::Uuid::new_v4()));
+        let updates = root.join(".updates");
+        for n in 0..4 {
+            for kind in ["staged", "backup"] {
+                let dir = updates.join(format!("{kind}-{n}"));
+                fs::create_dir_all(&dir).unwrap();
+                fs::write(dir.join("file"), b"x").unwrap();
+                // Folder times order the pruning; keep them distinct.
+                std::thread::sleep(Duration::from_millis(20));
+            }
+        }
+        fs::write(updates.join("other"), b"kept").unwrap();
+        prune_updates(&root, 1, 2);
+        let mut left: Vec<_> = fs::read_dir(&updates)
+            .unwrap()
+            .map(|e| e.unwrap().file_name().to_string_lossy().into_owned())
+            .collect();
+        left.sort();
+        assert_eq!(left, ["backup-2", "backup-3", "other", "staged-3"]);
+        fs::remove_dir_all(root).unwrap();
+    }
+    #[test]
+    fn progress_is_throttled_by_time_and_share() {
+        let start = std::time::Instant::now();
+        let mut throttle = Throttle { last: None };
+        assert!(throttle.ready(65536, 100_000_000, start));
+        assert!(!throttle.ready(131072, 100_000_000, start));
+        assert!(throttle.ready(1_100_000, 100_000_000, start));
+        assert!(!throttle.ready(1_200_000, 100_000_000, start));
+        assert!(throttle.ready(1_300_000, 100_000_000, start + Duration::from_millis(100)));
+        assert!(throttle.ready(100_000_000, 100_000_000, start + Duration::from_millis(101)));
     }
     #[test]
     fn portable_replacement_preserves_data_and_backup() {

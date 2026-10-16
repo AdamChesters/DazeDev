@@ -1,5 +1,4 @@
 //! Portable client storage and verified migration from the installer releases.
-use fs2::FileExt;
 use sha2::{Digest, Sha256};
 use std::{
     fs,
@@ -171,7 +170,7 @@ pub fn prepare(root: &Path, old_app_data: &Path) -> Result<(PathBuf, fs::File), 
         .unwrap_or_else(|| root.join("data"));
     fs::create_dir_all(&data)
         .map_err(|e| format!("DazeDev needs a writable portable folder: {e}"))?;
-    crate::private_storage::tree(&data).map_err(|e| format!("This filesystem cannot protect DazeDev data: {e}. Existing settings were preserved. Move the app and data to a private user folder, or set DAZEDEV_DATA_DIR to a private storage folder."))?;
+    crate::private_storage::secure_root(&data).map_err(|e| format!("This filesystem cannot protect DazeDev data: {e}. Existing settings were preserved. Move the app and data to a private user folder, or set DAZEDEV_DATA_DIR to a private storage folder."))?;
     let lock = fs::OpenOptions::new()
         .create(true)
         .truncate(false)
@@ -179,7 +178,7 @@ pub fn prepare(root: &Path, old_app_data: &Path) -> Result<(PathBuf, fs::File), 
         .write(true)
         .open(data.join("instance.lock"))
         .map_err(|e| e.to_string())?;
-    lock.try_lock_exclusive().map_err(|_| {
+    lock.try_lock().map_err(|_| {
         "DazeDev is already running from this folder. Close it before opening another copy."
             .to_string()
     })?;
@@ -223,7 +222,9 @@ pub fn prepare(root: &Path, old_app_data: &Path) -> Result<(PathBuf, fs::File), 
     let mut seen = std::collections::HashSet::new();
     sources.retain(|p| seen.insert(p.clone()));
     let moved = migrate(&data, &sources)?;
-    crate::private_storage::tree(&data).map_err(|e| e.to_string())?;
+    if moved > 0 {
+        crate::private_storage::secure_root(&data).map_err(|e| e.to_string())?;
+    }
     if moved > 0 {
         let mut f = fs::OpenOptions::new()
             .create(true)

@@ -74,7 +74,7 @@ fn relay_url(endpoint: &str) -> Result<reqwest::Url, String> {
 }
 
 fn relay_client() -> Result<reqwest::blocking::Client, String> {
-    let builder = reqwest::blocking::Client::builder()
+    let builder = crate::local_http::builder()
         .redirect(reqwest::redirect::Policy::none())
         .connect_timeout(Duration::from_secs(5))
         .timeout(Duration::from_secs(20))

@@ -1,5 +1,6 @@
 //! One offline worker shared by all panes; audio and finalization use one FIFO.
 use crate::audio_queue::{AudioBudget, AudioFrame};
+use crate::sync::LockExt;
 use crate::transport::EventSink;
 use ort::{session::Session as OrtSession, value::Tensor};
 use serde::{Deserialize, Serialize};
@@ -69,12 +70,13 @@ pub fn download_cancellable(
         .find(|m| m.id == id)
         .ok_or("Unknown model")?;
     fs::create_dir_all(dir).map_err(|e| e.to_string())?;
-    if fs2::available_space(dir).map_err(|e| e.to_string())? < m.size + 64 * 1024 * 1024 {
+    if crate::platform::available_space(dir).map_err(|e| e.to_string())? < m.size + 64 * 1024 * 1024
+    {
         return Err("Not enough free space for this model and its download staging file.".into());
     }
     let tmp = dir.join(format!("{}.{}.part", m.file, uuid::Uuid::new_v4()));
     let result = (|| {
-        let client = reqwest::blocking::Client::builder()
+        let client = crate::local_http::builder()
             .connect_timeout(Duration::from_secs(20))
             .timeout(Duration::from_secs(7200))
             .build()
@@ -228,6 +230,16 @@ struct Cleanup {
     child: SharedChild,
     url: String,
     key: String,
+    /// Kills the runtime if DazeDev exits without stopping it.
+    #[cfg(windows)]
+    _job: Option<crate::local_sessions::job::Job>,
+}
+/// Models unload after this long without dictation.
+const IDLE_UNLOAD: Duration = Duration::from_secs(600);
+enum StartError {
+    /// Another program took the port between choosing and binding it.
+    PortTaken,
+    Failed(String),
 }
 impl Drop for Cleanup {
     fn drop(&mut self) {
@@ -235,7 +247,7 @@ impl Drop for Cleanup {
     }
 }
 fn stop_child(child: &SharedChild) {
-    if let Some(mut process) = child.lock().unwrap().take() {
+    if let Some(mut process) = child.locked().take() {
         let _ = process.kill();
         let _ = process.wait();
     }
@@ -265,8 +277,23 @@ impl Cleanup {
         if !exe.exists() {
             return Err("Cleanup runtime is missing from this build".into());
         }
-        let listener = std::net::TcpListener::bind("127.0.0.1:0").map_err(|e| e.to_string())?;
-        let port = listener.local_addr().unwrap().port();
+        for _ in 0..3 {
+            match Self::start_once(exe, model, child_slot.clone()) {
+                Ok(service) => return Ok(service),
+                Err(StartError::PortTaken) => continue,
+                Err(StartError::Failed(error)) => return Err(error),
+            }
+        }
+        Err("Cleanup runtime could not get a free local port".into())
+    }
+    fn start_once(exe: &Path, model: &Path, child_slot: SharedChild) -> Result<Self, StartError> {
+        let failed = |e: String| StartError::Failed(e);
+        let listener =
+            std::net::TcpListener::bind("127.0.0.1:0").map_err(|e| failed(e.to_string()))?;
+        let port = listener
+            .local_addr()
+            .map_err(|e| failed(e.to_string()))?
+            .port();
         drop(listener);
         let key = uuid::Uuid::new_v4().to_string();
         let mut cmd = Command::new(exe);
@@ -301,27 +328,54 @@ impl Cleanup {
             use std::os::windows::process::CommandExt;
             cmd.creation_flags(0x08000000);
         }
-        let child = cmd.spawn().map_err(|e| e.to_string())?;
-        *child_slot.lock().unwrap() = Some(child);
+        // Linux: the runtime gets SIGKILL when the thread that started it
+        // ends, including when DazeDev crashes.
+        #[cfg(target_os = "linux")]
+        unsafe {
+            use std::os::unix::process::CommandExt;
+            let parent = libc::getpid();
+            cmd.pre_exec(move || {
+                if libc::prctl(libc::PR_SET_PDEATHSIG, libc::SIGKILL) != 0 {
+                    return Err(std::io::Error::last_os_error());
+                }
+                if libc::getppid() != parent {
+                    libc::_exit(1);
+                }
+                Ok(())
+            });
+        }
+        let child = cmd.spawn().map_err(|e| failed(e.to_string()))?;
+        // Windows: a kill-on-close job ends the runtime with DazeDev. If the
+        // job cannot be set up, dictation still works; only crash cleanup is lost.
+        #[cfg(windows)]
+        let job = crate::local_sessions::job::Job::assign(child.id()).ok();
+        *child_slot.locked() = Some(child);
         let service = Self {
             child: child_slot,
             url: format!("http://127.0.0.1:{port}"),
             key,
+            #[cfg(windows)]
+            _job: job,
         };
-        let client = crate::local_http::client(Duration::from_millis(500))?;
+        let client = crate::local_http::client(Duration::from_millis(500)).map_err(failed)?;
         let start = Instant::now();
         while start.elapsed() < Duration::from_secs(120) {
             if service
                 .child
-                .lock()
-                .unwrap()
+                .locked()
                 .as_mut()
-                .ok_or("Cleanup stopped")?
+                .ok_or_else(|| failed("Cleanup stopped".into()))?
                 .try_wait()
-                .map_err(|e| e.to_string())?
+                .map_err(|e| failed(e.to_string()))?
                 .is_some()
             {
-                return Err("Local cleanup runtime exited during model load".into());
+                // If the port is in use now, someone else bound it first.
+                if std::net::TcpListener::bind(("127.0.0.1", port)).is_err() {
+                    return Err(StartError::PortTaken);
+                }
+                return Err(failed(
+                    "Local cleanup runtime exited during model load".into(),
+                ));
             }
             if client
                 .get(format!("{}/health", service.url))
@@ -334,7 +388,7 @@ impl Cleanup {
             }
             std::thread::sleep(Duration::from_millis(100));
         }
-        Err("Cleanup model load timed out".into())
+        Err(failed("Cleanup model load timed out".into()))
     }
     fn clean(
         &self,
@@ -585,7 +639,7 @@ impl Voice {
         let _ = self.tx.send(Message::Shutdown);
         // Native backend globals must outlive the inference thread and model destructors.
         // In particular libc++ tears its mutexes down at process exit on macOS.
-        let worker = self.worker.lock().unwrap().take();
+        let worker = self.worker.locked().take();
         if let Some(worker) = worker {
             let _ = worker.join();
         }
@@ -648,6 +702,7 @@ fn worker(
     let threads = inference_threads();
     let mut recording_id = String::new();
     let mut decode_family = None;
+    let mut last_used = Instant::now();
     loop {
         if !enabled && !retain {
             session = None;
@@ -655,9 +710,36 @@ fn worker(
             cached_cleanup = None;
             loaded.clear();
         }
-        let Ok(msg) = rx.recv() else {
-            break;
+        let loaded_any = session.is_some() || vad.is_some() || cached_cleanup.is_some();
+        let msg = if loaded_any && !enabled {
+            match rx.recv_timeout(IDLE_UNLOAD.saturating_sub(last_used.elapsed())) {
+                Ok(msg) => msg,
+                Err(mpsc::RecvTimeoutError::Timeout) => {
+                    // Free model memory after a long pause; the next
+                    // dictation loads them again.
+                    if !busy.load(Ordering::Acquire) {
+                        session = None;
+                        vad = None;
+                        cached_cleanup = None;
+                        loaded.clear();
+                    }
+                    last_used = Instant::now();
+                    continue;
+                }
+                Err(mpsc::RecvTimeoutError::Disconnected) => break,
+            }
+        } else {
+            let Ok(msg) = rx.recv() else {
+                break;
+            };
+            msg
         };
+        if matches!(
+            msg,
+            Message::Start { .. } | Message::Audio(_) | Message::Stop
+        ) {
+            last_used = Instant::now();
+        }
         match msg {
             Message::Start {
                 recording,
@@ -981,7 +1063,7 @@ fn worker(
                 let mut profile = hardware_profile();
                 profile["loadedModel"] = json!(loaded);
                 profile["pendingSamples"] = json!(budget.pending());
-                profile["cleanupRunning"] = json!(child.lock().unwrap().is_some());
+                profile["cleanupRunning"] = json!(child.locked().is_some());
                 let _ = ack.send(profile);
             }
             Message::Shutdown => break,

@@ -1,4 +1,5 @@
 //! Only the configured shortcut is sampled. No typing history is collected.
+use crate::sync::LockExt;
 use serde::{Deserialize, Serialize};
 use std::sync::{
     atomic::{AtomicBool, Ordering},
@@ -47,7 +48,7 @@ impl Monitor {
                 let mut generation = 0;
                 while !stop.load(Ordering::Relaxed) {
                     let (version, active) = {
-                        let value = binding.lock().unwrap();
+                        let value = binding.locked();
                         (
                             value.0,
                             value.1.as_ref().is_some_and(|b| {
@@ -82,7 +83,7 @@ impl Monitor {
         if let Some(b) = &binding {
             b.validate()?;
         }
-        let mut value = self.binding.lock().unwrap();
+        let mut value = self.binding.locked();
         value.0 += 1;
         value.1 = binding;
         Ok(cfg!(windows))

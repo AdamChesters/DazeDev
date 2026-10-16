@@ -1,4 +1,5 @@
 use super::{required, Server};
+use crate::sync::LockExt;
 use base64::{engine::general_purpose::STANDARD, Engine};
 use serde_json::{json, Value};
 use sha2::{Digest, Sha256};
@@ -313,7 +314,7 @@ fn size(a: &Value) -> Result<u64, String> {
     Ok(n)
 }
 fn space(files: &Files, folder: &Path, size: u64, exclude: Option<&str>) -> Result<Value, String> {
-    let free = fs2::available_space(folder).map_err(|e| e.to_string())?;
+    let free = crate::platform::available_space(folder).map_err(|e| e.to_string())?;
     let reserved: u64 = files
         .uploads
         .iter()
@@ -338,11 +339,11 @@ pub(super) fn request(
     let profile = profile_path(server, host)?;
     match method {
         "profile_load" => {
-            let _guard = server.profiles.lock().unwrap();
+            let _guard = server.profiles.locked();
             load(&profile)
         }
         "profile_save" => {
-            let _guard = server.profiles.lock().unwrap();
+            let _guard = server.profiles.locked();
             let before = load(&profile)?;
             if before["revision"] != a["revision"] {
                 return Err("CONFLICT: local workspace changed; reload or keep recovery".into());
@@ -402,7 +403,7 @@ pub(super) fn request(
             read_file(path)
         }
         "document_save" => {
-            let _guard = server.profiles.lock().unwrap();
+            let _guard = server.profiles.locked();
             let path = Path::new(required(a, "path")?);
             let before = read_file(path)?;
             if before["writable"] != true {
@@ -440,7 +441,7 @@ pub(super) fn request(
             Ok(json!({"files":rows,"warnings":[]}))
         }
         "dictionary_read" | "dictionary_write" => {
-            let _guard = server.profiles.lock().unwrap();
+            let _guard = server.profiles.locked();
             let path = server.root.join("dictionary.json");
             let before = crate::dictionary::load(&server.root)?;
             let revision = if path.exists() {
@@ -463,7 +464,7 @@ pub(super) fn request(
         "upload_preflight" | "upload_begin" => {
             let folder = upload_folder(server, a)?;
             let n = size(a)?;
-            let mut files = server.files.lock().unwrap();
+            let mut files = server.files.locked();
             files
                 .uploads
                 .retain(|_, u| u.touched.elapsed() < Duration::from_secs(1800));
@@ -522,7 +523,7 @@ pub(super) fn request(
         }
         "upload_chunk" | "upload_finish" | "upload_abort" => {
             let id = required(a, "id")?;
-            let mut files = server.files.lock().unwrap();
+            let mut files = server.files.locked();
             let u = files.uploads.get(id).ok_or("Upload unavailable")?;
             if u.host != host {
                 return Err("Upload belongs to another host".into());
