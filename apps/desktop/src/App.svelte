@@ -2552,6 +2552,17 @@
     await call('device_save', { value: { ...$state.snapshot(device), recovery } });
     await call('app_close');
   }
+  let closeFailure = $state('');
+  let closingApp = $state(false);
+  $effect(() => {
+    if (modal !== 'close-native') closingApp = false;
+  });
+  async function closeAnyway() {
+    closeFailure = '';
+    clearTimeout(deviceTimer);
+    await call('device_save', { value: { ...$state.snapshot(device), recovery } }).catch(() => {});
+    await call('app_close');
+  }
   function closePane(p: Pane, confirmed = false) {
     if (dictationActive && p.id === voiceTarget) {
       notice = 'Stop dictation before closing its terminal.';
@@ -3545,6 +3556,7 @@
                 notice = 'Finish dictation and copy or discard retained text before closing.';
                 return;
               }
+              closeFailure = '';
               try {
                 const native: Pane[] = [];
                 for (const host of device.hosts.filter((h) => h.kind === 'powershell')) {
@@ -3556,10 +3568,14 @@
                   for (const session of sessions.filter((s) => s.running))
                     native.push({ hostId: host.id, sessionId: session.id } as Pane);
                 }
-                if (offerNativeClose(native, destroyApp)) return;
+                if (offerNativeClose(native, destroyApp)) {
+                  closingApp = true;
+                  return;
+                }
                 await destroyApp();
               } catch (e) {
-                fail(e);
+                // A failed check must never trap the user in the app.
+                closeFailure = String(e);
               }
             }),
           );
@@ -4953,6 +4969,9 @@
             disabled={busy}
             onclick={() => void task(() => finishNativeClose('end'))}>End sessions</button
           >
+          {#if closingApp}<button disabled={busy} onclick={() => void task(closeAnyway)}
+              >Close anyway</button
+            >{/if}
           <button
             disabled={busy}
             onclick={() => {
@@ -6598,3 +6617,26 @@
     value="write">Allow silently</option
   ><option value="read-write">Allow, and let programs read this clipboard</option>
 {/snippet}
+{#if closeFailure}
+  <div class="modal-backdrop" role="presentation">
+    <div
+      class="modal"
+      role="alertdialog"
+      aria-modal="true"
+      aria-labelledby="close-failure-title"
+      tabindex="-1"
+      use:focusDialog
+    >
+      <h2 id="close-failure-title">DazeDev could not check everything before closing</h2>
+      <p class="inline-error">{closeFailure}</p>
+      <p class="hint">
+        Close anyway ends this window now. Remote tmux sessions keep running; local PowerShell
+        sessions may be left in the background.
+      </p>
+      <div class="row">
+        <button class="danger" onclick={() => void task(closeAnyway)}>Close anyway</button>
+        <button onclick={() => (closeFailure = '')}>Cancel</button>
+      </div>
+    </div>
+  </div>
+{/if}
