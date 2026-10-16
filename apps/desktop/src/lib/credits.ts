@@ -12,6 +12,30 @@ export const credits = [
     url: 'https://github.com/briansmith/ring',
   },
   {
+    name: 'russh',
+    by: 'Pierre-Étienne Meunier and russh contributors',
+    license: 'Apache-2.0',
+    url: 'https://github.com/Eugeny/russh',
+  },
+  {
+    name: 'RustCrypto SSH crates (ssh-key)',
+    by: 'RustCrypto Developers',
+    license: 'Apache-2.0 / MIT',
+    url: 'https://github.com/RustCrypto/SSH',
+  },
+  {
+    name: 'curve25519-dalek / ed25519-dalek',
+    by: 'isis agora lovecruft, Henry de Valence and dalek-cryptography contributors',
+    license: 'BSD-3-Clause',
+    url: 'https://github.com/dalek-cryptography/curve25519-dalek',
+  },
+  {
+    name: 'Tokio',
+    by: 'Tokio contributors',
+    license: 'MIT',
+    url: 'https://github.com/tokio-rs/tokio',
+  },
+  {
     name: 'Tauri',
     by: 'Tauri contributors',
     license: 'MIT / Apache-2.0',

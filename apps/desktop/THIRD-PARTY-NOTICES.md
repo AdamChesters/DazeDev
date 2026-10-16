@@ -10,6 +10,10 @@ DazeDev's first implementation uses the following independently maintained compo
 | Lucide | ISC · https://github.com/lucide-icons/lucide |
 | ring 0.17.14 | ISC / Apache-2.0 / MIT · https://github.com/briansmith/ring · full bundled notices: `src-tauri/licenses/ring-0.17.14.txt` |
 | portable-pty | MIT · https://github.com/wez/wezterm |
+| russh 0.64.1 (built-in SSH client) | Apache-2.0 · https://github.com/Eugeny/russh · `src-tauri/licenses/russh-0.64.1-LICENSE.txt` |
+| RustCrypto SSH crates (ssh-key and related) | Apache-2.0 OR MIT · https://github.com/RustCrypto/SSH · `src-tauri/licenses/ssh-key-0.7.0-rc.11-LICENSE-*.txt` |
+| curve25519-dalek and ed25519-dalek | BSD-3-Clause · https://github.com/dalek-cryptography/curve25519-dalek · `src-tauri/licenses/curve25519-dalek-*-LICENSE.txt`, `ed25519-dalek-2.2.0-and-3.0.0-LICENSE.txt` |
+| Tokio | MIT · https://github.com/tokio-rs/tokio · `src-tauri/licenses/tokio-1.53.1-LICENSE.txt` |
 | transcribe.cpp | MIT · https://github.com/handy-computer/transcribe.cpp |
 | llama.cpp | MIT · https://github.com/ggml-org/llama.cpp |
 | Microsoft Visual C++ runtime | Microsoft redistributable runtime · https://learn.microsoft.com/cpp/windows/redistributing-visual-cpp-files |
