@@ -5,7 +5,7 @@ import { calls, emit, frame, resetTauri } from './support/tauri';
 import { Terminal as FakeTerminal } from './support/xterm';
 import { clipboard, installDom, pasteEvent } from './support/dom';
 import Terminal from '../src/components/Terminal.svelte';
-import { terminalDefaults, type TerminalSettings } from '../src/lib/terminals';
+import { terminals, terminalDefaults, type TerminalSettings } from '../src/lib/terminals';
 import type { Channel } from '@tauri-apps/api/core';
 import type { Host, Pane } from '../src/lib/types';
 
@@ -182,5 +182,51 @@ describe('Terminal output', () => {
     expect(
       screen.getByRole('textbox', { name: /Last received terminal output/ }).textContent,
     ).toContain('last line');
+  });
+});
+
+describe('input typed in the detached window', () => {
+  it('moves the dictation context on for this pane only, as relayed input does', async () => {
+    await attached();
+    const controls = terminals.get('p1')!;
+    const before = controls.context();
+    expect(before).not.toBe('');
+    emit('terminal-window-input', { paneId: 'p1', data: '\x1b[I' });
+    expect(controls.context()).toBe(before);
+    emit('terminal-window-input', { paneId: 'other', data: 'x' });
+    expect(controls.context()).toBe(before);
+    emit('terminal-window-input', { paneId: 'p1', data: 'x' });
+    const after = controls.context();
+    expect(after).not.toBe(before);
+    await expect(controls.submitReviewed!(before)).rejects.toThrow('terminal changed');
+    expect(typed()).toEqual([]);
+  });
+  it('sends the new paste context to the detached window', async () => {
+    const { rerender, props } = await attached();
+    await rerender({ ...props, floating: true, visible: false });
+    emit('terminal-window-input', { paneId: 'p1', data: 'x' });
+    expect(calls('terminal_window_publish')).toEqual([
+      { paneId: 'p1', value: { kind: 'context', context: terminals.get('p1')!.context() } },
+    ]);
+  });
+});
+
+describe('size set by the detached window', () => {
+  it('resizes the hidden view of a detached pane without resizing the PTY again', async () => {
+    const { term, rerender, props } = await attached();
+    await rerender({ ...props, floating: true, visible: false });
+    const resizes = calls('terminal_resize').length;
+    emit('terminal-window-resize', { paneId: 'other', cols: 90, rows: 30 });
+    emit('terminal-window-resize', { paneId: 'p1', cols: 0, rows: 30 });
+    expect([term.cols, term.rows]).not.toEqual([90, 30]);
+    emit('terminal-window-resize', { paneId: 'p1', cols: 90, rows: 30 });
+    expect([term.cols, term.rows]).toEqual([90, 30]);
+    expect(calls('terminal_resize')).toHaveLength(resizes);
+  });
+  it('ignores sizes for a pane shown in the workspace', async () => {
+    const { term } = await attached();
+    const size = [term.cols, term.rows];
+    emit('terminal-window-resize', { paneId: 'p1', cols: 90, rows: 30 });
+    expect([term.cols, term.rows]).toEqual(size);
   });
 });

@@ -1,11 +1,6 @@
 // @vitest-environment jsdom
 import { describe, expect, it, vi } from 'vitest';
-import {
-  WindowInputQueue,
-  handleLinkPresses,
-  relayedInput,
-  terminalKeyHandler,
-} from '../src/lib/terminal-input';
+import { WindowInputQueue, handleLinkPresses, terminalKeyHandler } from '../src/lib/terminal-input';
 import {
   PasteConfirmation,
   pasteEventHandler,
@@ -182,7 +177,7 @@ describe('window requests', () => {
 });
 
 describe('detached window input', () => {
-  // Fakes for the three routes; each send finishes when the test releases it.
+  // Fakes for both routes; each send finishes when the test releases it.
   const routes = () => {
     const log: string[] = [];
     const waiting: (() => void)[] = [];
@@ -201,34 +196,30 @@ describe('detached window input', () => {
         for (let i = 0; i < 10 && !waiting.length; i++) await Promise.resolve();
         waiting.shift()!();
       },
-      routes: { direct: route('direct'), binary: route('binary'), relay: route('relay') },
+      routes: { direct: route('direct'), binary: route('binary') },
     };
   };
-  it('relays input that changes the dictation context and sends focus reports directly', () => {
-    expect(relayedInput('a')).toBe(true);
-    expect(relayedInput('\r')).toBe(true);
-    expect(relayedInput('\x03')).toBe(true);
-    expect(relayedInput('\x1b[I')).toBe(false);
-    expect(relayedInput('\x1b[O')).toBe(false);
-  });
-  it('keeps direct and relayed input in the order typed', async () => {
+  it('sends every keystroke straight to the PTY, one at a time in the order typed', async () => {
     const fake = routes();
     const queue = new WindowInputQueue(fake.routes, () => true, vi.fn());
     void queue.input('ls');
     void queue.input('\x1b[I');
     void queue.binary('\x80');
+    void queue.input('\x03');
     const last = queue.input('\r');
-    for (let i = 0; i < 4; i++) await fake.release();
+    for (let i = 0; i < 5; i++) await fake.release();
     await last;
     expect(fake.log).toEqual([
-      'relay:ls:start',
-      'relay:ls:done',
+      'direct:ls:start',
+      'direct:ls:done',
       'direct:\x1b[I:start',
       'direct:\x1b[I:done',
       `binary:${btoa('\x80')}:start`,
       `binary:${btoa('\x80')}:done`,
-      'relay:\r:start',
-      'relay:\r:done',
+      'direct:\x03:start',
+      'direct:\x03:done',
+      'direct:\r:start',
+      'direct:\r:done',
     ]);
   });
   it('never resends failed input and drops input while not ready', async () => {
@@ -237,12 +228,10 @@ describe('detached window input', () => {
     const direct = vi.fn(async () => {
       throw new Error('lost');
     });
-    const relay = vi.fn(async () => {});
-    const queue = new WindowInputQueue({ direct, binary: direct, relay }, () => ready, failed);
-    await queue.input('\x1b[O');
+    const queue = new WindowInputQueue({ direct, binary: direct }, () => ready, failed);
     await queue.input('a');
+    await queue.input('\r');
     expect(direct).toHaveBeenCalledOnce();
-    expect(relay).not.toHaveBeenCalled();
     expect(failed).toHaveBeenCalledTimes(2);
     expect(String(failed.mock.calls[1])).toContain('paused');
   });
