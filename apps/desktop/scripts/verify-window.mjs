@@ -72,6 +72,9 @@ try {
   await evaluate(
     `new Promise((resolve,reject)=>{let tries=0;const t=setInterval(()=>{if(document.querySelector('.highlight-preview')){clearInterval(t);resolve(true)}else if(++tries>100){clearInterval(t);reject(Error('Settings preview missing'))}},50)})`,
   );
+  // The preview sits in a collapsed section; content in a closed <details>
+  // gets no resize events, so open it before measuring.
+  await evaluate(`document.querySelector('.highlight-preview').closest('details').open = true`);
   assert.equal(
     await evaluate(
       `document.querySelectorAll('[role=radio'+'group][aria-label="Transcription model"] input[type=radio]').length`,
@@ -109,9 +112,10 @@ try {
           const size = await evaluate(
             `(() => { const r=document.querySelector('.highlight-preview .energy-border').getBoundingClientRect(); return {w:r.width,h:r.height}; })()`,
           );
+          // Same density as energyCount in src/lib/energy-motion.ts.
           assert.equal(
             motes.count,
-            Math.max(24, Math.min(240, Math.ceil((2 * (size.w + size.h)) / 12))),
+            Math.max(24, Math.min(80, Math.ceil((2 * (size.w + size.h)) / 24))),
           );
           assert.ok(
             motes.speeds.every((s) => parseFloat(s) >= 20),
