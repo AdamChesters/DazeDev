@@ -5,7 +5,6 @@ import { remoteClipboardWrite, type TerminalSettings } from './terminals';
 // render the same palette, font, limits and add-ons.
 export type TerminalTheme = 'blue' | 'charcoal' | 'green';
 export const terminalFont = '"Cascadia Code", "SFMono-Regular", Consolas, monospace';
-export const imageCacheMb = 32;
 export const maxScrollback = 100000;
 const palette = {
   background: '#151616',
@@ -58,12 +57,14 @@ export function terminalOptions(
     theme: terminalTheme(theme),
   };
 }
+/** `scrollbackLimit` is the terminal's share of the window's memory budget. */
 export function applyTerminalSettings(
   term: Pick<Terminal, 'options'>,
   settings: Pick<TerminalSettings, 'fontSize' | 'scrollback' | 'screenReader'>,
+  scrollbackLimit = Infinity,
 ) {
   const fontSize = clampFontSize(settings.fontSize);
-  const scrollback = clampScrollback(settings.scrollback);
+  const scrollback = Math.min(clampScrollback(settings.scrollback), scrollbackLimit);
   const screenReader = !!settings.screenReader;
   if (term.options.fontSize !== fontSize) term.options.fontSize = fontSize;
   if (term.options.scrollback !== scrollback) term.options.scrollback = scrollback;
@@ -74,17 +75,22 @@ type Addon = ITerminalAddon;
 interface GpuAddon extends Addon {
   onContextLoss(listener: () => void): unknown;
 }
+interface ImageCache extends Addon {
+  storageLimit: number;
+}
 export interface AddonFactories {
   gpu: () => GpuAddon;
-  images: () => Addon;
+  /** `limitMb` is the image cache size in MB. */
+  images: (limitMb: number) => ImageCache;
   ligatures: () => Addon;
 }
 // Loads optional add-ons on demand. WebGL stays loaded while the terminal is
 // hidden; it is only dropped on context loss, when turned off, or on dispose.
 export class OptionalAddons {
   private gpu?: GpuAddon;
-  private images?: Addon;
+  private images?: ImageCache;
   private ligatures?: Addon;
+  private imageLimitMb = 32;
   constructor(
     private load: (addon: Addon) => void,
     private create: AddonFactories,
@@ -109,7 +115,7 @@ export class OptionalAddons {
       this.gpu = undefined;
     }
     if (settings.images && !this.images) {
-      this.images = this.create.images();
+      this.images = this.create.images(this.imageLimitMb);
       this.load(this.images);
     } else if (!settings.images && this.images) {
       this.images.dispose();
@@ -122,6 +128,11 @@ export class OptionalAddons {
       this.ligatures.dispose();
       this.ligatures = undefined;
     }
+  }
+  /** The image cache's share of the window's memory budget. */
+  set imageLimit(limitMb: number) {
+    this.imageLimitMb = limitMb;
+    if (this.images && this.images.storageLimit !== limitMb) this.images.storageLimit = limitMb;
   }
   get hasGpu() {
     return !!this.gpu;

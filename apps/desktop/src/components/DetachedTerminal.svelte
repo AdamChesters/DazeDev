@@ -20,6 +20,7 @@
   import { LigaturesAddon } from '@xterm/addon-ligatures';
   import { call, on, rpc, openExternal, desktop } from '../lib/bridge';
   import { outputChannel } from '../lib/terminal-bytes';
+  import { terminalBudget, type BudgetMember } from '../lib/terminal-budget';
   import { terminalPresentation } from '../lib/pane-status';
   import { deadPaneTarget } from '../lib/terminal-recovery';
   import { uploadClipboardFiles } from '../lib/clipboard-upload';
@@ -43,7 +44,7 @@
     OptionalAddons,
     ResizeSender,
     applyTerminalSettings,
-    imageCacheMb,
+    clampScrollback,
     macPlatform,
     remoteClipboard,
     terminalOptions,
@@ -61,6 +62,8 @@
   let addons: OptionalAddons | undefined;
   let ready = $state(false);
   let appliedTheme = '';
+  let budget: BudgetMember | undefined;
+  let scrollbackLimit = Infinity;
   let viewState = $state<WindowTerminalState | null>(null);
   let recoveryBusy = $state(false);
   let recoveryError = $state('');
@@ -283,7 +286,8 @@
         appliedTheme = viewState.theme;
         terminal.options.theme = terminalTheme(viewState.theme);
       }
-      applyTerminalSettings(terminal, viewState.settings);
+      budget?.update({ hidden: false, scrollback: clampScrollback(viewState.settings.scrollback) });
+      applyTerminalSettings(terminal, viewState.settings, scrollbackLimit);
       addons?.apply(viewState.settings);
       fitted();
     }
@@ -434,9 +438,19 @@
       if (disposed) return;
       addons = new OptionalAddons((addon) => terminal.loadAddon(addon), {
         gpu: () => new WebglAddon(),
-        images: () => new ImageAddon({ storageLimit: imageCacheMb }),
+        images: (storageLimit) => new ImageAddon({ storageLimit }),
         ligatures: () => new LigaturesAddon(),
       });
+      const settings = () => viewState?.settings || terminalDefaults;
+      budget = terminalBudget.add(
+        { hidden: false, scrollback: clampScrollback(settings().scrollback) },
+        (share) => {
+          scrollbackLimit = share.scrollback;
+          applyTerminalSettings(terminal, settings(), scrollbackLimit);
+          if (addons) addons.imageLimit = share.imageMb;
+        },
+      );
+      cleanup.push(() => budget?.remove());
       terminal.loadAddon(
         new ClipboardAddon(
           undefined,

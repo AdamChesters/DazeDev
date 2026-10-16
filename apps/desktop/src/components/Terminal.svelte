@@ -13,7 +13,7 @@
     OptionalAddons,
     ResizeSender,
     applyTerminalSettings,
-    imageCacheMb,
+    clampScrollback,
     macPlatform as isMac,
     remoteClipboard,
     terminalOptions,
@@ -22,6 +22,7 @@
   import PasteConfirm from './PasteConfirm.svelte';
   import { onMount, tick } from 'svelte';
   import { AckBatcher, outputChannel } from '../lib/terminal-bytes';
+  import { terminalBudget, type BudgetMember } from '../lib/terminal-budget';
   import { diagnostic } from '../lib/diagnostics';
   import { Terminal } from '@xterm/xterm';
   import { FitAddon } from '@xterm/addon-fit';
@@ -214,6 +215,14 @@
   let serializer: SerializeAddon;
   let addons: OptionalAddons | undefined;
   let addonsReady = $state(false);
+  let budget: BudgetMember | undefined;
+  let scrollbackLimit = Infinity;
+  // Hidden panes keep less history; the main view of a detached pane still
+  // feeds that window's snapshots, so it keeps a full share.
+  const budgetNeed = () => ({
+    hidden: !visible && !floating,
+    scrollback: clampScrollback(settings.scrollback),
+  });
   let linkMenu = $state<{ url: string; x: number; y: number } | null>(null);
   let hoverLink = '';
   const macPlatform = isMac();
@@ -400,7 +409,8 @@
   }
   $effect(() => {
     if (!addonsReady) return;
-    applyTerminalSettings(term, settings);
+    budget?.update(budgetNeed());
+    applyTerminalSettings(term, settings, scrollbackLimit);
     // WebGL is created when the view is first shown and kept while hidden.
     addons?.apply(settings, visible);
     fitted();
@@ -656,9 +666,15 @@
     );
     addons = new OptionalAddons((addon) => term.loadAddon(addon), {
       gpu: () => new WebglAddon(),
-      images: () => new ImageAddon({ storageLimit: imageCacheMb }),
+      images: (storageLimit) => new ImageAddon({ storageLimit }),
       ligatures: () => new LigaturesAddon(),
     });
+    budget = terminalBudget.add(budgetNeed(), (share) => {
+      scrollbackLimit = share.scrollback;
+      applyTerminalSettings(term, settings, scrollbackLimit);
+      if (addons) addons.imageLimit = share.imageMb;
+    });
+    disposers.push(() => budget?.remove());
     const progress = new ProgressAddon();
     term.loadAddon(progress);
     const progressListener = progress.onChange(onprogress);
