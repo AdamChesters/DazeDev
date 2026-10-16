@@ -229,8 +229,19 @@ class Bridge:
         except FileNotFoundError: pass
         if self.thread.ident is not None: self.thread.join(timeout=1)
 
+def own_ttys():
+    names = set()
+    for fd in (0, 1, 2):
+        try: names.add(os.ttyname(fd))
+        except OSError: pass
+    return names
+
 def attached_ttys():
-    if os.environ.get('TMUX'):
+    # A DazeDev terminal started from inside tmux inherits TMUX from its parent.
+    # When this process runs on the registered DazeDev terminal itself, that
+    # tmux is not ours: use the terminal route and never ask that tmux server.
+    direct = os.environ.get('DAZEDEV_BROWSER_TTY')
+    if os.environ.get('TMUX') and not (direct and direct in own_ttys()):
         socket_path = os.environ['TMUX'].rsplit(',', 2)[0]
         pane = os.environ.get('TMUX_PANE', '')
         if not re.fullmatch(r'%[0-9]+', pane): raise RuntimeError('Cannot identify this tmux pane')

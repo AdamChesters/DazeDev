@@ -142,6 +142,15 @@ class BrowserTests(unittest.TestCase):
   responses=[subprocess.CompletedProcess([],0,stdout='$1\n'),subprocess.CompletedProcess([],0,stdout=''.join('/dev/pts/'+str(n)+'\n' for n in range(65)))]
   with patch.dict(os.environ,{'TMUX':'/tmp/fixture,1,0','TMUX_PANE':'%1'}),patch.object(bridge.subprocess,'run',side_effect=responses):
    with self.assertRaisesRegex(RuntimeError,'Too many tmux clients'):bridge.attached_ttys()
+ def test_inherited_tmux_is_ignored_on_registered_terminal(self):
+  # The DazeDev terminal itself (not a tmux pane) with TMUX inherited from a parent.
+  with patch.dict(os.environ,{'TMUX':'/tmp/fixture,1,0','TMUX_PANE':'%1','DAZEDEV_BROWSER_TTY':'/dev/pts/7'}),patch.object(bridge,'own_ttys',return_value={'/dev/pts/7'}),patch.object(bridge.subprocess,'run') as run:
+   self.assertEqual(bridge.attached_ttys(),(['/dev/pts/7'],False))
+  run.assert_not_called()
+  # Inside a real tmux pane the terminal differs, so tmux clients are used.
+  responses=[subprocess.CompletedProcess([],0,stdout='$1\n'),subprocess.CompletedProcess([],0,stdout='/dev/pts/7\n')]
+  with patch.dict(os.environ,{'TMUX':'/tmp/fixture,1,0','TMUX_PANE':'%1','DAZEDEV_BROWSER_TTY':'/dev/pts/7'}),patch.object(bridge,'own_ttys',return_value={'/dev/pts/9'}),patch.object(bridge.subprocess,'run',side_effect=responses):
+   self.assertEqual(bridge.attached_ttys(),(['/dev/pts/7'],True))
  def test_server_waits_for_explicit_protocol_readiness(self):
   server=bridge.Bridge(SOURCE,uuid.uuid4().hex,uuid.uuid4().hex,self.opened.append,root=self.root,start=False);self.bridges.append(server)
   with socket.socket(socket.AF_UNIX,socket.SOCK_STREAM) as client:
