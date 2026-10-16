@@ -1,9 +1,22 @@
 <script lang="ts">
   import { restoreLinkHoverOnReentry } from '../lib/link-hover';
-  import { ReadinessDeadline, ConnectionOperations } from '../lib/connection-health';
+  import { ReadinessDeadline } from '../lib/connection-health';
   import { uploadClipboardFiles, readClipboardContent } from '../lib/clipboard-upload';
   import { copySelectedTerminalText } from '../lib/terminal-copy';
-  import { terminalNotification } from '../lib/terminal-alerts';
+  import { commandFinishedAlert, terminalNotification } from '../lib/terminal-alerts';
+  import {
+    OptionalAddons,
+    ResizeSender,
+    applyTerminalSettings,
+    imageCacheMb,
+    macPlatform as isMac,
+    remoteClipboard,
+    selectionMouseDown,
+    terminalOptions,
+    terminalTheme,
+  } from '../lib/terminal-setup';
+  import { needsPasteConfirmation } from '../lib/paste';
+  import PasteConfirm from './PasteConfirm.svelte';
   import { onMount, tick } from 'svelte';
   import { onTerminalOutput } from '../lib/terminal-output';
   import { diagnostic } from '../lib/diagnostics';
@@ -12,7 +25,6 @@
   import { WebglAddon } from '@xterm/addon-webgl';
   import { registerWebLinks } from '../lib/web-links';
   import { LiveBufferSearch, notifySearchUpdate } from '../lib/terminal-search';
-  import { SearchAddon } from '@xterm/addon-search';
   import { ClipboardAddon } from '@xterm/addon-clipboard';
   import { Unicode11Addon } from '@xterm/addon-unicode11';
   import { SerializeAddon } from '@xterm/addon-serialize';
@@ -28,10 +40,13 @@
     webUrl,
     reviewPasteText,
     terminalInputChangesContext,
+    paneLifecycle,
+    checkCommandText,
+    type PasteSource,
     type TerminalSettings,
   } from '../lib/terminals';
   import '@xterm/xterm/css/xterm.css';
-  import { unknownStatus, type PaneStatus } from '../lib/pane-status';
+  import { sameStatus, unknownStatus, type PaneStatus } from '../lib/pane-status';
   import { deadPaneTarget, recoverDeadPane } from '../lib/terminal-recovery';
   import { call, on, desktop, rpc } from '../lib/bridge';
   import type { Pane, Host } from '../lib/types';
@@ -59,7 +74,13 @@
     onoutput = () => {},
     onterminalfocus = () => false,
     oncloseview = () => {},
+    onclipboard = () => {},
+    onpastesetting = () => {},
+    watching = () => document.hasFocus(),
   }: {
+    onclipboard?: (characters: number) => void;
+    onpastesetting?: (confirm: boolean) => void;
+    watching?: () => boolean;
     onfile?: (path: string) => void;
     onsearch?: () => void;
     suppressFocus?: boolean;
@@ -84,14 +105,9 @@
     onmetadata?: (value: PaneStatus) => void;
     onprogress?: (value: { state: number; value: number }) => void;
   } = $props();
-  const accent = $derived(theme === 'blue' ? '#39bdd7' : theme === 'green' ? '#b9d5ad' : '#c4c9cf');
   $effect(() => {
-    if (term)
-      term.options.theme = {
-        ...term.options.theme,
-        cursor: accent,
-        selectionBackground: accent + '44',
-      };
+    const value = terminalTheme(theme);
+    if (addonsReady) term.options.theme = value;
   });
   let root: HTMLDivElement;
   let term: Terminal;
@@ -108,6 +124,8 @@
   const endedTarget = $derived(deadPaneTarget(observedStatus));
   function metadata(value: PaneStatus) {
     const wasEnded = observedStatus.paneDead;
+    // Polls return a new object each time; only report real changes.
+    if (sameStatus(observedStatus, value)) return;
     observedStatus = value;
     onmetadata(value);
     if (value.paneDead && !recoveryBusy) onstate('Session ended');
@@ -178,33 +196,27 @@
   let remotePid = 0;
   let dead = false;
   let suspended = false;
-  let searcher: SearchAddon;
   let serializer: SerializeAddon;
-  let gpu: WebglAddon | undefined;
-  let ligatures: LigaturesAddon | undefined;
-  let images: ImageAddon | undefined;
+  let addons: OptionalAddons | undefined;
   let addonsReady = $state(false);
-  let findOpen = $state(false),
-    query = $state(''),
-    regex = $state(false),
-    matchCase = $state(false);
-  let searchResult = $state('');
-  let findInput = $state<HTMLInputElement>();
   let linkMenu = $state<{ url: string; x: number; y: number } | null>(null);
   let hoverLink = '';
-  const macPlatform = /Mac|iPhone|iPad|iPod/i.test(navigator.platform);
+  const macPlatform = isMac();
   function followLink(event: MouseEvent, uri: string) {
     const modified = macPlatform ? event.metaKey : event.ctrlKey;
     if (modified) void openLink(uri);
     else if (imagePath(uri) && !term.hasSelection()) onfile?.(uri);
   }
-  let fitFrame = 0,
-    lastSize = '';
+  let fitFrame = 0;
+  let resizeNow = false;
+  const resizer = new ResizeSender((cols, rows) =>
+    opened ? call('terminal_resize', { id: pane.id, cols, rows }) : Promise.resolve(),
+  );
   let explicitPaste = false;
   let inputChain: Promise<void> = Promise.resolve();
   let reconnectTimer: ReturnType<typeof setTimeout> | undefined;
   const readiness = new ReadinessDeadline();
-  const lifecycle = new ConnectionOperations();
+  const lifecycle = paneLifecycle;
   let closing = $state(false);
   let closePending: Promise<unknown> | undefined;
   let retries = 0;
@@ -295,7 +307,24 @@
     if (!expected || uploadDestination() !== expected)
       throw new Error('Terminal changed while reading the clipboard. Paste again.');
     if (content.files.length) await pasteFiles(content.files);
-    else await paste(content.text);
+    else await pasteUserText(content.text);
+  }
+  let pasteRequest = $state<{ text: string; resolve: (accepted: boolean) => void } | null>(null);
+  function confirmPaste(text: string): Promise<boolean> {
+    if (!needsPasteConfirmation(text, settings.confirmPaste)) return Promise.resolve(true);
+    pasteRequest?.resolve(false);
+    return new Promise((resolve) => (pasteRequest = { text, resolve }));
+  }
+  function answerPaste(accepted: boolean, dontAsk = false) {
+    const request = pasteRequest;
+    pasteRequest = null;
+    if (accepted && dontAsk) onpastesetting(false);
+    request?.resolve(accepted);
+    term.focus();
+  }
+  // Clipboard text typed by the user: multi-line text asks first.
+  async function pasteUserText(text: string) {
+    if (await confirmPaste(text)) await paste(text);
   }
   function uploadDestination() {
     return !dead && opened && remoteReady && !detached
@@ -307,16 +336,24 @@
       ? `${generation}:${contextEpoch}:${pane.hostId}:${pane.sessionId}:${pane.stamp || ''}`
       : '';
   }
-  async function paste(text: string, enter = false, expectedContext?: string, review = false) {
+  // clipboard: normal paste rules; xterm adds bracketed paste when the app asks.
+  // command: app-generated single-line text. review: dictation and prompts.
+  async function paste(
+    text: string,
+    enter = false,
+    expectedContext?: string,
+    source: PasteSource | 'review' = 'clipboard',
+  ) {
     if (!opened || detached) throw new Error('Terminal is disconnected.');
     if (expectedContext !== undefined && (!expectedContext || context() !== expectedContext))
-      throw new Error('Terminal destination changed. Dictation retained for review and copy.');
-    // A line break may execute immediately in applications without bracketed paste.
-    if (review) text = reviewPasteText(text, term.modes.bracketedPasteMode);
-    if (!review && expectedContext !== undefined && /[\x00-\x1f\x7f]/.test(text))
       throw new Error(
-        'Dictation contains line breaks or control characters. Review and copy it before pasting.',
+        source === 'review'
+          ? 'Terminal destination changed. Dictation retained for review and copy.'
+          : 'The terminal changed. Nothing was pasted; try again.',
       );
+    // A line break may execute immediately in applications without bracketed paste.
+    if (source === 'review') text = reviewPasteText(text, term.modes.bracketedPasteMode);
+    if (source === 'command') checkCommandText(text);
     explicitPaste = true;
     try {term.paste(text);} finally {explicitPaste = false;}
     const afterPaste = context();
@@ -343,38 +380,8 @@
       onstate(`Cannot open link: ${e}`);
     }
   }
-  function find(previous = false) {
-    if (!query) {
-      searcher?.clearDecorations();
-      searchResult = '';
-      return;
-    }
-    const options = {
-      regex,
-      caseSensitive: matchCase,
-      decorations: {
-        matchBackground: '#405775',
-        activeMatchBackground: '#087ec9',
-        matchOverviewRuler: '#39bdd7',
-        activeMatchColorOverviewRuler: '#ffffff',
-      },
-    };
-    try {
-      const found = previous
-        ? searcher.findPrevious(query, options)
-        : searcher.findNext(query, options);
-      if (!found) searchResult = 'No matches';
-    } catch {
-      searchResult = 'Invalid expression';
-    }
-  }
   function showFind() {
-    if (onsearch) {
-      onsearch();
-      return;
-    }
-    findOpen = true;
-    requestAnimationFrame(() => findInput?.focus());
+    onsearch?.();
   }
   function exportOutput() {
     const output = detached ? retainedOutput : serializer.serialize({ excludeAltBuffer: false });
@@ -387,39 +394,9 @@
   }
   $effect(() => {
     if (!addonsReady) return;
-    term.options.screenReaderMode = settings.screenReader || false;
-    term.options.fontSize = Math.max(8, Math.min(32, settings.fontSize));
-    term.options.scrollback = Math.max(100, Math.min(100000, settings.scrollback));
-    if (settings.gpu && visible && !gpu) {
-      try {
-        gpu = new WebglAddon();
-        gpu.onContextLoss(() => {
-          gpu?.dispose();
-          gpu = undefined;
-        });
-        term.loadAddon(gpu);
-      } catch {
-        gpu?.dispose();
-        gpu = undefined;
-      }
-    } else if ((!settings.gpu || !visible) && gpu) {
-      gpu.dispose();
-      gpu = undefined;
-    }
-    if (settings.images && !images) {
-      images = new ImageAddon({ storageLimit: 32 });
-      term.loadAddon(images);
-    } else if (!settings.images && images) {
-      images.dispose();
-      images = undefined;
-    }
-    if (settings.ligatures && !ligatures) {
-      ligatures = new LigaturesAddon();
-      term.loadAddon(ligatures);
-    } else if (!settings.ligatures && ligatures) {
-      ligatures.dispose();
-      ligatures = undefined;
-    }
+    applyTerminalSettings(term, settings);
+    // WebGL is created when the view is first shown and kept while hidden.
+    addons?.apply(settings, visible);
     fitted();
   });
   async function attach(manual = false) {
@@ -466,7 +443,8 @@
       );
       if (g === generation && !dead) {
         if (remoteReady) onstate('Attached');
-        lastSize = '';
+        resizer.reset();
+        resizeNow = true;
         fitted();
       }
     } catch (e) {
@@ -481,15 +459,9 @@
       fitFrame = 0;
       try {
         fit.fit();
-        const size = `${term.cols}:${term.rows}`;
-        if (opened && size !== lastSize) {
-          lastSize = size;
-          void call('terminal_resize', { id: pane.id, cols: term.cols, rows: term.rows }).catch(
-            () => {
-              lastSize = '';
-            },
-          );
-        }
+        // Fit every frame; the PTY gets the final size once dragging pauses.
+        if (opened) resizer.request(term.cols, term.rows, resizeNow);
+        resizeNow = false;
       } catch {}
     });
   }
@@ -527,16 +499,8 @@
       }
     }
     statusTimer = setTimeout(pollStatus, 500);
-    term = new Terminal({
-      fontFamily: '"Cascadia Code", "SFMono-Regular", Consolas, monospace',
-      fontSize: 13,
-      lineHeight: 1.2,
-      scrollback: 4000,
-      convertEol: false,
-      cursorBlink: true,
-      macOptionClickForcesSelection: true,
-      allowProposedApi: true,
-      linkHandler: {
+    term = new Terminal(
+      terminalOptions(theme, settings, {
         activate: followLink,
         hover: (_e, uri) => {
           hoverLink = uri;
@@ -546,20 +510,8 @@
           hoverLink = '';
           root.title = '';
         },
-      },
-      theme: {
-        background: '#151616',
-        foreground: '#edede8',
-        cursor: accent,
-        selectionBackground: accent + '44',
-        black: '#151616',
-        brightBlack: '#858b83',
-        green: '#acd49e',
-        blue: '#9cbce3',
-        yellow: '#dcc28c',
-        red: '#ed9c92',
-      },
-    });
+      }),
+    );
     const shellMarker = term.parser.registerOscHandler(777, (data) => {
       if (data.startsWith(`dazedev-ready:${readyMarker}:`)) {
         if (!opened) return true;
@@ -590,13 +542,21 @@
       return true;
     });
     disposers.push(() => notificationHandler.dispose());
-    let commandRunning = false;
+    let commandStarted = 0;
     const shellStatus = term.parser.registerOscHandler(133, (data) => {
       const event = data.split(';')[0];
-      if (event === 'C') commandRunning = true;
-      if (event === 'D' && commandRunning) {
-        commandRunning = false;
-        onalert('Command finished');
+      if (event === 'C') commandStarted = Date.now();
+      if (event === 'D' && commandStarted) {
+        const startedAt = commandStarted;
+        commandStarted = 0;
+        if (
+          commandFinishedAlert({
+            startedAt,
+            now: Date.now(),
+            watched: (visible || floating) && active && watching(),
+          })
+        )
+          onalert('Command finished');
       }
       return false;
     });
@@ -630,18 +590,7 @@
         term.focus();
       } else {
         // Use xterm's selection override so link clicks never reach a remote TUI.
-        const selection = new MouseEvent('mousedown', {
-          bubbles: true,
-          cancelable: true,
-          view: window,
-          clientX: event.clientX,
-          clientY: event.clientY,
-          button: event.button,
-          buttons: event.buttons,
-          detail: event.detail,
-          shiftKey: !macPlatform,
-          altKey: macPlatform,
-        });
+        const selection = selectionMouseDown(event, macPlatform);
         selectionEvents.add(selection);
         event.target?.dispatchEvent(selection);
       }
@@ -687,8 +636,6 @@
             : '';
         },
       });
-    searcher = new SearchAddon();
-    term.loadAddon(searcher);
     serializer = new SerializeAddon();
     term.loadAddon(serializer);
     term.loadAddon(new Unicode11Addon());
@@ -703,23 +650,19 @@
     });
     disposers.push(() => webLinks.dispose());
     term.loadAddon(
-      new ClipboardAddon(undefined, {
-        readText: async () =>
-          settings.clipboard === 'read-write'
-            ? navigator.clipboard.readText().then((text) => (text.length <= 1048576 ? text : ''))
-            : '',
-        writeText: async (_selection, text) => {
-          if (settings.clipboard !== 'off' && text.length <= 1048576)
-            await navigator.clipboard.writeText(text);
-        },
-      }),
+      new ClipboardAddon(
+        undefined,
+        remoteClipboard(() => settings.clipboard, onclipboard),
+      ),
     );
+    addons = new OptionalAddons((addon) => term.loadAddon(addon), {
+      gpu: () => new WebglAddon(),
+      images: () => new ImageAddon({ storageLimit: imageCacheMb }),
+      ligatures: () => new LigaturesAddon(),
+    });
     const progress = new ProgressAddon();
     term.loadAddon(progress);
     const progressListener = progress.onChange(onprogress);
-    const resultListener = searcher.onDidChangeResults((r) => {
-      searchResult = r.resultCount ? `${r.resultIndex + 1} / ${r.resultCount}` : 'No matches';
-    });
     addonsReady = true;
     term.attachCustomKeyEventHandler((e) => {
       if (
@@ -732,11 +675,6 @@
       )
         return false;
       if (e.type !== 'keydown' || !(e.ctrlKey || e.metaKey)) return true;
-      if (e.shiftKey && e.code === 'KeyF') {
-        e.preventDefault();
-        showFind();
-        return false;
-      }
       if (!e.altKey && e.code === 'KeyV') {
         e.preventDefault();
         void pasteClipboard().catch((e) => reportClipboard(String(e)));
@@ -746,10 +684,12 @@
     });
     const clipboardPaste = (event: ClipboardEvent) => {
       const files = Array.from(event.clipboardData?.files || []);
-      if (!files.length) return;
+      const text = event.clipboardData?.getData('text/plain') || '';
+      if (!files.length && !needsPasteConfirmation(text, settings.confirmPaste)) return;
       event.preventDefault();
       event.stopImmediatePropagation();
-      void pasteFiles(files).catch((e) => reportClipboard(String(e)));
+      if (files.length) void pasteFiles(files).catch((e) => reportClipboard(String(e)));
+      else void pasteUserText(text).catch((e) => reportClipboard(String(e)));
     };
     root.addEventListener('paste', clipboardPaste, true);
     const input = term.onData((data) => {
@@ -788,7 +728,7 @@
       resize: async (cols, rows) => {
         if (floating && cols > 0 && rows > 0 && cols <= 1000 && rows <= 1000) {
           term.resize(cols, rows);
-          lastSize = `${cols}:${rows}`;
+          resizer.mark(cols, rows);
           if (opened) await call('terminal_resize', { id: pane.id, cols, rows });
         }
       },
@@ -818,11 +758,11 @@
         clearTimeout(reconnectTimer);
         await lifecycle.run(pane.id, () => call('terminal_close', { id: pane.id }));
       },
-      paste,
+      paste: (text, enter, expectedContext, source) => paste(text, enter, expectedContext, source),
       pasteClipboard,
-      pasteBroadcast: (text, expectedContext) => paste(text, true, expectedContext, true),
-      pasteDictation: (text, enter) => paste(text, enter, undefined, true),
-      pasteForReview: (text, expectedContext) => paste(text, false, expectedContext, true),
+      pasteBroadcast: (text, expectedContext) => paste(text, true, expectedContext, 'review'),
+      pasteDictation: (text, enter) => paste(text, enter, undefined, 'review'),
+      pasteForReview: (text, expectedContext) => paste(text, false, expectedContext, 'review'),
       submitReviewed: async (expectedContext) => {
         await inputChain;
         if (!expectedContext || context() !== expectedContext)
@@ -911,14 +851,16 @@
       mounted = false;
       observer.disconnect();
       cancelAnimationFrame(fitFrame);
+      resizer.dispose();
+      pasteRequest?.resolve(false);
       notifySearchUpdate(pane.id, true);
       terminals.delete(pane.id);
       binary.dispose();
       progressListener.dispose();
-      resultListener.dispose();
       input.dispose();
       shellMarker.dispose();
       disposers.forEach((f) => f());
+      addons?.dispose();
       term.dispose();
       void lifecycle.run(pane.id, () => call('terminal_close', { id: pane.id })).catch(() => {});
     };
@@ -927,40 +869,6 @@
 
 <div class="terminal-wrap" class:offline={detached}>
   {#if clipboardNotice}<div class="clipboard-status" role="status">{clipboardNotice}</div>{/if}
-  {#if findOpen}<div class="terminal-search" role="search" aria-label="Search terminal">
-      <input
-        bind:this={findInput}
-        bind:value={query}
-        aria-label="Search terminal output"
-        oninput={() => find()}
-        onkeydown={(e) => {
-          if (e.key === 'Enter') find(e.shiftKey);
-          if (e.key === 'Escape') {
-            findOpen = false;
-            term.focus();
-          }
-        }}
-      />
-      <label
-        ><input type="checkbox" bind:checked={matchCase} onchange={() => find()} />Match case</label
-      >
-      <label
-        ><input type="checkbox" bind:checked={regex} onchange={() => find()} />Regular expression</label
-      >
-      <span aria-live="polite">{searchResult}</span>
-      <button onclick={() => find(true)} aria-label="Previous match">↑</button><button
-        onclick={() => find()}
-        aria-label="Next match">↓</button
-      >
-      <button
-        onclick={() => {
-          findOpen = false;
-          searcher.clearDecorations();
-          term.focus();
-        }}
-        aria-label="Close search">×</button
-      >
-    </div>{/if}
   <div
     class="terminal"
     inert={detached}
@@ -1020,6 +928,11 @@
       >
     </button>
   {/if}
+  {#if pasteRequest}<PasteConfirm
+      text={pasteRequest.text}
+      onpaste={(dontAsk) => answerPaste(true, dontAsk)}
+      oncancel={() => answerPaste(false)}
+    />{/if}
   {#if transcript}<div class="live-transcript" aria-live="off">
       <span>Transcribing</span>
       {transcript}
@@ -1144,30 +1057,6 @@
   .terminal {
     flex: 1;
     min-height: 0;
-  }
-  .terminal-search {
-    position: absolute;
-    top: 0;
-    right: 0;
-    z-index: 5;
-    display: flex;
-    align-items: center;
-    gap: 4px;
-    padding: 6px;
-    background: var(--surface);
-    max-width: 100%;
-  }
-  .terminal-search input:not([type='checkbox']) {
-    width: 140px;
-    min-width: 50px;
-  }
-  .terminal-search label {
-    display: flex;
-    align-items: center;
-    gap: 2px;
-  }
-  .terminal-search button {
-    padding: 4px 6px;
   }
   .live-transcript {
     position: absolute;

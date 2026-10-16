@@ -38,3 +38,12 @@ export function terminalPresentation(
   }
   return { name: pane.name, type: pane.agent, model: pane.model };
 }
+
+// Status polls return a new object every time; keep the old one when equal.
+export function sameStatus(a: PaneStatus | undefined, b: PaneStatus | undefined): boolean {
+  if (a === b) return true;
+  if (!a || !b) return false;
+  const keys = new Set([...Object.keys(a), ...Object.keys(b)]) as Set<keyof PaneStatus>;
+  for (const key of keys) if (a[key] !== b[key]) return false;
+  return true;
+}

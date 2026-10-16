@@ -29,7 +29,23 @@
   import Licenses from './components/Licenses.svelte';
   import { hostLabel, terminalPresentation, unknownStatus, type PaneStatus } from './lib/pane-status';
   import { diagnostic, exportDiagnostics } from './lib/diagnostics';
-  import { onMount, tick } from 'svelte';
+  import { onMount, tick, untrack } from 'svelte';
+  import { AlertThrottle } from './lib/terminal-alerts';
+  import {
+    migrateClipboardPolicy,
+    paneContainers,
+    pruneKeys,
+    prunePaneChoices,
+  } from './lib/device-state';
+  import {
+    appActions,
+    appActionFor,
+    appShortcut,
+    shortcutConflict,
+    terminalOwnsKey,
+    type AppAction,
+  } from './lib/app-shortcuts';
+  import { macPlatform } from './lib/terminal-setup';
   import { sessionNameError } from './lib/session-name';
   import { recommendVoice, accelerationAdvice, type VoiceHardware } from './lib/hardware';
   import { fade } from 'svelte/transition';
@@ -79,7 +95,12 @@
     unknownVariables,
     type PromptValues,
   } from './lib/prompt';
-  import { terminals, terminalDefaults, deliverDictation } from './lib/terminals';
+  import {
+    terminals,
+    terminalDefaults,
+    deliverDictation,
+    type TerminalSettings,
+  } from './lib/terminals';
   import ColorPicker from './components/ColorPicker.svelte';
   import { tabColors, retainedPaneColors } from './lib/colors';
   import TmuxSettings from './components/TmuxSettings.svelte';
@@ -266,7 +287,7 @@
       dictation,
       settings: {
         ...(device.terminal || terminalDefaults),
-        clipboard: device.clipboardByHost?.[pane.hostId] || device.terminal?.clipboard || 'write',
+        clipboard: device.clipboardByHost?.[pane.hostId] || device.terminal?.clipboard || 'notify',
       },
       status: terminalState[pane.id] || '',
       ready: !!terminals.get(pane.id)?.context(),
@@ -350,8 +371,11 @@
       } else if (action === 'binary') await terminal.binary?.(String(args.data || ''));
       else if (action === 'resize') await terminal.resize?.(Number(args.cols), Number(args.rows));
       else if (action === 'paste') {
-        await terminal.paste(String(args.text || ''), false, String(args.context || ''));
+        // The terminal window already asked about multi-line text.
+        await terminal.paste(String(args.text || ''), false, String(args.context || ''), 'clipboard');
         result = terminal.context();
+      } else if (action === 'paste-confirm-off') {
+        setPasteConfirmation(false);
       } else if (action === 'reconnect') {
         terminal.resume?.();
         const host = device.hosts.find((h) => h.id === pane.hostId);
@@ -458,7 +482,7 @@
     notice = 'Repository prompt pasted for review. Press Enter in the terminal when ready.';
   }
   let alertAudio: AudioContext | undefined;
-  let lastTerminalAlert = 0;
+  const alertThrottle = new AlertThrottle();
   async function softAlert() {
     alertAudio ||= new AudioContext();
     await alertAudio.resume();
@@ -478,8 +502,7 @@
     };
   }
   function terminalAlert(pane: Pane, message: string) {
-    if (Date.now() - lastTerminalAlert < 3000) return;
-    lastTerminalAlert = Date.now();
+    if (!alertThrottle.allow(pane.id)) return;
     if (device.terminalAlerts?.visual) notice = `${pane.name}: ${message}`;
     if (device.terminalAlerts?.sound) void softAlert().catch(() => {});
   }
@@ -968,6 +991,7 @@
       effort && p.agent === 'claude' ? '/effort' : p.agent === 'opencode' ? '/models' : '/model',
       true,
       expectedContext,
+      'command',
     );
     terminals.get(p.id)?.focus?.();
   }
@@ -1858,6 +1882,11 @@
     deviceTimer = setTimeout(() => {
       void call('device_save', { value: { ...$state.snapshot(device), recovery } }).catch(fail);
     }, 180);
+  }
+  function setPasteConfirmation(confirm: boolean) {
+    device.terminal = { ...(device.terminal || terminalDefaults), confirmPaste: confirm };
+    persistDevice();
+    if (!confirm) notice = 'Multi-line paste no longer asks first. Change this in Settings > Terminal.';
   }
   function saved(hostId: string) {
     if (hostId === HOSTLESS) {
@@ -3285,7 +3314,7 @@
         if (desktop) aliases = await call<string[]>('ssh_aliases').catch(() => []);
         if (data) {
           if (data.recoveryNotice) notice = data.recoveryNotice;
-          device = {
+          device = migrateClipboardPolicy({
             ...defaults(),
             ...data,
             voice: { ...defaults().voice, ...data.voice },
@@ -3298,7 +3327,7 @@
             motionPreferenceVersion: 1,
             inputMode: data.inputMode || 'toggle',
             terminal: { ...terminalDefaults, ...data.terminal },
-          };
+          });
           recovery = data.recovery || {};
           profiles = { ...recovery, [HOSTLESS]: device.localWorkspaces || blankProfile() };
         }
@@ -4351,8 +4380,13 @@
                     settings={{
                       ...(device.terminal || terminalDefaults),
                       clipboard:
-                        device.clipboardByHost?.[p.hostId] || device.terminal?.clipboard || 'write',
+                        device.clipboardByHost?.[p.hostId] || device.terminal?.clipboard || 'notify',
                     }}
+                    onclipboard={(characters) =>
+                      (notice = `${p.name}: a program on the host copied ${characters} characters to your clipboard.`)}
+                    onpastesetting={setPasteConfirmation}
+                    watching={() =>
+                      detachedPanes.has(p.id) ? detachedFocus === p.id : document.hasFocus()}
                     floating={detachedPanes.has(p.id)}
                     onoutput={(value) => publishTerminal(p.id, { kind: 'output', ...value })}
                     onterminalfocus={() => {
@@ -5022,7 +5056,7 @@
           }}
         />
       {:else if modal === 'tmux-settings' && tmuxHost}
-        <TmuxSettings host={tmuxHost} appScrollback={device.terminal?.scrollback || 4000} />
+        <TmuxSettings host={tmuxHost} appScrollback={device.terminal?.scrollback || terminalDefaults.scrollback} />
       {:else if modal === 'pane-colors' && colorPane}
         {@const owner = workspaces.find((w) => w.panes.some((p) => p.id === colorPane?.id))}
         <p class="hint">
@@ -6025,7 +6059,9 @@
               <p class="hint">
                 Uses explicit terminal notifications or shell command-completion markers. Support
                 depends on the agent or shell integration; DazeDev does not infer completion from
-                inactivity. Alerts are limited to one every three seconds.
+                inactivity. "Command finished" shows when you are not watching that terminal or the
+                command ran for 10 seconds or more. Each terminal alerts at most once every three
+                seconds.
               </p>
               <div class="form-row">
                 <label
@@ -6048,6 +6084,10 @@
                   /></label
                 >
               </div>
+              <p class="hint">
+                Each open terminal keeps this many lines in memory, including terminals in other
+                workspaces. Default 10,000; up to 100,000.
+              </p>
               <div class="settings-checks">
                 <label class="check"
                   ><input
@@ -6078,13 +6118,19 @@
                   onchange={persistDevice}
                 />Screen reader terminal output</label
               >
+              <label class="check"
+                ><input
+                  type="checkbox"
+                  checked={device.terminal.confirmPaste !== false}
+                  onchange={(e) => setPasteConfirmation(e.currentTarget.checked)}
+                /> Ask before pasting text with line breaks</label
+              >
               <label
-                >Remote clipboard<select
+                >Remote copy (OSC 52)<select
                   bind:value={device.terminal.clipboard}
                   onchange={persistDevice}
                 >
-                  <option value="off">Off</option><option value="write">Allow remote copy</option
-                  ><option value="read-write">Allow remote copy and paste access</option>
+                  {@render clipboardOptions()}
                 </select></label
               >
               <p class="hint">
@@ -6120,14 +6166,13 @@
                 >Clipboard access for selected host<select
                   value={device.clipboardByHost?.[settingsHost] ||
                     device.terminal?.clipboard ||
-                    'write'}
+                    'notify'}
                   onchange={(e) => {
-                    (device.clipboardByHost ||= {})[settingsHost] = e.currentTarget.value as
-                      'off' | 'write' | 'read-write';
+                    (device.clipboardByHost ||= {})[settingsHost] = e.currentTarget
+                      .value as TerminalSettings['clipboard'];
                     persistDevice();
                   }}
-                  ><option value="off">Off</option><option value="write">Allow remote copy</option
-                  ><option value="read-write">Allow remote copy and paste access</option></select
+                  >{@render clipboardOptions()}</select
                 ></label
               >{/if}
           </details>
@@ -6421,3 +6466,8 @@
     </div>
   </div>
 {/if}
+{#snippet clipboardOptions()}
+  <option value="off">Block</option><option value="notify">Allow and notify</option><option
+    value="write">Allow silently</option
+  ><option value="read-write">Allow, and let programs read this clipboard</option>
+{/snippet}

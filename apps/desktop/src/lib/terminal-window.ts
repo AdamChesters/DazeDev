@@ -20,6 +20,7 @@ export interface WindowTerminalState {
   settings: TerminalSettings;
   inputShortcut: import('./shortcut').Shortcut;
   commandShortcut: import('./shortcut').Shortcut;
+  searchShortcut?: import('./shortcut').Shortcut;
   voiceStatus: string;
   voiceMode: string;
   voiceTarget: string;

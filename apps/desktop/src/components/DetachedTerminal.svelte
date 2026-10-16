@@ -13,7 +13,6 @@
   import { getCurrentWindow } from '@tauri-apps/api/window';
   import { Terminal } from '@xterm/xterm';
   import { FitAddon } from '@xterm/addon-fit';
-  import { SearchAddon } from '@xterm/addon-search';
   import { registerWebLinks } from '../lib/web-links';
   import { Unicode11Addon } from '@xterm/addon-unicode11';
   import { WebglAddon } from '@xterm/addon-webgl';
@@ -33,13 +32,30 @@
   import { VoiceCaptureKeys } from '../lib/voice-capture-keys';
   import { matches, mouseMatches } from '../lib/shortcut';
   import { tabColors } from '../lib/colors';
+  import {
+    OptionalAddons,
+    ResizeSender,
+    applyTerminalSettings,
+    imageCacheMb,
+    macPlatform,
+    remoteClipboard,
+    selectionMouseDown,
+    terminalOptions,
+    terminalTheme,
+  } from '../lib/terminal-setup';
+  import { terminalDefaults } from '../lib/terminals';
+  import { needsPasteConfirmation } from '../lib/paste';
+  import { appShortcut, matchesAppShortcut } from '../lib/app-shortcuts';
+  import PasteConfirm from './PasteConfirm.svelte';
   import '@xterm/xterm/css/xterm.css';
 
   const paneId = new URLSearchParams(location.search).get('terminal') || '';
   let root: HTMLDivElement;
   let terminal: Terminal;
   let fit: FitAddon;
-  let searcher: SearchAddon;
+  let addons: OptionalAddons | undefined;
+  let ready = $state(false);
+  let appliedTheme = '';
   let viewState = $state<WindowTerminalState | null>(null);
   let recoveryBusy = $state(false);
   let recoveryError = $state('');
@@ -90,9 +106,6 @@
   let notice = $state('Connecting to workspace...');
   let searchNavigation = $state<SearchNavigation | null>(null);
   let navigationInput = $state<HTMLInputElement>();
-  let query = $state('');
-  let searchOpen = $state(false);
-  let searchInput = $state<HTMLInputElement>();
   let uploading = $state(false);
   let menu = $state(false);
   let context = '';
@@ -101,7 +114,12 @@
   let gapTimer: ReturnType<typeof setTimeout>;
   let disposed = false;
   let resizeFrame = 0;
-  let lastSize = '';
+  const resizer = new ResizeSender((cols, rows) =>
+    request('resize', { cols, rows }).catch((error) => {
+      fail(error);
+      throw error;
+    }),
+  );
   let inputChain = Promise.resolve();
   const stream = new TerminalStream();
   const captureKeys = new VoiceCaptureKeys();
@@ -165,7 +183,7 @@
       await new Promise<void>((resolve) => terminal.write(result.snapshot.data, resolve));
       write(stream.restore(result.snapshot));
       notice = viewState.ready ? '' : viewState.status || 'Disconnected. Reconnect when ready.';
-      lastSize = '';
+      resizer.reset();
       fitted();
     } catch (error) {
       fail(error);
@@ -184,14 +202,7 @@
       resizeFrame = 0;
       try {
         fit.fit();
-        const size = `${terminal.cols}:${terminal.rows}`;
-        if (size !== lastSize) {
-          lastSize = size;
-          void request('resize', { cols: terminal.cols, rows: terminal.rows }).catch((error) => {
-            lastSize = '';
-            fail(error);
-          });
-        }
+        resizer.request(terminal.cols, terminal.rows);
       } catch (error) {
         fail(error);
       }
@@ -241,23 +252,43 @@
     if (!destination || context !== destination)
       throw new Error('Terminal changed while reading the clipboard. Paste again.');
     if (content.files.length) await pasteFiles(content.files);
-    else {
-      context = await request<string>('paste', { text: content.text, context: destination });
-      terminal.focus();
-    }
+    else await pasteText(content.text, destination);
+  }
+  let pasteRequest = $state<{ text: string; resolve: (accepted: boolean) => void } | null>(null);
+  function confirmPaste(text: string): Promise<boolean> {
+    if (!needsPasteConfirmation(text, viewState?.settings.confirmPaste)) return Promise.resolve(true);
+    pasteRequest?.resolve(false);
+    return new Promise((resolve) => (pasteRequest = { text, resolve }));
+  }
+  function answerPaste(accepted: boolean, dontAsk = false) {
+    const pending = pasteRequest;
+    pasteRequest = null;
+    if (accepted && dontAsk) void request('paste-confirm-off').catch(fail);
+    pending?.resolve(accepted);
+    terminal.focus();
+  }
+  // Clipboard text: multi-line text asks first, then follows normal paste rules.
+  async function pasteText(text: string, destination = context) {
+    if (!(await confirmPaste(text))) return;
+    if (!destination || context !== destination)
+      throw new Error('Terminal changed while pasting. Paste again.');
+    context = await request<string>('paste', { text, context: destination });
+    terminal.focus();
   }
   $effect(() => {
-    if (viewState && terminal) {
+    if (viewState && ready) {
       document.documentElement.dataset.theme = viewState.theme;
-      terminal.options.fontSize = viewState.settings.fontSize;
-      terminal.options.scrollback = viewState.settings.scrollback;
-      terminal.options.screenReaderMode = !!viewState.settings.screenReader;
+      if (appliedTheme !== viewState.theme) {
+        appliedTheme = viewState.theme;
+        terminal.options.theme = terminalTheme(viewState.theme);
+      }
+      applyTerminalSettings(terminal, viewState.settings);
+      addons?.apply(viewState.settings);
       fitted();
     }
   });
   onMount(() => {
     let cleanup: (() => void)[] = [];
-    const fontSize = 13;
     let hoveredImage = '';
     const followLink = (event: MouseEvent, url: string) => {
       const modified = event.ctrlKey || event.metaKey;
@@ -272,23 +303,15 @@
           : 'Ctrl+click (Cmd+click on macOS) to open in your browser'
         : '';
     };
-    terminal = new Terminal({
-      fontSize,
-      fontFamily: 'Cascadia Code, Consolas, monospace',
-      scrollback: 4000,
-      cursorBlink: true,
-      theme: { background: '#151616', foreground: '#d5d9d2', cursor: '#39bdd7' },
-      allowProposedApi: true,
-      linkHandler: {
+    terminal = new Terminal(
+      terminalOptions(undefined, terminalDefaults, {
         activate: followLink,
         hover: (_event, url) => hoverLink(url),
         leave: () => hoverLink(''),
-      },
-    });
+      }),
+    );
     fit = new FitAddon();
-    searcher = new SearchAddon();
     terminal.loadAddon(fit);
-    terminal.loadAddon(searcher);
     registerViewerLinks(terminal, (path) => void viewImage(path), {
       hover: (path) => {
         hoveredImage = imagePath(path) ? path : '';
@@ -317,17 +340,7 @@
       event.stopImmediatePropagation();
       if (modified) terminal.focus();
       else {
-        const mac = /Mac|iPhone|iPad|iPod/i.test(navigator.platform);
-        const selection = new MouseEvent('mousedown', {
-          bubbles: true,
-          cancelable: true,
-          clientX: event.clientX,
-          clientY: event.clientY,
-          button: event.button,
-          buttons: event.buttons,
-          shiftKey: !mac,
-          altKey: mac,
-        });
+        const selection = selectionMouseDown(event, macPlatform());
         selectionEvents.add(selection);
         event.target?.dispatchEvent(selection);
       }
@@ -392,7 +405,13 @@
         void pasteClipboard().catch(fail);
         return false;
       }
-      if (event.shiftKey && event.code === 'KeyF') {
+      if (
+        matchesAppShortcut(
+          event,
+          viewState?.searchShortcut || appShortcut(undefined, 'search'),
+          macPlatform(),
+        )
+      ) {
         event.preventDefault();
         search();
         return false;
@@ -401,10 +420,12 @@
     });
     const paste = (event: ClipboardEvent) => {
       const files = Array.from(event.clipboardData?.files || []);
-      if (!files.length) return;
+      const text = event.clipboardData?.getData('text/plain') || '';
+      if (!files.length && !needsPasteConfirmation(text, viewState?.settings.confirmPaste)) return;
       event.preventDefault();
       event.stopImmediatePropagation();
-      void pasteFiles(files).catch(fail);
+      if (files.length) void pasteFiles(files).catch(fail);
+      else void pasteText(text).catch(fail);
     };
     const forwardKey = (event: KeyboardEvent) => {
       if (!viewState) return;
@@ -528,26 +549,22 @@
       cleanup.push(stop);
       await sync();
       if (disposed) return;
-      if (viewState?.settings.gpu) {
-        try {
-          const gpu = new WebglAddon();
-          terminal.loadAddon(gpu);
-          gpu.onContextLoss(() => gpu.dispose());
-        } catch {
-          /* Canvas remains available. */
-        }
-      }
-      if (viewState?.settings.images) terminal.loadAddon(new ImageAddon());
-      if (viewState?.settings.ligatures) terminal.loadAddon(new LigaturesAddon());
+      addons = new OptionalAddons((addon) => terminal.loadAddon(addon), {
+        gpu: () => new WebglAddon(),
+        images: () => new ImageAddon({ storageLimit: imageCacheMb }),
+        ligatures: () => new LigaturesAddon(),
+      });
       terminal.loadAddon(
-        new ClipboardAddon(undefined, {
-          readText: async () =>
-            viewState?.settings.clipboard === 'read-write' ? navigator.clipboard.readText().then((text) => text.length <= 1048576 ? text : '') : '',
-          writeText: async (_selection, text) => {
-            if (viewState?.settings.clipboard !== 'off' && text.length <= 1048576) await navigator.clipboard.writeText(text);
-          },
-        }),
+        new ClipboardAddon(
+          undefined,
+          remoteClipboard(
+            () => viewState?.settings.clipboard,
+            (characters) =>
+              (notice = `A program on the host copied ${characters} characters to your clipboard.`),
+          ),
+        ),
       );
+      ready = true;
       terminal.focus();
       const stopFocus = await getCurrentWindow().onFocusChanged((event) => {
         if (event.payload) void request('focus').catch(fail);
@@ -559,6 +576,8 @@
       disposed = true;
       observer.disconnect();
       cancelAnimationFrame(resizeFrame);
+      resizer.dispose();
+      pasteRequest?.resolve(false);
       root.removeEventListener('paste', paste, true);
       for (const job of pending.values()) {
         clearTimeout(job.timer);
@@ -568,6 +587,7 @@
       cleanup.forEach((stop) => stop());
       data.dispose();
       binary.dispose();
+      addons?.dispose();
       terminal.dispose();
     };
   });
@@ -668,35 +688,6 @@
       >
       <button onclick={() => void action('close')}>Close</button>
     </nav>{/if}
-  {#if searchOpen}<div class="terminal-search" role="search" aria-label="Search terminal">
-      <input
-        bind:this={searchInput}
-        bind:value={query}
-        aria-label="Search terminal output"
-        oninput={() => searcher.findNext(query)}
-        onkeydown={(event) => {
-          if (event.key === 'Enter') {
-            event.preventDefault();
-            if (event.shiftKey) searcher.findPrevious(query);
-            else searcher.findNext(query);
-          }
-          if (event.key === 'Escape') {
-            searchOpen = false;
-            terminal.focus();
-          }
-        }}
-      />
-      <button onclick={() => searcher.findPrevious(query)}>Previous</button><button
-        onclick={() => searcher.findNext(query)}>Next</button
-      >
-      <button
-        onclick={() => {
-          searchOpen = false;
-          searcher.clearDecorations();
-          terminal.focus();
-        }}>Close search</button
-      >
-    </div>{/if}
   {#if viewState && viewState.voiceTarget === viewState.pane.id && viewState.voiceStatus !== 'idle'}
     <p class="status" role="status">
       {viewState.voiceStatus === 'listening'
@@ -708,16 +699,23 @@
   {#if viewState && !viewState.ready}<button onclick={() => void action('reconnect')}
       >Reconnect terminal</button
     >{/if}
-  <div
-    class="terminal"
-    bind:this={root}
-    role="group"
-    aria-label="Terminal output"
-    oncontextmenu={(event) => {
-      event.preventDefault();
-      menu = true;
-    }}
-  ></div>
+  <div class="terminal-area">
+    <div
+      class="terminal"
+      bind:this={root}
+      role="group"
+      aria-label="Terminal output"
+      oncontextmenu={(event) => {
+        event.preventDefault();
+        menu = true;
+      }}
+    ></div>
+    {#if pasteRequest}<PasteConfirm
+        text={pasteRequest.text}
+        onpaste={(dontAsk) => answerPaste(true, dontAsk)}
+        oncancel={() => answerPaste(false)}
+      />{/if}
+  </div>
 </div>
 
 {#if image}
@@ -859,8 +857,15 @@
     flex-wrap: wrap;
     padding: 6px;
   }
+  .terminal-area {
+    position: relative;
+    flex: 1;
+    min-height: 0;
+    display: flex;
+  }
   .terminal {
     flex: 1;
+    min-width: 0;
     min-height: 0;
     padding: 6px;
   }
