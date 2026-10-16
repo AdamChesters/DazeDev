@@ -246,14 +246,21 @@ pub fn command(host: &Host, remote: &str) -> Result<CommandBuilder, String> {
 const HOST_LOADER: &str = "import sys;v=sys.version_info;v<(3,9) and (print('DAZED:'+sys.argv[1]+':python:%d.%d'%v[:2],flush=True),sys.exit(3));import base64;print();print('DAZED:'+sys.argv[1]+':bootstrap',flush=True);exec(compile(base64.b64decode(sys.stdin.buffer.readline().strip(),validate=True),'<dazedev-host>','exec'))";
 /// The script that starts the host helper. It is sent as one line of input,
 /// never as an argument, so it is always run by /bin/sh.
-fn control_script(socket: &str, nonce: &str, endpoint: &str, desktop: &str) -> String {
+fn control_script(
+    socket: &str,
+    nonce: &str,
+    endpoint: &str,
+    desktop: &str,
+    binary: bool,
+) -> String {
     format!(
-        "export DAZED_BROWSER_ENDPOINT={} DAZED_BROWSER_DESKTOP={}; export DAZED_TMUX_SOCKET={}; exec python3 -I -u -c {} {}",
+        "export DAZED_BROWSER_ENDPOINT={} DAZED_BROWSER_DESKTOP={}; export DAZED_TMUX_SOCKET={}; exec python3 -I -u -c {} {}{}",
         quote(endpoint),
         quote(desktop),
         quote(socket),
         quote(HOST_LOADER),
-        quote(nonce)
+        quote(nonce),
+        if binary { " 2" } else { "" }
     )
 }
 #[derive(Clone, Copy)]
@@ -300,6 +307,9 @@ impl Bootstrap {
         self.stages
             .push_front((boot_marker(nonce), format!("{script}\n").into_bytes()));
         self
+    }
+    fn is_done(&self) -> bool {
+        self.stages.is_empty()
     }
     fn line(&mut self, line: &str) -> Option<Vec<u8>> {
         if self
@@ -428,6 +438,8 @@ struct Connection {
     browser: crate::browser::Requests,
     /// Set for built-in SSH: authentication prompts are answered here.
     prompts: Option<Arc<crate::ssh::Prompts>>,
+    /// Protocol 2 binary frames (built-in SSH); otherwise protocol 1 lines.
+    binary: bool,
 }
 struct NativeView {
     client: crate::local_sessions::Client,
@@ -702,8 +714,131 @@ fn pane_boot(held: &mut Vec<u8>, marker: &[u8]) -> Option<Vec<u8>> {
     held.clear();
     Some(output)
 }
+/// Host helper protocol on clean channels (see shared/protocol/host-v2.json).
+const HOST_PROTOCOL: u64 = 2;
+const MAX_HOST_MESSAGE: usize = 64 * 1024 * 1024;
+/// Reassembles protocol 2 frames: u32 length, u8 flags (1 = last part),
+/// u16 id length, id, data. Parts of different messages may interleave.
+#[derive(Default)]
+struct MessageFrames {
+    buffer: Vec<u8>,
+    parts: HashMap<Vec<u8>, Vec<u8>>,
+}
+impl MessageFrames {
+    fn push(&mut self, bytes: &[u8]) -> Result<Vec<Value>, String> {
+        self.buffer.extend_from_slice(bytes);
+        let mut messages = Vec::new();
+        let mut start = 0;
+        while self.buffer.len() - start >= 4 {
+            let size = u32::from_be_bytes([
+                self.buffer[start],
+                self.buffer[start + 1],
+                self.buffer[start + 2],
+                self.buffer[start + 3],
+            ]) as usize;
+            if !(3..=MAX_HOST_MESSAGE + 1024).contains(&size) {
+                return Err("Invalid host message frame".into());
+            }
+            if self.buffer.len() - start - 4 < size {
+                break;
+            }
+            let body = &self.buffer[start + 4..start + 4 + size];
+            let id_length = u16::from_be_bytes([body[1], body[2]]) as usize;
+            if 3 + id_length > body.len() {
+                return Err("Invalid host message frame".into());
+            }
+            let id = body[3..3 + id_length].to_vec();
+            let part = self.parts.entry(id.clone()).or_default();
+            part.extend_from_slice(&body[3 + id_length..]);
+            if part.len() > MAX_HOST_MESSAGE {
+                return Err("Host message exceeds limits".into());
+            }
+            if body[0] & 1 == 1 {
+                let data = self.parts.remove(&id).unwrap_or_default();
+                messages.push(
+                    serde_json::from_slice(&data)
+                        .map_err(|e| format!("Invalid host message: {e}"))?,
+                );
+            }
+            start += 4 + size;
+        }
+        self.buffer.drain(..start);
+        Ok(messages)
+    }
+}
+fn request_frame(request: &Value) -> Result<Vec<u8>, String> {
+    let body = serde_json::to_vec(request).map_err(|e| e.to_string())?;
+    let mut frame = (body.len() as u32).to_be_bytes().to_vec();
+    frame.extend(body);
+    Ok(frame)
+}
+/// Error text for the frontend. Protocol 2 sends `{code, message}`; a
+/// conflict keeps the `CONFLICT:` prefix the frontend looks for.
+fn host_error(error: &Value) -> Option<String> {
+    match error {
+        Value::String(text) => Some(text.clone()),
+        Value::Object(fields) => {
+            let message = fields
+                .get("message")
+                .and_then(Value::as_str)
+                .unwrap_or("Host error");
+            Some(match fields.get("code").and_then(Value::as_str) {
+                Some("conflict") => format!("CONFLICT: {message}"),
+                _ => message.to_owned(),
+            })
+        }
+        _ => None,
+    }
+}
+/// Act on one decoded host message. Returns false to stop reading.
+fn host_message(conn: &Connection, host_id: &str, nonce: &str, v: Value, sink: &EventSink) -> bool {
+    let id = v["id"].as_str().unwrap_or("");
+    if v["event"] == "browser-open" {
+        if conn.pty.active.load(Ordering::Acquire) && *lock(&conn.ready) {
+            sink(
+                "host-browser-open",
+                json!({"hostId":host_id,"nonce":nonce,"id":id,"url":v["url"]}),
+            );
+        }
+    } else if id == "ready" {
+        if conn.binary && v["result"]["protocol"].as_u64() != Some(HOST_PROTOCOL) {
+            sink(
+                "host-output",
+                json!({"hostId":host_id,"text":"The host helper does not match this version of DazeDev.\n"}),
+            );
+            return false;
+        }
+        return host_ready(conn, host_id, v["result"].clone(), sink);
+    } else if let Some(tx) = lock(&conn.pending).remove(id) {
+        let _ = tx.send(match host_error(&v["error"]) {
+            Some(e) => Err(e),
+            None => Ok(v["result"].clone()),
+        });
+    }
+    true
+}
+/// Decode protocol 2 bytes and handle the messages. Returns false to stop.
+fn host_frames(
+    decoder: &mut MessageFrames,
+    bytes: &[u8],
+    conn: &Connection,
+    host_id: &str,
+    nonce: &str,
+    sink: &EventSink,
+) -> bool {
+    match decoder.push(bytes) {
+        Ok(list) => list
+            .into_iter()
+            .all(|v| host_message(conn, host_id, nonce, v, sink)),
+        Err(e) => {
+            sink("host-output", json!({"hostId":host_id,"text":e}));
+            false
+        }
+    }
+}
 /// Read the management channel: answer bootstrap markers, then decode
-/// replies and events until the channel ends.
+/// replies and events until the channel ends. Before the helper starts the
+/// channel carries text lines; protocol 2 then switches to binary frames.
 fn run_control(
     conn: Arc<Connection>,
     host_id: String,
@@ -718,6 +853,7 @@ fn run_control(
     let mut buffer = Vec::new();
     let mut terminal = ControlTerminal::default();
     let mut frames = ReplyFrames::default();
+    let mut messages: Option<MessageFrames> = None;
     let mut chunk = vec![0u8; 65536];
     'read: loop {
         let n = match reader.read(&mut chunk) {
@@ -727,10 +863,23 @@ fn run_control(
         if !conn.pty.active.load(Ordering::Acquire) {
             break;
         }
-        let (clean, replies) = terminal.feed(&chunk[..n]);
-        if !replies.is_empty() {
-            let _ = write(&conn.pty, &replies);
+        if let Some(decoder) = messages.as_mut() {
+            if !host_frames(decoder, &chunk[..n], &conn, &host_id, &nonce, &sink) {
+                break;
+            }
+            continue;
         }
+        // A terminal (system OpenSSH, WSL, local) needs escape handling;
+        // a built-in SSH channel carries the bytes unchanged.
+        let clean = if conn.binary {
+            chunk[..n].to_vec()
+        } else {
+            let (clean, replies) = terminal.feed(&chunk[..n]);
+            if !replies.is_empty() {
+                let _ = write(&conn.pty, &replies);
+            }
+            clean
+        };
         let text = String::from_utf8_lossy(&clean);
         if !*lock(&conn.ready) && !text.contains(&prefix) && !text.contains(&boot) {
             sink("host-output", json!({"hostId":host_id,"text":text}));
@@ -750,6 +899,17 @@ fn run_control(
                     sink("host-output", json!({"hostId":host_id,"text":e}));
                     break 'read;
                 }
+                if conn.binary && bootstrap.is_done() {
+                    // From here the helper sends binary frames only.
+                    let mut decoder = MessageFrames::default();
+                    let rest = buffer[start..].to_vec();
+                    buffer.clear();
+                    if !host_frames(&mut decoder, &rest, &conn, &host_id, &nonce, &sink) {
+                        break 'read;
+                    }
+                    messages = Some(decoder);
+                    continue 'read;
+                }
                 continue;
             }
             if let Some(version) = line.strip_prefix(&python) {
@@ -761,24 +921,8 @@ fn run_control(
             }
             match frames.line(&line, &prefix) {
                 Ok(Some(v)) => {
-                    let id = v["id"].as_str().unwrap_or("");
-                    if v["event"] == "browser-open" {
-                        if conn.pty.active.load(Ordering::Acquire) && *lock(&conn.ready) {
-                            sink(
-                                "host-browser-open",
-                                json!({"hostId":host_id,"nonce":nonce,"id":id,"url":v["url"]}),
-                            );
-                        }
-                    } else if id == "ready" {
-                        if !host_ready(&conn, &host_id, v["result"].clone(), &sink) {
-                            break 'read;
-                        }
-                    } else if let Some(tx) = lock(&conn.pending).remove(id) {
-                        let _ = tx.send(if let Some(e) = v["error"].as_str() {
-                            Err(e.to_string())
-                        } else {
-                            Ok(v["result"].clone())
-                        });
+                    if !host_message(&conn, &host_id, &nonce, v, &sink) {
+                        break 'read;
                     }
                 }
                 Ok(None) => {}
@@ -965,7 +1109,15 @@ impl Transport {
             .entry(host.id.clone())
             .or_insert_with(|| uuid::Uuid::new_v4().simple().to_string())
             .clone();
-        let script = control_script(&host.socket, &nonce, &endpoint, &self.browser_desktop);
+        let script = |binary| {
+            control_script(
+                &host.socket,
+                &nonce,
+                &endpoint,
+                &self.browser_desktop,
+                binary,
+            )
+        };
         let source = format!(
             "import base64\nBROWSER_SOURCE=base64.b64decode('{}').decode()\n{}",
             STANDARD.encode(include_bytes!("../resources/browser.py")),
@@ -973,8 +1125,10 @@ impl Transport {
         );
         let bootstrap = Bootstrap::new(&nonce, source.as_bytes());
         if let Some((target, settings)) = self.ssh_target(&host, tailscale.as_ref(), &sink)? {
+            let script = script(true);
             return self.connect_ssh(host, target, settings, nonce, script, bootstrap, sink);
         }
+        let script = script(false);
         let process_command = if matches!(host.kind.as_str(), "ssh" | "tailscale") {
             boot_command(Boot::TerminalControl, &nonce)
         } else {
@@ -994,6 +1148,7 @@ impl Transport {
             ready: Mutex::new(false),
             browser: crate::browser::Requests::new(nonce.clone()),
             prompts: None,
+            binary: false,
         });
         self.register(&host.id, conn.clone());
         let exited_conn = conn.clone();
@@ -1042,6 +1197,7 @@ impl Transport {
             ready: Mutex::new(false),
             browser: crate::browser::Requests::new(nonce.clone()),
             prompts: Some(prompts.clone()),
+            binary: true,
         });
         self.register(&host.id, conn.clone());
         let reuse = self.live_session(&host.id, Some(&settings));
@@ -1193,11 +1349,14 @@ impl Transport {
                            // held during the write: each write is queued whole, so requests never
                            // interleave, and the reader can deliver other replies meanwhile.
         lock(&c.pending).insert(request.clone(), tx);
-        let payload = STANDARD.encode(
-            serde_json::to_vec(&json!({"id":request,"method":method,"args":args}))
-                .map_err(|e| e.to_string())?,
-        ) + "\n";
-        if let Err(e) = write(&c.pty, payload.as_bytes()) {
+        let message = json!({"id":request,"method":method,"args":args});
+        let payload = if c.binary {
+            request_frame(&message)?
+        } else {
+            (STANDARD.encode(serde_json::to_vec(&message).map_err(|e| e.to_string())?) + "\n")
+                .into_bytes()
+        };
+        if let Err(e) = write(&c.pty, &payload) {
             lock(&c.pending).remove(&request);
             return Err(e);
         }
@@ -2054,6 +2213,7 @@ mod tests {
             ready: Mutex::new(true),
             browser: crate::browser::Requests::new("test".into()),
             prompts: None,
+            binary: false,
         });
         let (tx, rx) = mpsc::channel();
         let sink: EventSink = Arc::new(move |name, _| {
@@ -2127,6 +2287,7 @@ mod tests {
                 ready: Mutex::new(true),
                 browser: crate::browser::Requests::new("test".into()),
                 prompts: None,
+                binary: false,
             }),
         );
         let start = std::time::Instant::now();
@@ -2548,8 +2709,9 @@ mod tests {
     #[test]
     fn loader_explains_old_python() {
         assert!(HOST_LOADER.contains("v<(3,9)") && HOST_LOADER.contains(":python:"));
-        let script = control_script("sock", "nonce", "endpoint", "desktop");
-        assert!(script.contains("exec python3 -I -u -c "));
+        let script = control_script("sock", "nonce", "endpoint", "desktop", true);
+        assert!(script.contains("exec python3 -I -u -c ") && script.ends_with(" 2"));
+        assert!(!control_script("sock", "nonce", "endpoint", "desktop", false).ends_with(" 2"));
     }
 
     /// End-to-end check against a private OpenSSH server on loopback. It needs
@@ -2760,5 +2922,62 @@ mod tests {
         if let Err(panic) = result {
             std::panic::resume_unwind(panic);
         }
+    }
+
+    fn host_frame(id: &str, data: &[u8], last: bool) -> Vec<u8> {
+        let mut body = vec![u8::from(last)];
+        body.extend((id.len() as u16).to_be_bytes());
+        body.extend(id.as_bytes());
+        body.extend(data);
+        let mut frame = (body.len() as u32).to_be_bytes().to_vec();
+        frame.extend(body);
+        frame
+    }
+    #[test]
+    fn protocol_two_reassembles_interleaved_parts() {
+        let big = serde_json::to_vec(&json!({"id":"big","result":"x".repeat(1000)})).unwrap();
+        let ping = serde_json::to_vec(&json!({"id":"ping","result":null})).unwrap();
+        let mut wire = host_frame("big", &big[..400], false);
+        wire.extend(host_frame("ping", &ping, true));
+        wire.extend(host_frame("big", &big[400..], true));
+        let mut decoder = MessageFrames::default();
+        // Feed one byte at a time to cover split frames.
+        let mut out = Vec::new();
+        for byte in &wire {
+            out.extend(decoder.push(std::slice::from_ref(byte)).unwrap());
+        }
+        assert_eq!(out[0]["id"], "ping");
+        assert_eq!(out[1]["result"].as_str().unwrap().len(), 1000);
+        assert!(decoder.buffer.is_empty() && decoder.parts.is_empty());
+        assert!(MessageFrames::default()
+            .push(&[0xff, 0xff, 0xff, 0xff])
+            .is_err());
+    }
+    #[test]
+    fn protocol_two_errors_keep_conflict_prefix() {
+        assert_eq!(
+            host_error(&json!({"code":"conflict","message":"file changed"})).unwrap(),
+            "CONFLICT: file changed"
+        );
+        assert_eq!(
+            host_error(&json!({"code":"failed","message":"bad"})).unwrap(),
+            "bad"
+        );
+        assert_eq!(host_error(&json!("plain")).unwrap(), "plain");
+        assert!(host_error(&Value::Null).is_none());
+    }
+    #[test]
+    fn shared_schema_lists_methods_the_desktop_calls() {
+        let schema: Value =
+            serde_json::from_str(include_str!("../../../../shared/protocol/host-v2.json")).unwrap();
+        assert_eq!(schema["protocol"].as_u64(), Some(HOST_PROTOCOL));
+        for method in ["ping", "browser_prepare", "browser_result"] {
+            assert_eq!(schema["methods"][method]["lane"], "inline", "{method}");
+        }
+        let frame = request_frame(&json!({"id":"1"})).unwrap();
+        assert_eq!(
+            u32::from_be_bytes(frame[..4].try_into().unwrap()) as usize,
+            frame.len() - 4
+        );
     }
 }

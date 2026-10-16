@@ -1,0 +1,163 @@
+{
+  "protocol": 2,
+  "frame": "u32 length, u8 flags (1 = last part), u16 id length, id, data; parts of one message share its id",
+  "errors": [
+    "conflict",
+    "failed",
+    "queue_full",
+    "too_large"
+  ],
+  "events": [
+    "browser-open"
+  ],
+  "methods": {
+    "browser_prepare": {
+      "lane": "inline",
+      "deadline": 240
+    },
+    "browser_result": {
+      "lane": "inline",
+      "deadline": 240
+    },
+    "capabilities": {
+      "lane": "read",
+      "deadline": 30
+    },
+    "clone": {
+      "lane": "mutation",
+      "deadline": 240
+    },
+    "create": {
+      "lane": "mutation",
+      "deadline": 240
+    },
+    "destroy": {
+      "lane": "mutation",
+      "deadline": 240
+    },
+    "dictionary_read": {
+      "lane": "read",
+      "deadline": 240
+    },
+    "dictionary_write": {
+      "lane": "mutation",
+      "deadline": 240
+    },
+    "document_read": {
+      "lane": "read",
+      "deadline": 240
+    },
+    "document_save": {
+      "lane": "mutation",
+      "deadline": 240
+    },
+    "documents": {
+      "lane": "read",
+      "deadline": 240
+    },
+    "file_read": {
+      "lane": "read",
+      "deadline": 240
+    },
+    "github_repos": {
+      "lane": "read",
+      "deadline": 30
+    },
+    "image_read": {
+      "lane": "read",
+      "deadline": 240
+    },
+    "install": {
+      "lane": "mutation",
+      "deadline": 240
+    },
+    "inventory": {
+      "lane": "read",
+      "deadline": 30
+    },
+    "ping": {
+      "lane": "inline",
+      "deadline": 240
+    },
+    "process_context": {
+      "lane": "read",
+      "deadline": 240
+    },
+    "profile_load": {
+      "lane": "read",
+      "deadline": 240
+    },
+    "profile_save": {
+      "lane": "mutation",
+      "deadline": 240
+    },
+    "rename": {
+      "lane": "mutation",
+      "deadline": 240
+    },
+    "repositories": {
+      "lane": "read",
+      "deadline": 30
+    },
+    "repository_worktrees": {
+      "lane": "read",
+      "deadline": 240
+    },
+    "session_agent": {
+      "lane": "read",
+      "deadline": 240
+    },
+    "session_context": {
+      "lane": "read",
+      "deadline": 240
+    },
+    "sessions": {
+      "lane": "read",
+      "deadline": 240
+    },
+    "terminal_recover": {
+      "lane": "mutation",
+      "deadline": 240
+    },
+    "terminal_status": {
+      "lane": "read",
+      "deadline": 240
+    },
+    "tmux_settings_apply": {
+      "lane": "mutation",
+      "deadline": 240
+    },
+    "tmux_settings_read": {
+      "lane": "read",
+      "deadline": 240
+    },
+    "tmux_window_select": {
+      "lane": "mutation",
+      "deadline": 240
+    },
+    "upload_abort": {
+      "lane": "mutation",
+      "deadline": 240
+    },
+    "upload_begin": {
+      "lane": "mutation",
+      "deadline": 240
+    },
+    "upload_chunk": {
+      "lane": "mutation",
+      "deadline": 240
+    },
+    "upload_finish": {
+      "lane": "mutation",
+      "deadline": 240
+    },
+    "upload_preflight": {
+      "lane": "read",
+      "deadline": 240
+    },
+    "worktree": {
+      "lane": "mutation",
+      "deadline": 240
+    }
+  }
+}

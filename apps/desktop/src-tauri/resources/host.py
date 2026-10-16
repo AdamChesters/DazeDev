@@ -4,6 +4,16 @@ import base64, contextlib, errno, fcntl, getpass, hashlib, json, os, pathlib, re
 P = pathlib.Path
 os.environ['PATH']=str(P.home()/'.local/bin')+os.pathsep+os.environ.get('PATH','')
 SCHEMA = 1
+# Wire protocol 2: length-prefixed binary frames (built-in SSH channels).
+# Protocol 1: numbered base64 text lines (terminals and Android).
+PROTOCOL = 2
+BINARY = False
+class HostError(RuntimeError):
+    # An error with a stable code for clients. Protocol 1 keeps the old text.
+    def __init__(self, code, message):
+        super().__init__(message); self.code=code; self.message=message
+    def __str__(self):
+        return ('CONFLICT: ' if self.code == 'conflict' else '')+self.message
 BROWSER = None
 BROWSER_ERROR = None
 SOCKET = os.environ.get('DAZED_TMUX_SOCKET', '')
@@ -91,7 +101,7 @@ def save_profile(profile, expected):
     with open(folder/'host.lock', 'a') as lock:
         os.chmod(folder/'host.lock', 0o600); fcntl.flock(lock, fcntl.LOCK_EX)
         doc = read_doc(); old = doc['machines'].get(profile_key(), empty())
-        if old['revision'] != expected: raise RuntimeError('CONFLICT: workspace changed on another device. Reload or keep your recovery copy.')
+        if old['revision'] != expected: raise HostError('conflict','workspace changed on another device. Reload or keep your recovery copy.')
         if not isinstance(profile.get('workspaces'), list) or not isinstance(profile.get('preferences'), dict): raise ValueError('Invalid profile')
         profile.update(schema=SCHEMA, revision=expected+1); doc['machines'][profile_key()] = profile
         p = folder/'host.json'
@@ -606,12 +616,12 @@ def document_save(a):
     with document_lock(path):
         before = document_read({'path':str(path)})
         if not before['writable']: raise PermissionError('File is read only')
-        if before['revision'] != a['revision']: raise RuntimeError('CONFLICT: file changed on the host. Copy your edits before reloading.')
+        if before['revision'] != a['revision']: raise HostError('conflict','file changed on the host. Copy your edits before reloading.')
         fd, staged = tempfile.mkstemp(prefix='.dazedev-edit-', dir=path.parent)
         try:
             os.fchmod(fd, path.stat().st_mode & 0o777)
             with os.fdopen(fd, 'wb') as out: out.write(data); out.flush(); os.fsync(out.fileno())
-            if document_read({'path':str(path)})['revision'] != a['revision']: raise RuntimeError('CONFLICT: file changed on the host. Edits were not saved.')
+            if document_read({'path':str(path)})['revision'] != a['revision']: raise HostError('conflict','file changed on the host. Edits were not saved.')
             os.replace(staged, path)
         finally:
             if os.path.exists(staged): os.unlink(staged)
@@ -986,9 +996,57 @@ class ReplyWriter:
     def close(self):
         with self.cond: self.done=True; self.cond.notify()
         self.thread.join()
+MAX_MESSAGE = 64*1024*1024
+FRAME_CHUNK = 65536
+def frame(message_id, chunk, final):
+    # Frame: u32 length, u8 flags (1 = last part), u16 id length, id, data.
+    ident=message_id.encode()
+    body=bytes([1 if final else 0])+len(ident).to_bytes(2,'big')+ident+chunk
+    return len(body).to_bytes(4,'big')+body
+def encode_message(reply):
+    # Protocol 2 sends errors as {code, message}.
+    if isinstance(reply.get('error'),Exception):
+        e=reply['error']; reply=dict(reply,error={'code':getattr(e,'code','failed'),'message':getattr(e,'message',str(e))})
+    rid=reply.get('id','') if 'event' not in reply else ''
+    try: data=json.dumps(reply,separators=(',',':')).encode()
+    except (TypeError,ValueError) as e: data=json.dumps({'id':rid,'error':{'code':'failed','message':'Host reply could not be encoded: '+str(e)}}).encode()
+    if len(data) > MAX_MESSAGE:
+        data=json.dumps({'id':rid,'error':{'code':'too_large','message':'Host reply is too large to send ('+str(len(data))+' bytes). Narrow the request and retry.'}}).encode()
+    return rid,data
+class FrameWriter:
+    # Protocol 2 writer. Replies are cut into parts and written round robin,
+    # so a large reply never holds up ping or a small reply. Urgent messages
+    # (ping, browser) go first.
+    def __init__(self, out):
+        self.out=out; self.cond=threading.Condition(); self.urgent=collections.deque(); self.normal=collections.deque(); self.done=False
+        self.thread=threading.Thread(target=self.run,daemon=True); self.thread.start()
+    def put(self, reply, urgent=False):
+        rid,data=encode_message(reply)
+        with self.cond:
+            (self.urgent if urgent else self.normal).append([rid,data,0]); self.cond.notify()
+    def run(self):
+        while True:
+            with self.cond:
+                while not self.urgent and not self.normal and not self.done: self.cond.wait()
+                queue=self.urgent or self.normal
+                if not queue: return
+                item=queue.popleft()
+                rid,data,offset=item
+                chunk=data[offset:offset+FRAME_CHUNK]; item[2]=offset+len(chunk)
+                final=item[2] >= len(data)
+                if not final: queue.append(item)
+            try: self.out.write(frame(rid,chunk,final)); self.out.flush()
+            except (OSError,ValueError): pass
+    def close(self):
+        with self.cond: self.done=True; self.cond.notify()
+        self.thread.join()
 WRITER = None
 _reply_lock = threading.Lock()
 def send_reply(prefix, reply, urgent=False):
+    if BINARY:
+        if WRITER: WRITER.put(reply,urgent)
+        return
+    if isinstance(reply.get('error'),Exception): reply=dict(reply,error=str(reply['error']))
     block=encode_reply(prefix,reply)
     if WRITER: WRITER.put(block,urgent); return
     with _reply_lock: sys.stdout.write(block); sys.stdout.flush()
@@ -996,24 +1054,47 @@ def handle_request(prefix, request, urgent=False):
     try:
         _operation_deadline.end = time.monotonic() + (30 if request['method'] in SHORT_DEADLINE_METHODS else 240)
         reply={'id':request['id'],'result':dispatch(request['method'],request.get('args',{}))}
-    except Exception as e: reply={'id':request.get('id','unknown'),'error':str(e)}
+    except Exception as e: reply={'id':request.get('id','unknown'),'error':e}
     send_reply(prefix,reply,urgent)
+def read_requests(stream):
+    # Protocol 2 requests: u32 length, then JSON.
+    while True:
+        header=stream.read(4)
+        if len(header) < 4: return
+        size=int.from_bytes(header,'big')
+        if size > MAX_MESSAGE: raise ValueError('Request is too large')
+        body=stream.read(size)
+        if len(body) < size: return
+        yield body
+def private_stdio():
+    # Protocol 2 owns the channel: frames use private copies of stdin and
+    # stdout, and child processes get /dev/null, so stray output or a child
+    # reading input cannot break the stream.
+    sys.stdout.flush()
+    requests=os.fdopen(os.dup(0),'rb'); replies=os.fdopen(os.dup(1),'wb')
+    null=os.open(os.devnull,os.O_RDWR); os.dup2(null,0); os.dup2(null,1); os.close(null)
+    return requests,replies
 def main():
-    global BROWSER, BROWSER_ERROR, WRITER
+    global BROWSER, BROWSER_ERROR, WRITER, BINARY
     nonce=sys.argv[1];os.environ['PATH']=str(P.home()/'.local/bin')+':'+os.environ.get('PATH','')
     prefix='DAZED:'+nonce+':'
-    WRITER=ReplyWriter()
+    BINARY=len(sys.argv) > 2 and sys.argv[2] == '2'
+    requests=None
+    if BINARY:
+        requests,replies=private_stdio()
+        WRITER=FrameWriter(replies)
+    else: WRITER=ReplyWriter()
     # A dropped SSH link sends SIGHUP, which skips atexit. Remove upload temp
     # files, then exit at once; the next bridge start removes stale entries.
     def on_exit_signal(signum, frame):
         try: cleanup_uploads()
         finally: os._exit(128+signum)
     previous={sig:signal.signal(sig,on_exit_signal) for sig in (signal.SIGHUP,signal.SIGTERM)}
-    try: serve(prefix)
+    try: serve(prefix,requests)
     finally:
         for sig,handler in previous.items(): signal.signal(sig,handler)
         WRITER.close(); WRITER=None
-def serve(prefix):
+def serve(prefix, requests=None):
     global BROWSER, BROWSER_ERROR
     if globals().get('BROWSER_SOURCE') and os.environ.get('DAZED_BROWSER_ENDPOINT'):
         try:
@@ -1021,7 +1102,7 @@ def serve(prefix):
             exec(compile(BROWSER_SOURCE,'<dazedev-browser>','exec'),namespace)
             BROWSER=namespace['Bridge'](BROWSER_SOURCE,os.environ['DAZED_BROWSER_ENDPOINT'],os.environ['DAZED_BROWSER_DESKTOP'],lambda value: send_reply(prefix,dict(event='browser-open',**value),True),start=False)
         except Exception as error: BROWSER_ERROR=str(error)
-    send_reply(prefix,{'id':'ready','result':{'machine':MACHINE,'user':getpass.getuser()}})
+    send_reply(prefix,{'id':'ready','result':{'machine':MACHINE,'user':getpass.getuser(),'protocol':PROTOCOL if BINARY else 1,'schema':SCHEMA}})
     if BROWSER: BROWSER.start()
     # Each lane is bounded. Mutations remain ordered; long discovery/clone jobs
     # cannot starve ping, session lists or profile operations.
@@ -1030,16 +1111,17 @@ def serve(prefix):
         def finish(request):
             try: handle_request(prefix,request)
             finally: slots.release()
-        for line in sys.stdin:
+        incoming=read_requests(requests) if requests else sys.stdin
+        for line in incoming:
             request={}
             try:
-                request=json.loads(base64.b64decode(line.strip()))
+                request=json.loads(line if requests else base64.b64decode(line.strip()))
                 lane = lane_for(request['method'])
                 if lane != 'inline':
                     if not slots.acquire(blocking=False): raise RuntimeError('Host task queue is full; wait for current operations.')
                     (reads if lane == 'read' else mutations).submit(finish,request)
                 else: handle_request(prefix,request,True)
-            except Exception as e: send_reply(prefix,{'id':request.get('id','unknown') if isinstance(request,dict) else 'unknown','error':str(e)})
+            except Exception as e: send_reply(prefix,{'id':request.get('id','unknown') if isinstance(request,dict) else 'unknown','error':HostError('queue_full',str(e)) if isinstance(e,RuntimeError) and 'queue is full' in str(e) else e})
 if __name__=='__main__':
     try: main()
     finally:
