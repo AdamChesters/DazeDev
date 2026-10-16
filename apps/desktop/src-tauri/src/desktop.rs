@@ -20,10 +20,53 @@ struct AppState {
         std::sync::Mutex<std::collections::HashMap<String, Arc<std::sync::atomic::AtomicBool>>>,
     links: crate::browser::Prompts,
 }
+/// Host, terminal and voice events are for the workspace window only;
+/// terminal windows get what they need from it.
 fn sink(app: &tauri::AppHandle) -> EventSink {
     let app = app.clone();
     Arc::new(move |event, value| {
-        let _ = app.emit(event, value);
+        let _ = app.emit_to("main", event, value);
+    })
+}
+type ByteChannel = tauri::ipc::Channel<tauri::ipc::InvokeResponseBody>;
+/// Where each terminal's raw output goes: the workspace window that opened
+/// it and any terminal windows showing it. Every frame starts with an
+/// 8-byte big-endian sequence number, so a terminal window can join from a
+/// snapshot and skip what the snapshot already holds.
+#[derive(Default)]
+struct TerminalOutputs(std::sync::Mutex<std::collections::HashMap<String, OutputRoute>>);
+#[derive(Default)]
+struct OutputRoute {
+    generation: Option<u64>,
+    sequence: u64,
+    main: Option<ByteChannel>,
+    views: std::collections::HashMap<String, ByteChannel>,
+}
+fn terminal_output(
+    app: tauri::AppHandle,
+    id: String,
+    generation: Option<u64>,
+) -> crate::transport::OutputSink {
+    Arc::new(move |bytes| {
+        let outputs = app.state::<TerminalOutputs>();
+        let mut routes = outputs.0.locked();
+        let Some(route) = routes.get_mut(&id) else {
+            return;
+        };
+        if route.generation != generation {
+            return;
+        }
+        route.sequence += 1;
+        let mut frame = Vec::with_capacity(8 + bytes.len());
+        frame.extend_from_slice(&route.sequence.to_be_bytes());
+        frame.extend_from_slice(bytes);
+        if let Some(main) = &route.main {
+            let _ = main.send(tauri::ipc::InvokeResponseBody::Raw(frame.clone()));
+        }
+        route.views.retain(|_, view| {
+            view.send(tauri::ipc::InvokeResponseBody::Raw(frame.clone()))
+                .is_ok()
+        });
     })
 }
 #[tauri::command]
@@ -233,6 +276,7 @@ async fn host_disconnect(host_id: String, state: State<'_, AppState>) -> Result<
     Ok(())
 }
 #[tauri::command]
+#[allow(clippy::too_many_arguments)]
 async fn terminal_open(
     directory: Option<String>,
     generation: Option<u64>,
@@ -241,20 +285,32 @@ async fn terminal_open(
     host: Host,
     session: String,
     stamp: Option<String>,
+    output: ByteChannel,
+    window: tauri::WebviewWindow,
     state: State<'_, AppState>,
+    outputs: State<'_, TerminalOutputs>,
     app: tauri::AppHandle,
 ) -> Result<(), String> {
+    main_window(&window)?;
+    {
+        let mut routes = outputs.0.locked();
+        let route = routes.entry(id.clone()).or_default();
+        route.generation = generation;
+        route.main = Some(output);
+    }
     let t = state.transport.clone();
+    let bytes = terminal_output(app.clone(), id.clone(), generation);
     tauri::async_runtime::spawn_blocking(move || {
-        t.open_marked_directory(
+        t.open_terminal(
             id,
             host,
             session,
             stamp,
             Arc::new(move |event, mut value| {
                 value["generation"] = serde_json::json!(generation);
-                let _ = app.emit(event, value);
+                let _ = app.emit_to("main", event, value);
             }),
+            bytes,
             true,
             ready_marker,
             directory,
@@ -262,6 +318,37 @@ async fn terminal_open(
     })
     .await
     .map_err(|e| e.to_string())?
+}
+/// A terminal window receives its pane's output directly.
+#[tauri::command]
+async fn terminal_view_open(
+    pane_id: String,
+    output: ByteChannel,
+    window: tauri::WebviewWindow,
+    outputs: State<'_, TerminalOutputs>,
+) -> Result<(), String> {
+    if window.label() != format!("terminal-{pane_id}") {
+        return Err("Only this pane's terminal window can view it".into());
+    }
+    outputs
+        .0
+        .locked()
+        .entry(pane_id)
+        .or_default()
+        .views
+        .insert(window.label().to_owned(), output);
+    Ok(())
+}
+#[tauri::command]
+async fn terminal_view_close(
+    pane_id: String,
+    window: tauri::WebviewWindow,
+    outputs: State<'_, TerminalOutputs>,
+) -> Result<(), String> {
+    if let Some(route) = outputs.0.locked().get_mut(&pane_id) {
+        route.views.remove(window.label());
+    }
+    Ok(())
 }
 #[tauri::command]
 async fn terminal_input(
@@ -274,9 +361,11 @@ async fn terminal_input(
         .await
         .map_err(|e| e.to_string())?
 }
+// Async so acknowledgements never run on the UI thread.
 #[tauri::command]
-fn terminal_ack(id: String, bytes: usize, state: State<'_, AppState>) {
+async fn terminal_ack(id: String, bytes: usize, state: State<'_, AppState>) -> Result<(), String> {
     state.transport.ack(&id, bytes);
+    Ok(())
 }
 #[tauri::command]
 async fn terminal_binary(
@@ -306,7 +395,21 @@ async fn terminal_resize(
         .map_err(|e| e.to_string())?
 }
 #[tauri::command]
-async fn terminal_close(id: String, state: State<'_, AppState>) -> Result<(), String> {
+async fn terminal_close(
+    id: String,
+    state: State<'_, AppState>,
+    outputs: State<'_, TerminalOutputs>,
+) -> Result<(), String> {
+    {
+        let mut routes = outputs.0.locked();
+        if let Some(route) = routes.get_mut(&id) {
+            route.main = None;
+            route.generation = None;
+            if route.views.is_empty() {
+                routes.remove(&id);
+            }
+        }
+    }
     let t = state.transport.clone();
     let _ = tauri::async_runtime::spawn_blocking(move || t.close(&id)).await;
     Ok(())
@@ -803,6 +906,7 @@ pub fn run() {
     tauri::Builder::default()
         .plugin(tauri_plugin_opener::init())
         .manage(TerminalWindows::default())
+        .manage(TerminalOutputs::default())
         .on_window_event(|window, event| {
             if let tauri::WindowEvent::Focused(focused) = event {
                 if let Some(pane) = window.label().strip_prefix("terminal-") {
@@ -814,6 +918,9 @@ pub fn run() {
                 }
             }
             if matches!(event, tauri::WindowEvent::Destroyed) {
+                for route in window.state::<TerminalOutputs>().0.locked().values_mut() {
+                    route.views.remove(window.label());
+                }
                 if let Some(pane) = window.label().strip_prefix("terminal-") {
                     if let Ok(mut registry) = window.state::<TerminalWindows>().0.lock() {
                         registry.remove(pane);
@@ -921,6 +1028,8 @@ pub fn run() {
                 host_auth,
                 host_disconnect,
                 terminal_open,
+                terminal_view_open,
+                terminal_view_close,
                 terminal_input,
                 terminal_ack,
                 terminal_binary,

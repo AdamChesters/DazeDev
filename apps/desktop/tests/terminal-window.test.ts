@@ -9,7 +9,7 @@ const snapshot = (sequence: number): TerminalSnapshot => ({
   ready: true,
   context: 'context',
 });
-const output = (sequence: number) => ({ sequence, generation: 1, data: String(sequence) });
+const output = (sequence: number) => ({ sequence, data: new Uint8Array([sequence]) });
 
 describe('detached terminal output', () => {
   it('buffers output arriving before the snapshot and does not replay included bytes', () => {

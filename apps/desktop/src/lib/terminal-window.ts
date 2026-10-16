@@ -29,10 +29,10 @@ export interface WindowTerminalState {
   ready: boolean;
   metadata?: PaneStatus;
 }
+/** Output for a terminal window, numbered by the desktop app across reconnects. */
 export interface TerminalOutput {
   sequence: number;
-  generation: number;
-  data: string;
+  data: Uint8Array;
 }
 
 export class TerminalStream {

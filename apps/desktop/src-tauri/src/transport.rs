@@ -17,7 +17,12 @@ pub type OutputSink = Arc<dyn Fn(&[u8]) + Send + Sync>;
 /// Output as `terminal-output` events with base64 data, for callers that
 /// have no byte channel.
 pub fn event_output(sink: EventSink, id: String) -> OutputSink {
-    Arc::new(move |bytes| sink("terminal-output", json!({"id":id,"data":STANDARD.encode(bytes)})))
+    Arc::new(move |bytes| {
+        sink(
+            "terminal-output",
+            json!({"id":id,"data":STANDARD.encode(bytes)}),
+        )
+    })
 }
 #[derive(Clone, Debug, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -1403,10 +1408,7 @@ impl Transport {
                                 if error.kind == crate::local_sessions::SessionErrorKind::Ended {
                                     sink("terminal-exit", json!({"id":id}));
                                 } else {
-                                    sink(
-                                        "terminal-exit",
-                                        json!({"id":id,"error":error.message}),
-                                    );
+                                    sink("terminal-exit", json!({"id":id,"error":error.message}));
                                 }
                             }
                             break;
@@ -1739,7 +1741,9 @@ mod tests {
                 crate::local_sessions::ipc::send(&mut pipe, &json!({"result":null})).unwrap();
                 if expected == "input_stream" {
                     let frame = crate::local_sessions::ipc::receive(&mut pipe).unwrap();
-                    assert!(frame.get(if method == "input" { "data" } else { "resize" }).is_some());
+                    assert!(frame
+                        .get(if method == "input" { "data" } else { "resize" })
+                        .is_some());
                     crate::local_sessions::ipc::send(&mut pipe, &json!({"result":null})).unwrap();
                 } else {
                     pipe.read_exact(&mut [0]).unwrap();

@@ -20,6 +20,7 @@
   import { ClipboardAddon } from '@xterm/addon-clipboard';
   import { LigaturesAddon } from '@xterm/addon-ligatures';
   import { call, on, rpc, openExternal, desktop } from '../lib/bridge';
+  import { outputChannel } from '../lib/terminal-bytes';
   import { terminalPresentation } from '../lib/pane-status';
   import { deadPaneTarget } from '../lib/terminal-recovery';
   import { readClipboardContent, uploadClipboardFiles } from '../lib/clipboard-upload';
@@ -161,8 +162,15 @@
     notice = String(error);
   }
   function write(outputs: TerminalOutput[]) {
-    for (const output of outputs)
-      terminal.write(Uint8Array.from(atob(output.data), (c) => c.charCodeAt(0)));
+    for (const output of outputs) terminal.write(output.data);
+  }
+  function receive(output: TerminalOutput) {
+    write(stream.receive(output));
+    if (stream.hasGap && !gapTimer)
+      gapTimer = setTimeout(() => {
+        gapTimer = undefined!;
+        if (stream.hasGap) void sync();
+      }, 300);
   }
   async function sync() {
     if (disposed) return;
@@ -498,9 +506,6 @@
         navigation?: SearchNavigation | null;
         selection?: { start: { x: number; y: number }; end: { x: number; y: number } };
         state?: WindowTerminalState;
-        sequence?: number;
-        generation?: number;
-        data?: string;
       }>('terminal-window-message', (message) => {
         if (message.requestId) {
           const job = pending.get(message.requestId);
@@ -524,13 +529,6 @@
         } else if (message.kind === 'focus') {
           if (searchNavigation) navigationInput?.focus();
           else terminal.focus();
-        } else if (message.kind === 'output') {
-          write(stream.receive(message as TerminalOutput));
-          if (stream.hasGap && !gapTimer)
-            gapTimer = setTimeout(() => {
-              gapTimer = undefined!;
-              if (stream.hasGap) void sync();
-            }, 300);
         } else if (message.kind === 'state' && message.state) {
           const changed =
             viewState &&
@@ -547,6 +545,15 @@
         return;
       }
       cleanup.push(stop);
+      // Output comes straight from the desktop app, not through the workspace
+      // window. Subscribe before the snapshot so nothing falls between them.
+      try {
+        await call('terminal_view_open', { paneId, output: outputChannel(receive) });
+        cleanup.push(() => void call('terminal_view_close', { paneId }).catch(() => {}));
+      } catch (error) {
+        fail(error);
+      }
+      if (disposed) return;
       await sync();
       if (disposed) return;
       addons = new OptionalAddons((addon) => terminal.loadAddon(addon), {

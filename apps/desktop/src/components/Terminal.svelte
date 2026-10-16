@@ -18,7 +18,7 @@
   import { needsPasteConfirmation } from '../lib/paste';
   import PasteConfirm from './PasteConfirm.svelte';
   import { onMount, tick } from 'svelte';
-  import { onTerminalOutput } from '../lib/terminal-output';
+  import { AckBatcher, outputChannel } from '../lib/terminal-bytes';
   import { diagnostic } from '../lib/diagnostics';
   import { Terminal } from '@xterm/xterm';
   import { FitAddon } from '@xterm/addon-fit';
@@ -71,7 +71,6 @@
     onmetadata = () => {},
     onalert = () => {},
     floating = false,
-    onoutput = () => {},
     onterminalfocus = () => false,
     oncloseview = () => {},
     onclipboard = () => {},
@@ -85,7 +84,6 @@
     onsearch?: () => void;
     suppressFocus?: boolean;
     floating?: boolean;
-    onoutput?: (value: { sequence: number; generation: number; data: string }) => void;
     onterminalfocus?: () => boolean;
     oncloseview?: () => void;
     theme: 'blue' | 'charcoal' | 'green';
@@ -191,6 +189,11 @@
   let generation = 0;
   let contextEpoch = 0;
   let outputSequence = 0;
+  // One acknowledgement per 64 KiB or 16 ms keeps the host's flow control
+  // moving without an IPC call per chunk.
+  const acks = new AckBatcher((bytes) => {
+    void call('terminal_ack', { id: pane.id, bytes }).catch(() => {});
+  });
   let remoteReady = false;
   let readyMarker = '';
   let remotePid = 0;
@@ -430,6 +433,21 @@
           });
         lost('Terminal connection timed out. Reconnect to try again.');
       });
+      acks.reset();
+      // Raw output for this attach only; frames from an older PTY never arrive here.
+      const output = outputChannel(({ sequence, data }) => {
+        if (dead || g !== generation) return;
+        term.write(data, () => {
+          if (dead || g !== generation) return;
+          if (opened && remoteReady) {
+            detached = false;
+            reconnecting = false;
+            retainedOutput = '';
+          }
+          outputSequence = Math.max(outputSequence, sequence);
+          acks.add(data.length);
+        });
+      });
       await lifecycle.run(pane.id, () =>
         call('terminal_open', {
           id: pane.id,
@@ -439,6 +457,7 @@
           directory: pane.directory || null,
           readyMarker,
           generation: g,
+          output,
         }),
       );
       if (g === generation && !dead) {
@@ -803,22 +822,6 @@
       text: () => (detached ? retainedOutput : outputText()),
     });
     void Promise.all([
-      onTerminalOutput(() => pane.id, (v) => {
-        if (v.id === pane.id && v.generation === generation) {
-          const bytes = Uint8Array.from(atob(v.data), (c) => c.charCodeAt(0));
-          term.write(bytes, () => {
-            if (!disposed && v.generation === generation && opened && remoteReady) {
-              detached = false;
-              reconnecting = false;
-              retainedOutput = '';
-            }
-            if (!disposed)
-              onoutput({ sequence: ++outputSequence, generation: v.generation, data: v.data });
-            if (!disposed)
-              void call('terminal_ack', { id: pane.id, bytes: bytes.length }).catch(() => {});
-          });
-        }
-      }),
       on<{ id: string; generation: number }>('terminal-exit', (v) => {
         if (v.id === pane.id && v.generation === generation) {
           lost('Disconnected. Reconnecting…');
@@ -841,6 +844,7 @@
       );
     return () => {
       disposed = true;
+      acks.reset();
       root.removeEventListener('paste', clipboardPaste, true);
       readiness.clear();
       clearTimeout(statusTimer);

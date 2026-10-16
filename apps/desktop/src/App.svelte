@@ -4563,7 +4563,6 @@
                     watching={() =>
                       detachedPanes.has(p.id) ? detachedFocus === p.id : document.hasFocus()}
                     floating={detachedPanes.has(p.id)}
-                    onoutput={(value) => publishTerminal(p.id, { kind: 'output', ...value })}
                     onterminalfocus={() => {
                       if (!detachedPanes.has(p.id)) return false;
                       void call('terminal_window_focus', { paneId: p.id }).catch(fail);
