@@ -202,3 +202,23 @@ describe('input typed in the detached window', () => {
     expect(typed()).toEqual([]);
   });
 });
+
+describe('size set by the detached window', () => {
+  it('resizes the hidden view of a detached pane without resizing the PTY again', async () => {
+    const { term, rerender, props } = await attached();
+    await rerender({ ...props, floating: true, visible: false });
+    const resizes = calls('terminal_resize').length;
+    emit('terminal-window-resize', { paneId: 'other', cols: 90, rows: 30 });
+    emit('terminal-window-resize', { paneId: 'p1', cols: 0, rows: 30 });
+    expect([term.cols, term.rows]).not.toEqual([90, 30]);
+    emit('terminal-window-resize', { paneId: 'p1', cols: 90, rows: 30 });
+    expect([term.cols, term.rows]).toEqual([90, 30]);
+    expect(calls('terminal_resize')).toHaveLength(resizes);
+  });
+  it('ignores sizes for a pane shown in the workspace', async () => {
+    const { term } = await attached();
+    const size = [term.cols, term.rows];
+    emit('terminal-window-resize', { paneId: 'p1', cols: 90, rows: 30 });
+    expect([term.cols, term.rows]).toEqual(size);
+  });
+});

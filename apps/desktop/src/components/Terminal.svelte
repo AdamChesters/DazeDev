@@ -822,6 +822,16 @@
       on<{ paneId: string; data: string }>('terminal-window-input', (v) => {
         if (v.paneId === pane.id && terminalInputChangesContext(v.data)) contextEpoch++;
       }),
+      // The detached window resized the PTY; keep this hidden view the same
+      // size so its buffer, and the snapshots taken from it, wrap the same way.
+      on<{ paneId: string; cols: number; rows: number }>('terminal-window-resize', (v) => {
+        const { cols, rows } = v;
+        if (v.paneId !== pane.id || !floating || dead) return;
+        if (!(Number.isInteger(cols) && Number.isInteger(rows))) return;
+        if (cols < 1 || rows < 1 || cols > 1000 || rows > 1000) return;
+        term.resize(cols, rows);
+        resizer.mark(cols, rows);
+      }),
     ]).then((unsubs) => {
       if (disposed) {
         unsubs.forEach((f) => f());
