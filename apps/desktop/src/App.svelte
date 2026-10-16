@@ -44,7 +44,6 @@
     type AppAction,
   } from './lib/app-shortcuts';
   import { macPlatform } from './lib/terminal-setup';
-  import { recommendVoice, type VoiceHardware } from './lib/hardware';
   import { fade } from 'svelte/transition';
   import HighlightEffect from './components/HighlightEffect.svelte';
   import { recordingHighlight } from './lib/highlights';
@@ -112,7 +111,6 @@
     type Profile,
     type Inventory,
     type Session,
-    type ModelInfo,
     defaults,
     blankProfile,
     uid,
@@ -160,14 +158,13 @@
   import { VoiceCaptureKeys } from './lib/voice-capture-keys';
   import { RecordingTail } from './lib/recording-tail';
   import {
-    requiredVoiceModels,
     voiceStackReady,
-    listMicrophones,
   } from './lib/voice-setup';
   import { changelog, mergeChangelog, type ReleaseEntry } from './lib/changelog';
   import { releaseVersion } from './lib/release-version';
   import { focusDialog } from './lib/focus';
   import { DeviceStore } from './lib/state/device-store.svelte';
+  import { VoiceModels } from './lib/state/voice.svelte';
   import { Connections } from './lib/state/connections.svelte';
   import { DetachedWindows } from './lib/state/detached-windows.svelte';
   import Agents from './components/modals/Agents.svelte';
@@ -244,6 +241,31 @@
       error = String(e);
     },
   });
+  const voiceModels = new VoiceModels({
+    desktop,
+    call: (name, args) => call(name, args),
+    device: () => device,
+    voiceStatus: () => voiceStatus,
+    persist: () => persistDevice(),
+    resetBackend: () => {
+      voiceBackend = '';
+    },
+    notice: (message) => {
+      notice = message;
+    },
+    fail: (e) => fail(e),
+    mediaDevices: () => navigator.mediaDevices,
+  });
+  const downloadProgress = voiceModels.downloadProgress;
+  const {
+    loadModels,
+    changeModel: changeVoiceModel,
+    selectModel: selectVoiceModel,
+    removeModel,
+    downloadModel,
+    setup: setupVoice,
+    refreshMicrophones,
+  } = voiceModels;
   let modal = $state(''),
     error = $state(''),
     notice = $state(''),
@@ -251,10 +273,7 @@
     maximize = $state(''),
     search = $state(''),
     newHost = $state<Host>(hostDefaults()),
-    sessions = $state<Session[]>([]),
-    models = $state<ModelInfo[]>([]),
-    downloadProgress = $state<Record<string, string>>({}),
-    microphones = $state<MediaDeviceInfo[]>([]);
+    sessions = $state<Session[]>([]);
   let form = $state({
       hostId: '',
       name: '',
@@ -608,9 +627,6 @@
   });
   const { open: openUpdates, close: closeUpdates, check: checkUpdates, install: installUpdate } =
     updates;
-  let modelsLoaded = $state(false),
-    microphoneError = $state(''),
-    microphoneLoading = $state(false);
   let changelogReturn = $state('settings');
   let releaseHistory = $state<ReleaseEntry[]>(changelog);
   let releaseFilter = $state<'all' | 'desktop' | 'mobile'>('all');
@@ -653,7 +669,6 @@
       feedbackBusy = false;
     }
   }
-  const voiceReady = $derived(modelsLoaded && voiceStackReady(device.voice, models));
   $effect(() => {
     document.documentElement.dataset.theme = device.theme || 'blue';
     document.documentElement.dataset.highlightMotion = device.highlightMotion || 'animate';
@@ -684,121 +699,10 @@
   function respond(hostId: string, value: string) {
     return net.respond(hostId, value);
   }
-  async function refreshMicrophones(requestPermission = true) {
-    microphoneError = '';
-    microphoneLoading = true;
-    try {
-      if (!navigator.mediaDevices)
-        throw new Error('Microphone access is unavailable in this window.');
-      microphones = await listMicrophones(navigator.mediaDevices, requestPermission);
-    } catch (e) {
-      microphoneError = `Microphone access: ${String(e)}. Allow microphone access in Windows privacy settings, then refresh.`;
-    } finally {
-      microphoneLoading = false;
-    }
-  }
-  async function setupVoice() {
-    for (const id of requiredVoiceModels(device.voice)) {
-      if (models.find((m) => m.id === id)?.installed) continue;
-      downloadProgress[id] = 'Starting';
-      try {
-        await call('model_download', { id });
-      } finally {
-        delete downloadProgress[id];
-        await loadModels();
-      }
-    }
-    device.voiceSetupDismissed = true;
-    persistDevice();
-    notice = 'Voice stack ready to go.';
-  }
   let sessionPane = $state<Pane | null>(null);
   let sessionHost = $state('');
   let sessionStep = $state(0);
   let nameError = $state('');
-  let hardware = $state<VoiceHardware | null>(null);
-  let hardwareError = $state('');
-  let switchingVoice = $state(false);
-  const recommendation = $derived(hardware ? recommendVoice(hardware) : null);
-  let voiceCacheLoading = $state(false);
-  let voiceCacheTask: Promise<void> | undefined;
-  let voiceCacheSignature = '';
-  async function configureVoiceCache() {
-    if (!desktop || voiceStatus !== 'idle') return;
-    if (voiceCacheTask) return voiceCacheTask;
-    // Preload by default so the first dictation does not wait for model loads.
-    const retain = device.voice.keepLoaded ?? true;
-    const installed = (id: string) => models.some((m) => m.id === id && m.installed);
-    if (retain && (!installed(device.voice.model) || !installed('silero'))) return;
-    const options = {
-      model: device.voice.model,
-      backend: device.voice.backend,
-      cleanup: device.voice.cleanup && installed('s1-mini'),
-      retain,
-    };
-    const signature = JSON.stringify(options);
-    if (signature === voiceCacheSignature) return;
-    voiceCacheLoading = true;
-    try {
-      voiceCacheTask = call<void>('voice_cache', options);
-      await voiceCacheTask;
-      voiceCacheSignature = signature;
-    } finally {
-      voiceCacheTask = undefined;
-      voiceCacheLoading = false;
-    }
-  }
-  async function changeVoiceModel() {
-    switchingVoice = true;
-    try {
-      await call('voice_release');
-      voiceCacheSignature = '';
-      voiceBackend = '';
-      persistDevice();
-      await configureVoiceCache();
-    } catch (e) {
-      fail(e);
-    } finally {
-      switchingVoice = false;
-    }
-  }
-  async function selectVoiceModel(id: string) {
-    if (switchingVoice || voiceCacheLoading || voiceStatus !== 'idle') return;
-    switchingVoice = true;
-    try {
-      if (!models.find((m) => m.id === id)?.installed) {
-        downloadProgress[id] = 'Starting';
-        await call('model_download', { id });
-        await loadModels();
-      }
-      await call('voice_release');
-      voiceCacheSignature = '';
-      device.voice.model = id;
-      voiceBackend = '';
-      persistDevice();
-      await configureVoiceCache();
-    } finally {
-      delete downloadProgress[id];
-      switchingVoice = false;
-    }
-  }
-  async function removeModel(id: string, release: boolean) {
-    if (release) {
-      await call('voice_release');
-      voiceCacheSignature = '';
-    }
-    await call('model_remove', { id });
-    await loadModels();
-  }
-  async function downloadModel(id: string) {
-    downloadProgress[id] = 'Starting';
-    try {
-      await call('model_download', { id });
-      await loadModels();
-    } finally {
-      delete downloadProgress[id];
-    }
-  }
   let sessionOperation = $state('');
   let stageWidth = $state(1200);
   let draggingPane = $state('');
@@ -2863,7 +2767,7 @@
       await call('voice_stop');
       return;
     }
-    if (voiceStatus !== 'idle' || switchingVoice || filesLocked) return;
+    if (voiceStatus !== 'idle' || voiceModels.switching || filesLocked) return;
     if (mode === 'dictation' && !target) throw new Error('Select a terminal first.');
     voiceMode = mode;
     finishWithoutSubmit = false;
@@ -2901,8 +2805,8 @@
     let startedCapture: Capture | undefined;
     try {
       // A hotkey during startup warmup waits for it instead of being discarded.
-      if (voiceCacheTask) voicePreparing = 'Waiting for voice models…';
-      await voiceCacheTask?.catch(() => {});
+      if (voiceModels.cacheTask) voicePreparing = 'Waiting for voice models…';
+      await voiceModels.cacheTask?.catch(() => {});
       if (recordingId !== startedRecording || !appHasFocus()) return;
       mark('preload-wait-complete');
       if (mode === 'dictation') {
@@ -3126,13 +3030,6 @@
     });
     await refresh();
   }
-  async function loadModels() {
-    models = await call<ModelInfo[]>('model_list');
-    modelsLoaded = true;
-    await configureVoiceCache().catch((e) => {
-      notice = `Voice preload failed; recording can retry: ${e}`;
-    });
-  }
   async function openSettings() {
     modal = 'settings';
     void checkUpdates(false, true);
@@ -3141,15 +3038,7 @@
     guidance = profiles[settingsHost]?.preferences.guidance || '';
     promptTemplate = profiles[settingsHost]?.preferences.promptTemplate ?? defaultPrompt;
     await loadModels();
-    if (desktop && !hardware)
-      void call<VoiceHardware>('voice_hardware')
-        .then((v) => {
-          hardware = v;
-          hardwareError = '';
-        })
-        .catch((e) => {
-          hardwareError = String(e);
-        });
+    voiceModels.detectHardware();
     void refreshMicrophones();
   }
   function saveHostPreferences() {
@@ -3386,7 +3275,7 @@
           await configureShortcut();
           if (clientInfo.updateSupported && device.checkUpdates !== false) void checkUpdates();
           await loadModels();
-          if (!device.voiceSetupDismissed && !voiceStackReady(device.voice, models))
+          if (!device.voiceSetupDismissed && !voiceStackReady(device.voice, voiceModels.models))
             modal = 'voice-setup';
           if (
             needsChangelog(clientInfo.version, device.lastChangelogVersion, !!data?.hosts?.length)
@@ -3760,7 +3649,7 @@
         title={`Search terminals (${appShortcut(device.appShortcuts, 'search').label})`}
         onclick={() => openTerminalSearch()}><Search size={17} /></button
       >
-      {#if modelsLoaded && !voiceReady}<button
+      {#if voiceModels.modelsLoaded && !voiceModels.ready}<button
           class="voice-setup-alert"
           onclick={() => (modal = 'voice-setup')}
           ><Download size={14} />Voice stack not set up, click here to install</button
@@ -4635,7 +4524,7 @@
               .then(() => {
                 downloadProgress[id] = 'Cancelling';
               })
-              .catch(fail)}>Cancel {models.find((m) => m.id === id)?.name || id} download</button
+              .catch(fail)}>Cancel {voiceModels.models.find((m) => m.id === id)?.name || id} download</button
         >{/each}
       {#if (modal === 'upload' || modal === 'documents') && filesTarget}
         <FilesDialog
@@ -4738,7 +4627,7 @@
           {persistDevice}
           startListening={() => record('dictation', listenIntroTarget)}
           {task}
-          {voiceReady}
+          voiceReady={voiceModels.ready}
         />
       {:else if modal === 'voice-setup'}
         <VoiceSetup
@@ -4747,13 +4636,13 @@
           bind:device
           {downloadProgress}
           bind:modal
-          {models}
+          models={voiceModels.models}
           {openSettings}
           {persistDevice}
           {setupVoice}
-          {switchingVoice}
+          switchingVoice={voiceModels.switching}
           {task}
-          {voiceCacheLoading}
+          voiceCacheLoading={voiceModels.cacheLoading}
           {voiceStatus}
         />
       {:else if modal === 'changelog'}
@@ -4901,18 +4790,18 @@
             bind:device
             {downloadModel}
             {downloadProgress}
-            {hardware}
-            {hardwareError}
-            {models}
-            {modelsLoaded}
-            {recommendation}
+            hardware={voiceModels.hardware}
+            hardwareError={voiceModels.hardwareError}
+            models={voiceModels.models}
+            modelsLoaded={voiceModels.modelsLoaded}
+            recommendation={voiceModels.recommendation}
             {removeModel}
             {selectVoiceModel}
             {setupVoice}
-            {switchingVoice}
+            switchingVoice={voiceModels.switching}
             {task}
-            {voiceCacheLoading}
-            {voiceReady}
+            voiceCacheLoading={voiceModels.cacheLoading}
+            voiceReady={voiceModels.ready}
             {voiceStatus}
           />
           <VoiceHotkeysSection
@@ -4921,16 +4810,16 @@
             {capturingShortcut}
             {changeVoiceModel}
             bind:device
-            {microphoneError}
-            {microphoneLoading}
-            {microphones}
+            microphoneError={voiceModels.microphoneError}
+            microphoneLoading={voiceModels.microphoneLoading}
+            microphones={voiceModels.microphones}
             {persistDevice}
             {refreshMicrophones}
             {saveShortcut}
             {shortcutStatus}
-            {switchingVoice}
+            switchingVoice={voiceModels.switching}
             {task}
-            {voiceCacheLoading}
+            voiceCacheLoading={voiceModels.cacheLoading}
             {voiceStatus}
           />
           <AppearanceSection bind:device {persistDevice} {systemReducedMotion} />
