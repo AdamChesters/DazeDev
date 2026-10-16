@@ -281,6 +281,7 @@
       theme: device.theme || 'blue',
       inputShortcut: device.inputShortcut || defaultShortcut,
       commandShortcut: device.commandShortcut || defaultCommandShortcut,
+      searchShortcut: appShortcut(device.appShortcuts, 'search'),
       voiceStatus,
       voiceMode,
       voiceTarget,
@@ -910,6 +911,8 @@
   ) {
     if (sameShortcut(binding, bindingFor(mode === 'dictation' ? 'command' : 'dictation')))
       throw new Error('Choose different hotkeys for terminal dictation and IDE commands.');
+    const clash = appActions.find((a) => sameShortcut(appShortcut(device.appShortcuts, a.id), binding));
+    if (clash) throw new Error(`${binding.label} is already used by ${clash.label}.`);
     if (mode === 'dictation') device.inputShortcut = binding;
     else device.commandShortcut = binding;
     capturingShortcut = null;
@@ -919,6 +922,29 @@
   function captureShortcut(mode: VoiceMode) {
     capturingShortcut = mode;
     shortcutStatus = 'Press a key combination, or choose a mouse/device button.';
+  }
+  let capturingAppShortcut = $state<AppAction | null>(null);
+  let appShortcutStatus = $state('');
+  const mac = macPlatform();
+  function saveAppShortcut(action: AppAction, binding: Shortcut) {
+    const clash = shortcutConflict(action, binding, device.appShortcuts, [
+      { label: 'Terminal dictation', shortcut: bindingFor('dictation') },
+      { label: 'IDE voice command', shortcut: bindingFor('command') },
+    ]);
+    if (clash) {
+      appShortcutStatus = `${binding.label} is already used by ${clash}. Press another combination, or Escape to cancel.`;
+      return;
+    }
+    device.appShortcuts = { ...device.appShortcuts, [action]: binding };
+    capturingAppShortcut = null;
+    appShortcutStatus = '';
+    persistDevice();
+  }
+  function resetAppShortcuts() {
+    device.appShortcuts = {};
+    capturingAppShortcut = null;
+    appShortcutStatus = 'Shortcuts reset to defaults.';
+    persistDevice();
   }
   async function inputEdge(pressed: boolean, mode: VoiceMode) {
     if (capturingShortcut || (pressed && !appHasFocus())) return;
@@ -1681,6 +1707,9 @@
       capturingShortcut = null;
       void task(() => configureShortcut());
     }
+  });
+  $effect(() => {
+    if (capturingAppShortcut && modal !== 'settings') capturingAppShortcut = null;
   });
   let launchAxis = $state<'row' | 'column' | null>(null);
   $effect(() => {
@@ -3596,7 +3625,25 @@
         }
       }
 
-      if (e.key === 'F11' && desktop) {
+      if (capturingAppShortcut) {
+        e.preventDefault();
+        e.stopImmediatePropagation();
+        if (e.key === 'Escape') {
+          capturingAppShortcut = null;
+          appShortcutStatus = '';
+          return;
+        }
+        const binding = keyboardShortcut(e);
+        if (binding) saveAppShortcut(capturingAppShortcut, binding);
+        return;
+      }
+      // Ctrl+letter inside a terminal is a control key for the shell or editor.
+      const inTerminal = !!(e.target as HTMLElement)?.closest?.('.xterm');
+      const appAction =
+        capturingShortcut || (inTerminal && terminalOwnsKey(e))
+          ? undefined
+          : appActionFor(e, device.appShortcuts, mac);
+      if (appAction === 'fullscreen' && desktop) {
         e.preventDefault();
         e.stopImmediatePropagation();
         void task(async () => {
@@ -3625,9 +3672,7 @@
         return;
       }
       if (
-        (e.ctrlKey || e.metaKey) &&
-        e.shiftKey &&
-        e.code === 'KeyF' &&
+        appAction === 'search' &&
         !modal &&
         !(e.target as HTMLElement)?.closest?.('.source-viewer')
       ) {
@@ -3668,7 +3713,7 @@
         if (!busy && !filesLocked && !broadcastBusy)
           modal = modal === 'changelog' ? changelogReturn : '';
       }
-      if ((e.ctrlKey || e.metaKey) && e.key === 'k' && !filesLocked && !broadcastBusy) {
+      if (appAction === 'command' && !filesLocked && !broadcastBusy) {
         e.preventDefault();
         modal = 'command';
       }
@@ -3836,7 +3881,7 @@
       <button
         class="icon"
         aria-label="Search terminals"
-        title="Search terminals (Ctrl+Shift+F)"
+        title={`Search terminals (${appShortcut(device.appShortcuts, 'search').label})`}
         onclick={() => openTerminalSearch()}><Search size={17} /></button
       >
       {#if modelsLoaded && !voiceReady}<button
@@ -6187,10 +6232,39 @@
                 </select></label
               >
               <p class="hint">
-                Copy: Ctrl+Shift+C. Paste: Ctrl+V or Ctrl+Shift+V. Search: Ctrl+Shift+F. Remote
-                paste access lets programs on the host read this device's clipboard.
+                Copy: Ctrl+Shift+C. Paste: Ctrl+V or Ctrl+Shift+V. Search: {appShortcut(
+                  device.appShortcuts,
+                  'search',
+                ).label}. Remote paste access lets programs on the host read this device's
+                clipboard.
               </p>
             </details>{/if}
+          <details class="settings-section settings-disclosure">
+            <summary>Keyboard shortcuts <span>App actions</span></summary>
+            <p class="hint">
+              Ctrl+letter shortcuts without Shift or Alt are left to the terminal while a terminal
+              has focus, so shell and editor keys such as Ctrl+K keep working there.
+            </p>
+            {#each appActions as action}
+              <div class="hotkey-record">
+                <label
+                  >{action.label}<input
+                    readonly
+                    value={appShortcut(device.appShortcuts, action.id).label}
+                  /></label
+                >
+                <button
+                  onclick={() => {
+                    capturingAppShortcut = action.id;
+                    appShortcutStatus = 'Press the new key combination. Escape cancels.';
+                  }}
+                  >{capturingAppShortcut === action.id ? 'Press keys…' : 'Change'}</button
+                >
+              </div>
+            {/each}
+            <button onclick={resetAppShortcuts}>Reset to defaults</button>
+            {#if appShortcutStatus}<p role="status" class="hint">{appShortcutStatus}</p>{/if}
+          </details>
           <details class="settings-section settings-disclosure">
             <summary>Connections <span>{device.hosts.length} hosts</span></summary>
             <p class="hint">
