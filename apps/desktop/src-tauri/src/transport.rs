@@ -12,6 +12,13 @@ use std::{
     time::Duration,
 };
 pub type EventSink = Arc<dyn Fn(&str, Value) + Send + Sync>;
+/// Receives a terminal's raw output bytes, in order.
+pub type OutputSink = Arc<dyn Fn(&[u8]) + Send + Sync>;
+/// Output as `terminal-output` events with base64 data, for callers that
+/// have no byte channel.
+pub fn event_output(sink: EventSink, id: String) -> OutputSink {
+    Arc::new(move |bytes| sink("terminal-output", json!({"id":id,"data":STANDARD.encode(bytes)})))
+}
 #[derive(Clone, Debug, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct Host {
@@ -424,6 +431,8 @@ struct NativeView {
     viewer: String,
     active: AtomicBool,
     pending: AtomicUsize,
+    /// One persistent input pipe, opened on first use.
+    input: Mutex<Option<crate::local_sessions::InputChannel>>,
 }
 impl NativeView {
     fn request(&self, method: &str, mut args: Value) -> Result<Value, String> {
@@ -431,6 +440,27 @@ impl NativeView {
         args["stamp"] = json!(self.stamp);
         args["viewer"] = json!(self.viewer);
         self.client.request(method, args)
+    }
+    fn with_input(
+        &self,
+        send: impl FnOnce(
+            &mut crate::local_sessions::InputChannel,
+        ) -> Result<(), crate::local_sessions::SessionError>,
+    ) -> Result<(), String> {
+        let mut input = lock(&self.input);
+        if input.is_none() {
+            *input = Some(
+                self.client
+                    .input_channel(&self.session, self.stamp.as_deref())
+                    .map_err(String::from)?,
+            );
+        }
+        let result = send(input.as_mut().expect("input channel")).map_err(String::from);
+        if result.is_err() {
+            // Reopen on the next call; never resend uncertain input.
+            *input = None;
+        }
+        result
     }
 }
 pub struct Transport {
@@ -1252,6 +1282,7 @@ impl Transport {
     ) -> Result<(), String> {
         self.open_marked_directory(id, host, session, stamp, sink, flow, ready_marker, None)
     }
+    #[allow(clippy::too_many_arguments)]
     pub fn open_marked_directory(
         &self,
         id: String,
@@ -1259,6 +1290,33 @@ impl Transport {
         session: String,
         stamp: Option<String>,
         sink: EventSink,
+        flow: bool,
+        ready_marker: Option<String>,
+        directory: Option<String>,
+    ) -> Result<(), String> {
+        let output = event_output(sink.clone(), id.clone());
+        self.open_terminal(
+            id,
+            host,
+            session,
+            stamp,
+            sink,
+            output,
+            flow,
+            ready_marker,
+            directory,
+        )
+    }
+    /// Open a terminal. Output goes to `output`; `terminal-exit` goes to `sink`.
+    #[allow(clippy::too_many_arguments)]
+    pub fn open_terminal(
+        &self,
+        id: String,
+        host: Host,
+        session: String,
+        stamp: Option<String>,
+        sink: EventSink,
+        output: OutputSink,
         flow: bool,
         ready_marker: Option<String>,
         directory: Option<String>,
@@ -1282,9 +1340,16 @@ impl Transport {
                 viewer: uuid::Uuid::new_v4().to_string(),
                 active: AtomicBool::new(true),
                 pending: AtomicUsize::new(0),
+                input: Mutex::new(None),
             });
-            // Fetch before registering so a failed attach never leaves a live view behind.
-            let first = view.request("view_poll", json!({}))?;
+            // The broker pushes output over one pipe; reading blocks until
+            // output, a heartbeat or the end. Read the first update before
+            // registering so a failed attach never leaves a live view behind.
+            let mut stream = view
+                .client
+                .view_stream(&view.session, &view.viewer, view.stamp.as_deref(), None)
+                .map_err(String::from)?;
+            let first = stream.next().map_err(String::from)?;
             if let Some(old) = lock(&self.native_views).insert(id.clone(), view.clone()) {
                 old.active.store(false, Ordering::Release);
                 let _ = old.request("view_detach", json!({}));
@@ -1293,10 +1358,11 @@ impl Transport {
                 .map(|m| format!("\x1b]777;dazedev-ready:{m}:{}\x07", descriptor["pid"]))
                 .unwrap_or_default();
             std::thread::spawn(move || {
-                let mut next = Some(first);
-                let mut sequence = None;
+                let mut next = Some(Ok(first));
                 let mut first = true;
                 while view.active.load(Ordering::Acquire) {
+                    // Stop reading while the renderer is behind; the broker
+                    // keeps the output until the pipe drains.
                     while flow
                         && view.pending.load(Ordering::Acquire) >= 262144
                         && view.active.load(Ordering::Acquire)
@@ -1306,46 +1372,46 @@ impl Transport {
                     if !view.active.load(Ordering::Acquire) {
                         break;
                     }
-                    let response = next
-                        .take()
-                        .map(Ok)
-                        .unwrap_or_else(|| view.request("view_poll", json!({"since":sequence})));
-                    match response {
-                        Ok(v) => {
-                            let mut data = if v["reset"] == true {
+                    match next.take().unwrap_or_else(|| stream.next()) {
+                        Ok(update) => {
+                            let mut data = if update.reset {
                                 b"\x1b[2J\x1b[H".to_vec()
                             } else {
                                 Vec::new()
                             };
-                            match STANDARD.decode(v["data"].as_str().unwrap_or("")) {
-                                Ok(b) => data.extend(b),
-                                Err(_) => break,
-                            }
+                            data.extend(update.data);
                             if first {
                                 data.extend(marker.as_bytes());
                                 first = false;
                             }
-                            sequence = v["seq"].as_u64();
-                            if !data.is_empty() {
+                            if !data.is_empty() && view.active.load(Ordering::Acquire) {
                                 if flow {
                                     view.pending.fetch_add(data.len(), Ordering::AcqRel);
                                 }
-                                sink(
-                                    "terminal-output",
-                                    json!({"id":id,"data":STANDARD.encode(data)}),
-                                );
+                                output(&data);
                             }
-                            if v["running"] == false {
+                            if !update.running {
                                 sink("terminal-exit", json!({"id":id}));
+                                break;
+                            }
+                            if update.detached {
                                 break;
                             }
                         }
                         Err(error) => {
-                            sink("terminal-exit", json!({"id":id,"error":error}));
+                            if view.active.load(Ordering::Acquire) {
+                                if error.kind == crate::local_sessions::SessionErrorKind::Ended {
+                                    sink("terminal-exit", json!({"id":id}));
+                                } else {
+                                    sink(
+                                        "terminal-exit",
+                                        json!({"id":id,"error":error.message}),
+                                    );
+                                }
+                            }
                             break;
                         }
                     }
-                    std::thread::sleep(Duration::from_millis(30));
                 }
                 view.active.store(false, Ordering::Release);
                 let _ = view.request("view_detach", json!({}));
@@ -1462,7 +1528,8 @@ impl Transport {
             terminal_finished(&exited_pty, &exited_id, &exited_sink)
         });
         std::thread::spawn(move || {
-            let mut chunk = [0u8; 16384];
+            // Large reads join bursts into fewer, bigger messages.
+            let mut chunk = vec![0u8; 65536];
             let mut held: Vec<u8> = Vec::new();
             loop {
                 let n = match reader.read(&mut chunk) {
@@ -1505,10 +1572,7 @@ impl Transport {
                 if flow {
                     pty.pending.fetch_add(data.len(), Ordering::AcqRel);
                 }
-                sink(
-                    "terminal-output",
-                    json!({"id":id,"data":STANDARD.encode(data)}),
-                );
+                output(data);
             }
             terminal_finished(&pty, &id, &sink);
         });
@@ -1533,11 +1597,9 @@ impl Transport {
     }
     pub fn binary(&self, id: &str, bytes: &[u8]) -> Result<(), String> {
         // Never retain the registry guard across IPC: renderer ACK runs synchronously.
-        let native = self.native_views.lock().unwrap().get(id).cloned();
+        let native = lock(&self.native_views).get(id).cloned();
         if let Some(v) = native {
-            return v
-                .request("input", json!({"data":STANDARD.encode(bytes)}))
-                .map(|_| ());
+            return v.with_input(|input| input.send(bytes));
         }
         let p = self
             .terminals
@@ -1562,11 +1624,9 @@ impl Transport {
         write(&p, data.as_bytes())
     }
     pub fn resize(&self, id: &str, cols: u16, rows: u16) -> Result<(), String> {
-        let native = self.native_views.lock().unwrap().get(id).cloned();
+        let native = lock(&self.native_views).get(id).cloned();
         if let Some(v) = native {
-            return v
-                .request("resize", json!({"cols":cols,"rows":rows}))
-                .map(|_| ());
+            return v.with_input(|input| input.resize(cols.max(1), rows.max(1)));
         }
         let p = self
             .terminals
@@ -1667,11 +1727,23 @@ mod tests {
                 let (mut pipe, _) = listener.accept().unwrap();
                 pipe.set_read_timeout(Some(Duration::from_secs(5))).unwrap();
                 let request = crate::local_sessions::ipc::receive(&mut pipe).unwrap();
-                assert_eq!(request["method"], method);
+                // Input and resize share one persistent input pipe.
+                let expected = if method == "view_detach" {
+                    "view_detach"
+                } else {
+                    "input_stream"
+                };
+                assert_eq!(request["method"], expected);
                 entered.send(()).unwrap();
                 wait.recv_timeout(Duration::from_secs(5)).unwrap();
                 crate::local_sessions::ipc::send(&mut pipe, &json!({"result":null})).unwrap();
-                pipe.read_exact(&mut [0]).unwrap();
+                if expected == "input_stream" {
+                    let frame = crate::local_sessions::ipc::receive(&mut pipe).unwrap();
+                    assert!(frame.get(if method == "input" { "data" } else { "resize" }).is_some());
+                    crate::local_sessions::ipc::send(&mut pipe, &json!({"result":null})).unwrap();
+                } else {
+                    pipe.read_exact(&mut [0]).unwrap();
+                }
             });
             let transport = Arc::new(Transport::default());
             transport.native_views.lock().unwrap().insert(
@@ -1687,6 +1759,7 @@ mod tests {
                     viewer: "view".into(),
                     active: AtomicBool::new(true),
                     pending: AtomicUsize::new(1),
+                    input: Mutex::new(None),
                 }),
             );
             let worker = transport.clone();

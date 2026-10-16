@@ -1105,6 +1105,8 @@ impl OutputReader {
 }
 
 impl Read for OutputReader {
+    /// Blocks for the first bytes, then also returns whatever else is
+    /// already queued, so bursts arrive as one read.
     fn read(&mut self, out: &mut [u8]) -> std::io::Result<usize> {
         while self.position >= self.buffer.len() {
             match self.rx.blocking_recv() {
@@ -1115,10 +1117,23 @@ impl Read for OutputReader {
                 None => return Ok(0),
             }
         }
-        let n = out.len().min(self.buffer.len() - self.position);
-        out[..n].copy_from_slice(&self.buffer[self.position..self.position + n]);
-        self.position += n;
-        Ok(n)
+        let mut n = 0;
+        loop {
+            let take = (out.len() - n).min(self.buffer.len() - self.position);
+            out[n..n + take].copy_from_slice(&self.buffer[self.position..self.position + take]);
+            self.position += take;
+            n += take;
+            if n == out.len() {
+                return Ok(n);
+            }
+            match self.rx.try_recv() {
+                Ok(bytes) => {
+                    self.buffer = bytes;
+                    self.position = 0;
+                }
+                Err(_) => return Ok(n),
+            }
+        }
     }
 }
 
