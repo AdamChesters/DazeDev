@@ -1,6 +1,6 @@
 use crate::sync::LockExt;
 use std::{
-    collections::VecDeque,
+    collections::{HashMap, HashSet, VecDeque},
     net::IpAddr,
     sync::Mutex,
     time::{Duration, Instant},
@@ -162,9 +162,79 @@ impl Requests {
     }
 }
 
+/// The answer for a link the user did not allow, or did not answer in time.
+pub const NOT_OPENED: &str = "The link was not opened";
+/// How long a link request waits for the user.
+pub const PROMPT_TIMEOUT: Duration = Duration::from_secs(120);
+
+/// A host's request to open a link, waiting for the user's decision.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct Prompt {
+    pub host: String,
+    pub nonce: String,
+    pub id: String,
+    pub url: String,
+}
+/// Links waiting for a decision, and hosts trusted until the app restarts.
+#[derive(Default)]
+pub struct Prompts {
+    pending: Mutex<HashMap<String, Prompt>>,
+    trusted: Mutex<HashSet<String>>,
+}
+impl Prompts {
+    pub fn trusted(&self, host: &str) -> bool {
+        self.trusted.locked().contains(host)
+    }
+    pub fn trust(&self, host: &str) {
+        self.trusted.locked().insert(host.into());
+    }
+    /// Store a request and return its ID, or refuse when too many wait.
+    pub fn add(&self, prompt: Prompt) -> Result<String, String> {
+        let mut pending = self.pending.locked();
+        if pending.len() >= 32 {
+            return Err(NOT_OPENED.into());
+        }
+        let id = uuid::Uuid::new_v4().to_string();
+        pending.insert(id.clone(), prompt);
+        Ok(id)
+    }
+    /// Remove a request. Only the first decision or the timeout gets it.
+    pub fn take(&self, request: &str) -> Option<Prompt> {
+        self.pending.locked().remove(request)
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn prompts_are_answered_once_and_trust_is_per_host() {
+        let prompts = Prompts::default();
+        let prompt = Prompt {
+            host: "host-a".into(),
+            nonce: "nonce".into(),
+            id: "id".into(),
+            url: "https://example.test/".into(),
+        };
+        let request = prompts.add(prompt.clone()).unwrap();
+        assert_eq!(prompts.take(&request), Some(prompt));
+        assert_eq!(prompts.take(&request), None);
+        assert!(!prompts.trusted("host-a"));
+        prompts.trust("host-a");
+        assert!(prompts.trusted("host-a"));
+        assert!(!prompts.trusted("host-b"));
+        let flood: Vec<_> = (0..40)
+            .map(|_| {
+                prompts.add(Prompt {
+                    host: "host-b".into(),
+                    nonce: String::new(),
+                    id: String::new(),
+                    url: String::new(),
+                })
+            })
+            .collect();
+        assert_eq!(flood.iter().filter(|r| r.is_ok()).count(), 32);
+    }
     #[test]
     fn opener_thread_returns_real_failures_and_uses_another_thread() {
         let caller = std::thread::current().id();
