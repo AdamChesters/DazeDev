@@ -156,18 +156,44 @@ describe('detached terminal paste', () => {
 });
 
 describe('detached terminal input', () => {
-  it('relays typed text and sends focus reports and size straight to the PTY', async () => {
+  it('sends typed text, Enter and Ctrl+C and the size straight to the PTY', async () => {
     const { term, requests } = await opened([{ sequence: 1, data: '', cols: 80, rows: 24 }]);
     await waitFor(() => expect(term.focusCount).toBeGreaterThan(0));
     term.input('x', true);
-    term.input('\x1b[I', true);
-    await waitFor(() => expect(calls('terminal_window_input')).toHaveLength(1));
-    expect(calls('terminal_window_input')[0]).toEqual({ paneId: 'p1', data: '\x1b[I' });
-    const inputs = calls('terminal_window_request').filter((args) => args.action === 'input');
-    expect(inputs.map((args) => args.args)).toEqual([{ data: 'x' }]);
+    term.input('\r', true);
+    term.input('\x03', true);
+    await waitFor(() => expect(calls('terminal_window_input')).toHaveLength(3));
+    expect(calls('terminal_window_input')).toEqual([
+      { paneId: 'p1', data: 'x' },
+      { paneId: 'p1', data: '\r' },
+      { paneId: 'p1', data: '\x03' },
+    ]);
+    expect(requests).not.toContain('input');
     await waitFor(() =>
       expect(calls('terminal_window_resize')).toContainEqual({ paneId: 'p1', cols: 80, rows: 24 }),
     );
     expect(requests).not.toContain('resize');
+  });
+  it('pastes against the context the workspace window sends after typing', async () => {
+    const { requests } = await opened([{ sequence: 1, data: '', cols: 80, rows: 24 }]);
+    const root = document.querySelector<HTMLElement>('.xterm')!.parentElement!;
+    emit('terminal-window-message', { kind: 'context', context: 'ctx-2' });
+    root.dispatchEvent(pasteEvent('one\ntwo'));
+    await fireEvent.click(await screen.findByRole('button', { name: 'Paste' }));
+    await waitFor(() => expect(requests).toContain('paste'));
+    const paste = calls('terminal_window_request').find((args) => args.action === 'paste')!;
+    expect(paste.args).toEqual({ text: 'one\ntwo', context: 'ctx-2' });
+  });
+  it('stops sending after a failed keystroke and does not resend it', async () => {
+    const { term } = await opened([{ sequence: 1, data: '', cols: 80, rows: 24 }]);
+    await waitFor(() => expect(term.focusCount).toBeGreaterThan(0));
+    handlers.set('terminal_window_input', () => {
+      throw new Error('lost');
+    });
+    term.input('a', true);
+    await screen.findByText(/lost/);
+    term.input('b', true);
+    await screen.findByText(/disconnected/i);
+    expect(calls('terminal_window_input')).toEqual([{ paneId: 'p1', data: 'a' }]);
   });
 });

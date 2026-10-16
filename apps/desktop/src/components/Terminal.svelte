@@ -820,7 +820,14 @@
       // desktop app reports it here first, so the dictation context moves on
       // exactly as it does for relayed input.
       on<{ paneId: string; data: string }>('terminal-window-input', (v) => {
-        if (v.paneId === pane.id && terminalInputChangesContext(v.data)) contextEpoch++;
+        if (v.paneId !== pane.id || !terminalInputChangesContext(v.data)) return;
+        contextEpoch++;
+        // The detached window checks pastes against this context.
+        if (floating)
+          void call('terminal_window_publish', {
+            paneId: pane.id,
+            value: { kind: 'context', context: context() },
+          }).catch(() => {});
       }),
       // The detached window resized the PTY; keep this hidden view the same
       // size so its buffer, and the snapshots taken from it, wrap the same way.

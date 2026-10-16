@@ -1,6 +1,5 @@
 import { copySelectedTerminalText } from './terminal-copy';
 import { selectionMouseDown } from './terminal-setup';
-import { terminalInputChangesContext } from './terminals';
 
 // Key and pointer handling shared by the workspace terminal and the detached
 // terminal window.
@@ -105,20 +104,14 @@ export interface WindowInputRoutes {
   direct: (data: string) => Promise<unknown>;
   /** terminal_window_binary: base64 bytes straight to the PTY. */
   binary: (data: string) => Promise<unknown>;
-  /** The workspace window's 'input' request. */
-  relay: (data: string) => Promise<unknown>;
 }
 
 /**
- * Input that changes the dictation context goes through the workspace window,
- * which tracks the context epoch; other input goes straight to the PTY.
- */
-export const relayedInput = (data: string) => terminalInputChangesContext(data);
-
-/**
- * Input from a detached terminal window. Direct and relayed input share one
- * queue, so keys arrive in the order typed. Input that fails is reported and
- * never resent, and input is dropped until the view is ready again.
+ * Input from a detached terminal window, sent straight to the PTY. The
+ * desktop app tells the workspace window about each input first, so its
+ * dictation context still moves on. One queue keeps input in the order typed.
+ * Input that fails is reported and never resent, and input is dropped until
+ * the view is ready again.
  */
 export class WindowInputQueue {
   private chain: Promise<void> = Promise.resolve();
@@ -128,9 +121,7 @@ export class WindowInputQueue {
     private failed: (error: unknown) => void,
   ) {}
   input(data: string): Promise<void> {
-    return this.enqueue(() =>
-      relayedInput(data) ? this.routes.relay(data) : this.routes.direct(data),
-    );
+    return this.enqueue(() => this.routes.direct(data));
   }
   /** `data` is xterm's binary string; it is sent base64-encoded. */
   binary(data: string): Promise<void> {

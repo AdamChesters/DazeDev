@@ -201,6 +201,14 @@ describe('input typed in the detached window', () => {
     await expect(controls.submitReviewed!(before)).rejects.toThrow('terminal changed');
     expect(typed()).toEqual([]);
   });
+  it('sends the new paste context to the detached window', async () => {
+    const { rerender, props } = await attached();
+    await rerender({ ...props, floating: true, visible: false });
+    emit('terminal-window-input', { paneId: 'p1', data: 'x' });
+    expect(calls('terminal_window_publish')).toEqual([
+      { paneId: 'p1', value: { kind: 'context', context: terminals.get('p1')!.context() } },
+    ]);
+  });
 });
 
 describe('size set by the detached window', () => {

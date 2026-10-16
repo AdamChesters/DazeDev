@@ -148,9 +148,6 @@
     {
       direct: (data) => call('terminal_window_input', { paneId, data }),
       binary: (data) => call('terminal_window_binary', { paneId, data }),
-      relay: async (data) => {
-        context = await request<string>('input', { data });
-      },
     },
     () => !!viewState?.ready,
     (error) => {
@@ -388,6 +385,7 @@
       const stop = await on<
         Partial<WindowReply> & {
           kind?: string;
+          context?: string;
           navigation?: SearchNavigation | null;
           selection?: { start: { x: number; y: number }; end: { x: number; y: number } };
           state?: WindowTerminalState;
@@ -406,6 +404,10 @@
             terminal.scrollToLine(start.y);
             terminal.select(start.x, start.y, (end.y - start.y) * terminal.cols + end.x - start.x);
           });
+        } else if (message.kind === 'context' && typeof message.context === 'string') {
+          // Typing here goes straight to the PTY; the workspace window sends
+          // the new paste destination it expects.
+          context = message.context;
         } else if (message.kind === 'focus') {
           if (searchNavigation) navigationInput?.focus();
           else terminal.focus();
