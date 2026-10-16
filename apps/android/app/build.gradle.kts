@@ -4,6 +4,13 @@ plugins {
     id("com.android.application")
     id("org.jetbrains.kotlin.android")
     id("org.jetbrains.kotlin.plugin.compose")
+    id("org.jlleitschuh.gradle.ktlint")
+}
+
+ktlint {
+    version.set("1.8.0")
+    // Generated sources are not ours to format.
+    filter { exclude { it.file.path.contains("/build/generated/") } }
 }
 
 android {
@@ -196,3 +203,6 @@ android.sourceSets
     .getByName("main")
     .java
     .srcDir(layout.buildDirectory.dir("generated/mobile/kotlin"))
+
+// The generated Kotlin folder is part of the main source set, so ktlint must run after it is staged.
+tasks.matching { it.name.startsWith("runKtlint") }.configureEach { dependsOn(mobileAssets) }
