@@ -1,5 +1,4 @@
 use super::{runtime_exe, Client};
-use base64::{engine::general_purpose::STANDARD, Engine};
 use serde_json::json;
 use std::{
     io::{Read, Write},
@@ -8,6 +7,9 @@ use std::{
 };
 use windows_sys::Win32::System::Console::*;
 pub fn open_external(c: &Client, id: &str) -> Result<(), String> {
+    if c.legacy() {
+        return Err("End the PowerShell sessions from the earlier DazeDev and reconnect before opening a separate window.".into());
+    }
     c.request("describe", json!({"id":id}))?;
     let viewer = uuid::Uuid::new_v4().to_string();
     let mut child = std::process::Command::new(runtime_exe(&c.root)?)
@@ -92,64 +94,62 @@ pub fn attach(c: Client, id: String, viewer: String) -> Result<(), String> {
             output_mode,
         }
     };
-    let input_client = c.clone();
-    let input_id = id.clone();
+    let mut input = c.input_channel(&id, None).map_err(String::from)?;
     std::thread::spawn(move || {
         let mut bytes = [0; 4096];
-        let mut input = std::io::stdin();
-        while let Ok(n) = input.read(&mut bytes) {
-            if n == 0 {
-                break;
-            }
-            if input_client
-                .request(
-                    "input",
-                    json!({"id":input_id,"data":STANDARD.encode(&bytes[..n])}),
-                )
-                .is_err()
-            {
+        let mut stdin = std::io::stdin();
+        while let Ok(n) = stdin.read(&mut bytes) {
+            if n == 0 || input.send(&bytes[..n]).is_err() {
                 break;
             }
         }
     });
-    let mut seq = None;
-    let mut size = (0, 0);
-    let mut out = std::io::stdout();
-    let result = (|| {
-        loop {
-            let info = c.request("view_poll", json!({"id":id,"viewer":viewer,"since":seq}))?;
-            if info["reset"] == true {
-                out.write_all(b"\x1b[2J\x1b[H").map_err(|e| e.to_string())?;
-            }
-            let bytes = STANDARD
-                .decode(info["data"].as_str().ok_or("Invalid terminal output")?)
-                .map_err(|e| e.to_string())?;
-            out.write_all(&bytes)
-                .and_then(|_| out.flush())
-                .map_err(|e| e.to_string())?;
-            seq = info["seq"].as_u64();
-            // Only acknowledge after console setup and the first successful render.
-            c.request("view_attach_ack", json!({"id":id,"viewer":viewer}))?;
-            if info["running"] == false {
-                break;
-            }
+    // Console size is a local query; only changes go to the broker.
+    let mut resizer = c.input_channel(&id, None).map_err(String::from)?;
+    let console = modes.output as usize;
+    let watching = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(true));
+    let watch = watching.clone();
+    std::thread::spawn(move || {
+        let mut size = (0, 0);
+        while watch.load(std::sync::atomic::Ordering::Acquire) {
             unsafe {
                 let mut screen: CONSOLE_SCREEN_BUFFER_INFO = std::mem::zeroed();
-                if GetConsoleScreenBufferInfo(modes.output, &mut screen) != 0 {
+                if GetConsoleScreenBufferInfo(console as _, &mut screen) != 0 {
                     let next = (
                         (screen.srWindow.Right - screen.srWindow.Left + 1) as u16,
                         (screen.srWindow.Bottom - screen.srWindow.Top + 1) as u16,
                     );
                     if next != size {
-                        c.request("resize", json!({"id":id,"cols":next.0,"rows":next.1}))?;
+                        if resizer.resize(next.0, next.1).is_err() {
+                            break;
+                        }
                         size = next
                     }
                 }
             }
-            std::thread::sleep(Duration::from_millis(30));
+            std::thread::sleep(Duration::from_millis(250));
         }
-        Ok(())
+    });
+    let mut out = std::io::stdout();
+    let result = (|| {
+        let mut view = c.view_stream(&id, &viewer, None, None)?;
+        loop {
+            let update = view.next()?;
+            if update.reset {
+                out.write_all(b"\x1b[2J\x1b[H").map_err(|e| e.to_string())?;
+            }
+            out.write_all(&update.data)
+                .and_then(|_| out.flush())
+                .map_err(|e| e.to_string())?;
+            // Only acknowledge after console setup and the first successful render.
+            c.request("view_attach_ack", json!({"id":id,"viewer":viewer}))?;
+            if !update.running || update.detached {
+                break;
+            }
+        }
+        Ok::<(), String>(())
     })();
+    watching.store(false, std::sync::atomic::Ordering::Release);
     let _ = c.request("view_detach", json!({"id":id,"viewer":viewer}));
     result
 }

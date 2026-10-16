@@ -6,9 +6,12 @@ pub(crate) mod ipc;
 #[cfg(not(windows))]
 use portable_pty::ChildKiller;
 #[cfg(windows)]
-mod job;
+pub(crate) mod job;
+mod launch;
+mod stream;
 use crate::sync::LockExt;
 use base64::{engine::general_purpose::STANDARD, Engine};
+pub use ipc::{Error as SessionError, ErrorKind as SessionErrorKind};
 use portable_pty::{native_pty_system, CommandBuilder, MasterPty, PtySize};
 use serde_json::{json, Value};
 use std::{
@@ -18,13 +21,25 @@ use std::{
     path::{Path, PathBuf},
     sync::{
         atomic::{AtomicBool, AtomicUsize, Ordering},
-        Arc, Mutex,
+        mpsc, Arc, Condvar, Mutex,
     },
     time::{Duration, Instant},
 };
-const PROTOCOL: u64 = 1;
+pub use stream::{InputChannel, ViewStream, ViewUpdate};
+/// Wire protocol version. Each version listens on its own pipe.
+pub const PROTOCOL: u64 = 2;
+/// The first broker protocol, which has no hello or streams.
+const LEGACY_PROTOCOL: u64 = 1;
 pub(super) const SESSION_UNAVAILABLE: &str =
     "Session ended or unavailable; create a new session explicitly";
+const SESSION_ENDED: &str = "PowerShell session has ended";
+/// Request workers. More connections wait in a queue instead of being dropped.
+const WORKERS: usize = 24;
+const QUEUE: usize = 64;
+/// Persistent view and input pipes, each served by its own thread.
+const STREAMS: usize = 128;
+/// The broker exits after this long with no sessions and no clients.
+const IDLE_EXIT: Duration = Duration::from_secs(600);
 const HISTORY: usize = 512 * 1024;
 struct Output {
     parser: vt100::Parser,
@@ -59,10 +74,14 @@ impl CursorQueries {
 struct Session {
     info: Mutex<Value>,
     master: Mutex<Box<dyn MasterPty + Send>>,
-    writer: Mutex<Box<dyn Write + Send>>,
+    /// All PTY input goes through one writer thread, so no lock is held
+    /// during a blocking write and output reading never waits on input.
+    input: mpsc::SyncSender<Vec<u8>>,
     #[cfg(not(windows))]
     killer: Mutex<Box<dyn ChildKiller + Send + Sync>>,
     output: Mutex<Output>,
+    /// Signalled when output arrives or the shell exits.
+    changed: Condvar,
     alive: AtomicBool,
     #[cfg(windows)]
     job: job::Job,
@@ -71,13 +90,75 @@ struct Session {
     created: Instant,
 }
 impl Session {
+    fn write(&self, bytes: Vec<u8>) -> Result<(), String> {
+        if !self.alive.load(Ordering::Acquire) {
+            return Err(SESSION_ENDED.into());
+        }
+        self.input
+            .send(bytes)
+            .map_err(|_| SESSION_ENDED.to_string())
+    }
+    /// Output since `since`, or a full screen when the viewer is too far behind.
+    fn snapshot(&self, since: Option<u64>) -> Value {
+        let o = self.output.locked();
+        self.snapshot_locked(&o, since)
+    }
+    fn snapshot_locked(&self, o: &Output, since: Option<u64>) -> Value {
+        let reset = since.is_none()
+            || since.is_some_and(|n| {
+                n > o.seq || o.chunks.front().is_some_and(|(first, _)| n + 1 < *first)
+            });
+        let bytes = if reset {
+            o.parser.screen().state_formatted()
+        } else {
+            o.chunks
+                .iter()
+                .filter(|(seq, _)| *seq > since.unwrap())
+                .flat_map(|(_, b)| b.iter().copied())
+                .collect()
+        };
+        json!({"data":STANDARD.encode(bytes),"seq":o.seq,"reset":reset,"running":self.alive.load(Ordering::Acquire),"pid":self.info.locked()["pid"]})
+    }
+    fn input_base64(&self, data: &str) -> Result<(), String> {
+        let bytes = STANDARD.decode(data).map_err(|e| e.to_string())?;
+        if bytes.len() > 65536 {
+            return Err("Input too large".into());
+        }
+        self.write(bytes)
+    }
+    fn resize(&self, cols: Option<u64>, rows: Option<u64>) -> Result<(), String> {
+        let rows = rows.unwrap_or(30).clamp(1, 200) as u16;
+        let cols = cols.unwrap_or(120).clamp(1, 300) as u16;
+        self.master
+            .locked()
+            .resize(PtySize {
+                rows,
+                cols,
+                pixel_width: 0,
+                pixel_height: 0,
+            })
+            .map_err(|e| e.to_string())?;
+        self.output
+            .locked()
+            .parser
+            .screen_mut()
+            .set_size(rows, cols);
+        Ok(())
+    }
+    fn touch(&self, viewer: &str) -> Result<(), String> {
+        let mut views = self.viewers.locked();
+        if views.len() >= 32 && !views.contains_key(viewer) {
+            return Err("Too many attached views".into());
+        }
+        views.insert(viewer.into(), Instant::now());
+        Ok(())
+    }
     fn descriptor(&self) -> Value {
         let mut v = self.info.locked().clone();
         v["running"] = json!(self.alive.load(Ordering::Acquire));
         v["attached"] = json!(self
             .viewers
-            .lock()
-            .unwrap()
+            .locked()
             .keys()
             .filter(|k| !k.starts_with("ack:"))
             .count());
@@ -91,11 +172,7 @@ impl Session {
         }
         #[cfg(not(windows))]
         {
-            self.killer
-                .lock()
-                .unwrap()
-                .kill()
-                .map_err(|e| e.to_string())
+            self.killer.locked().kill().map_err(|e| e.to_string())
         }
     }
 }
@@ -104,6 +181,41 @@ struct Server {
     sessions: Mutex<HashMap<String, Arc<Session>>>,
     files: Mutex<host::Files>,
     profiles: Mutex<()>,
+    /// Identifies the broker build; clients restart an idle broker that differs.
+    build: String,
+    /// Open connections, including persistent streams.
+    clients: AtomicUsize,
+    streams: AtomicUsize,
+    activity: Mutex<Instant>,
+    exiting: AtomicBool,
+}
+impl Server {
+    fn new(root: &Path, build: String) -> Self {
+        Self {
+            root: root.into(),
+            sessions: Mutex::new(HashMap::new()),
+            files: Mutex::new(host::Files::default()),
+            profiles: Mutex::new(()),
+            build,
+            clients: AtomicUsize::new(0),
+            streams: AtomicUsize::new(0),
+            activity: Mutex::new(Instant::now()),
+            exiting: AtomicBool::new(false),
+        }
+    }
+    /// Sessions whose shell is still running.
+    fn live_sessions(&self) -> usize {
+        self.sessions
+            .locked()
+            .values()
+            .filter(|s| s.alive.load(Ordering::Acquire))
+            .count()
+    }
+    fn idle_for(&self, limit: Duration) -> bool {
+        self.live_sessions() == 0
+            && self.clients.load(Ordering::Acquire) == 0
+            && self.activity.locked().elapsed() >= limit
+    }
 }
 fn required<'a>(v: &'a Value, k: &str) -> Result<&'a str, String> {
     v[k].as_str()
@@ -117,7 +229,7 @@ fn valid_name(name: &str) -> bool {
             .chars()
             .all(|c| c.is_alphanumeric() || c == '_' || c == '-')
 }
-#[cfg(windows)]
+#[cfg(all(windows, test))]
 fn ps_quote(s: &str) -> String {
     format!("'{}'", s.replace('\'', "''"))
 }
@@ -157,8 +269,7 @@ impl Server {
         let id = required(a, "id")?;
         let s = self
             .sessions
-            .lock()
-            .unwrap()
+            .locked()
             .get(id)
             .cloned()
             .ok_or(SESSION_UNAVAILABLE)?;
@@ -177,8 +288,7 @@ impl Server {
     fn list(&self, host: &str) -> Value {
         json!(self
             .sessions
-            .lock()
-            .unwrap()
+            .locked()
             .values()
             .filter(|s| s.info.locked()["hostId"] == host)
             .map(|s| s.descriptor())
@@ -232,17 +342,20 @@ impl Server {
                 {
                     return Err("Set local agent model and effort in its own interface".into());
                 }
-                let mut script = format!("& {}", ps_quote(&agent_executable.to_string_lossy()));
                 let brief = a["brief"].as_str().unwrap_or("");
-                if !brief.is_empty() {
-                    script.push(' ');
-                    script.push_str(&ps_quote(brief))
-                }
-                let utf16: Vec<u8> = script.encode_utf16().flat_map(u16::to_le_bytes).collect();
-                let encoded = STANDARD.encode(utf16);
-                if encoded.len() > 24000 {
+                if brief.contains('\0') || brief.len() > 24000 {
                     return Err("The orientation prompt is too long for a PowerShell launch. Start without it and paste it using Repo.".into());
                 }
+                let launch = launch::resolve(&agent_executable, || host::executable("node.exe"));
+                if launch.batch && !launch::batch_safe(brief) {
+                    return Err(format!("{agent} is installed as a batch file that cannot take this prompt safely. Start without it and paste it using Repo."));
+                }
+                if !brief.is_empty() {
+                    command.env(launch::BRIEF_VARIABLE, brief);
+                }
+                let script = launch::script(&launch, !brief.is_empty());
+                let utf16: Vec<u8> = script.encode_utf16().flat_map(u16::to_le_bytes).collect();
+                let encoded = STANDARD.encode(utf16);
                 command.args(["-NoExit", "-EncodedCommand", &encoded]);
             }
         }
@@ -276,7 +389,19 @@ impl Server {
             }
         };
         let mut reader = pair.master.try_clone_reader().map_err(|e| e.to_string())?;
-        let writer = pair.master.take_writer().map_err(|e| e.to_string())?;
+        let mut writer = pair.master.take_writer().map_err(|e| e.to_string())?;
+        let (input, pending) = mpsc::sync_channel::<Vec<u8>>(256);
+        std::thread::spawn(move || {
+            for bytes in pending {
+                if writer
+                    .write_all(&bytes)
+                    .and_then(|_| writer.flush())
+                    .is_err()
+                {
+                    break;
+                }
+            }
+        });
         let id = uuid::Uuid::new_v4().to_string();
         let stamp = uuid::Uuid::new_v4().to_string();
         let s = Arc::new(Session {
@@ -286,7 +411,7 @@ impl Server {
                 json!({"id":id,"stamp":stamp,"hostId":host,"operation":operation,"name":name,"path":directory,"shell":shell,"agent":agent,"pid":pid,"windows":1}),
             ),
             master: Mutex::new(pair.master),
-            writer: Mutex::new(writer),
+            input,
             #[cfg(not(windows))]
             killer: Mutex::new(child.clone_killer()),
             output: Mutex::new(Output {
@@ -295,6 +420,7 @@ impl Server {
                 chunks: VecDeque::new(),
                 bytes: 0,
             }),
+            changed: Condvar::new(),
             alive: AtomicBool::new(true),
             keep: AtomicBool::new(a["keepRunning"].as_bool().unwrap_or(true)),
             viewers: Mutex::new(HashMap::new()),
@@ -314,10 +440,9 @@ impl Server {
                 if count > 0 {
                     let (row, column) = o.parser.screen().cursor_position();
                     let reply = format!("\x1b[{};{}R", row + 1, column + 1);
-                    let mut writer = reading.writer.locked();
-                    for _ in 0..count {
-                        let _ = writer.write_all(reply.as_bytes());
-                    }
+                    // Never wait on input here: a full input queue must not
+                    // stop output from draining.
+                    let _ = reading.input.try_send(reply.repeat(count).into_bytes());
                 }
                 o.seq += 1;
                 let seq = o.seq;
@@ -330,12 +455,16 @@ impl Server {
                         break;
                     }
                 }
+                drop(o);
+                reading.changed.notify_all();
             }
         });
         let waiting = s.clone();
         std::thread::spawn(move || {
             let _ = child.wait();
             waiting.alive.store(false, Ordering::Release);
+            let _guard = waiting.output.locked();
+            waiting.changed.notify_all();
         });
         sessions.insert(id, s.clone());
         Ok(s.descriptor())
@@ -346,6 +475,20 @@ impl Server {
             "ping" => Ok(
                 json!({"protocol":PROTOCOL,"machine":"native-windows","user":std::env::var("USERNAME").unwrap_or_default()}),
             ),
+            "hello" => Ok(json!({
+                "protocol": PROTOCOL,
+                "build": self.build,
+                "sessions": self.live_sessions(),
+                "features": ["view_stream", "input_stream"],
+            })),
+            "exit" => {
+                // Only an empty broker may leave; live sessions keep it running.
+                if self.live_sessions() > 0 {
+                    return Err("Sessions are still running".into());
+                }
+                self.exiting.store(true, Ordering::Release);
+                Ok(Value::Null)
+            }
             "describe" => Ok(self.session(host, a)?.descriptor()),
             "create" => self.create(host, a),
             "sessions" => Ok(self.list(host)),
@@ -392,6 +535,9 @@ impl Server {
                     views.remove(viewer);
                     views.remove(&format!("ack:{viewer}"));
                 }
+                // Wake a streaming view so it sees the detach now.
+                drop(s.output.locked());
+                s.changed.notify_all();
                 if !s.keep.load(Ordering::Acquire) && s.viewers.locked().is_empty() {
                     s.stop()?
                 }
@@ -399,38 +545,13 @@ impl Server {
             }
             "view_poll" => {
                 let s = self.session(host, a)?;
-                let viewer = required(a, "viewer")?;
-                {
-                    let mut views = s.viewers.locked();
-                    if views.len() >= 32 && !views.contains_key(viewer) {
-                        return Err("Too many attached views".into());
-                    }
-                    views.insert(viewer.into(), Instant::now());
-                }
-                let o = s.output.locked();
-                let since = a["since"].as_u64();
-                let reset = since.is_none()
-                    || since.is_some_and(|n| {
-                        n > o.seq || o.chunks.front().is_some_and(|(first, _)| n + 1 < *first)
-                    });
-                let bytes = if reset {
-                    o.parser.screen().state_formatted()
-                } else {
-                    o.chunks
-                        .iter()
-                        .filter(|(seq, _)| *seq > since.unwrap())
-                        .flat_map(|(_, b)| b.iter().copied())
-                        .collect()
-                };
-                Ok(
-                    json!({"data":STANDARD.encode(bytes),"seq":o.seq,"reset":reset,"running":s.alive.load(Ordering::Acquire),"pid":s.info.locked()["pid"]}),
-                )
+                s.touch(required(a, "viewer")?)?;
+                Ok(s.snapshot(a["since"].as_u64()))
             }
             "view_attach_ack" => {
                 let s = self.session(host, a)?;
                 s.viewers
-                    .lock()
-                    .unwrap()
+                    .locked()
                     .insert(format!("ack:{}", required(a, "viewer")?), Instant::now());
                 Ok(Value::Null)
             }
@@ -438,49 +559,19 @@ impl Server {
                 let s = self.session(host, a)?;
                 let ready = s
                     .viewers
-                    .lock()
-                    .unwrap()
+                    .locked()
                     .get(&format!("ack:{}", required(a, "viewer")?))
                     .is_some_and(|t| t.elapsed() < Duration::from_secs(3));
                 Ok(json!(ready))
             }
             "input" => {
                 let s = self.session(host, a)?;
-                if !s.alive.load(Ordering::Acquire) {
-                    return Err("PowerShell session has ended".into());
-                }
-                let bytes = STANDARD
-                    .decode(required(a, "data")?)
-                    .map_err(|e| e.to_string())?;
-                if bytes.len() > 65536 {
-                    return Err("Input too large".into());
-                }
-                let mut w = s.writer.locked();
-                w.write_all(&bytes)
-                    .and_then(|_| w.flush())
-                    .map_err(|e| e.to_string())?;
+                s.input_base64(required(a, "data")?)?;
                 Ok(Value::Null)
             }
             "resize" => {
                 let s = self.session(host, a)?;
-                let rows = a["rows"].as_u64().unwrap_or(30).clamp(1, 200) as u16;
-                let cols = a["cols"].as_u64().unwrap_or(120).clamp(1, 300) as u16;
-                s.master
-                    .lock()
-                    .unwrap()
-                    .resize(PtySize {
-                        rows,
-                        cols,
-                        pixel_width: 0,
-                        pixel_height: 0,
-                    })
-                    .map_err(|e| e.to_string())?;
-                s.output
-                    .lock()
-                    .unwrap()
-                    .parser
-                    .screen_mut()
-                    .set_size(rows, cols);
+                s.resize(a["cols"].as_u64(), a["rows"].as_u64())?;
                 Ok(Value::Null)
             }
             "session_context" => {
@@ -507,25 +598,105 @@ impl Server {
         }
     }
 }
+pub(super) fn error_reply(error: &str) -> Value {
+    let code = if error == SESSION_UNAVAILABLE || error == SESSION_ENDED {
+        "ended"
+    } else {
+        "failed"
+    };
+    json!({"error":error,"code":code})
+}
+/// Send one reply and keep the pipe open until the client has read it.
+pub(super) fn reply(pipe: &mut ipc::Stream, result: Result<Value, String>) {
+    let message = match result {
+        Ok(v) => json!({ "result": v }),
+        Err(e) => error_reply(&e),
+    };
+    if ipc::send(pipe, &message).is_ok() {
+        // Closing a Windows pipe discards unread bytes. Keep the server
+        // handle until the client confirms it consumed the whole reply.
+        let mut acknowledgment = [0];
+        let _ = pipe.read_exact(&mut acknowledgment);
+    }
+}
+pub(super) fn parse_reply(reply: Value) -> Result<Value, SessionError> {
+    if let Some(e) = reply["error"].as_str() {
+        let ended = reply["code"] == "ended" || e == SESSION_UNAVAILABLE || e == SESSION_ENDED;
+        let kind = if ended {
+            SessionErrorKind::Ended
+        } else {
+            SessionErrorKind::Failed
+        };
+        Err(SessionError::new(kind, e))
+    } else {
+        Ok(reply["result"].clone())
+    }
+}
+/// Counts a connection as a client while it is open.
+struct Connection<'a>(&'a Server);
+impl<'a> Connection<'a> {
+    fn new(server: &'a Server) -> Self {
+        server.clients.fetch_add(1, Ordering::AcqRel);
+        *server.activity.locked() = Instant::now();
+        Self(server)
+    }
+}
+impl Drop for Connection<'_> {
+    fn drop(&mut self) {
+        *self.0.activity.locked() = Instant::now();
+        self.0.clients.fetch_sub(1, Ordering::AcqRel);
+    }
+}
+type Exit = Arc<dyn Fn() + Send + Sync>;
+fn handle(server: &Arc<Server>, mut pipe: ipc::Stream, exit: &Exit) {
+    let _connection = Connection::new(server);
+    let Ok(v) = ipc::receive(&mut pipe) else {
+        return;
+    };
+    let target = (|| {
+        if v["protocol"] != PROTOCOL {
+            return Err("Session protocol mismatch; existing sessions preserved".to_string());
+        }
+        Ok((required(&v, "host")?, required(&v, "method")?))
+    })();
+    if let Ok((host, method @ ("view_stream" | "input_stream"))) = target {
+        if server.streams.fetch_add(1, Ordering::AcqRel) >= STREAMS {
+            server.streams.fetch_sub(1, Ordering::AcqRel);
+            return reply(&mut pipe, Err("Too many open session views".into()));
+        }
+        let (server, host, method) = (server.clone(), host.to_string(), method.to_string());
+        std::thread::spawn(move || {
+            let _connection = Connection::new(&server);
+            stream::serve(&server, &host, &method, &v["args"], pipe);
+            server.streams.fetch_sub(1, Ordering::AcqRel);
+        });
+        return;
+    }
+    let result = target.and_then(|(host, method)| server.request(host, method, &v["args"]));
+    reply(&mut pipe, result);
+    if server.exiting.load(Ordering::Acquire) {
+        exit();
+    }
+}
 pub fn serve(root: &Path) -> Result<(), String> {
+    serve_with(root, IDLE_EXIT, Arc::new(|| std::process::exit(0)))
+}
+fn serve_with(root: &Path, idle: Duration, exit: Exit) -> Result<(), String> {
     crate::private_storage::directory(root).map_err(|e| e.to_string())?;
     let lock = fs::OpenOptions::new()
         .create(true)
         .truncate(false)
         .read(true)
         .write(true)
-        .open(root.join("broker.lock"))
+        .open(root.join(format!("broker-v{PROTOCOL}.lock")))
         .map_err(|e| e.to_string())?;
     if lock.try_lock().is_err() {
         return Ok(());
     }
-    let server = Arc::new(Server {
-        root: root.into(),
-        sessions: Mutex::new(HashMap::new()),
-        files: Mutex::new(host::Files::default()),
-        profiles: Mutex::new(()),
-    });
+    let _runtime = hold_runtime(root);
+    let server = Arc::new(Server::new(root, build_id(root)));
     let reap = server.clone();
+    let idle_exit = exit.clone();
     std::thread::spawn(move || loop {
         std::thread::sleep(Duration::from_secs(2));
         for s in reap.sessions.locked().values() {
@@ -538,36 +709,92 @@ pub fn serve(root: &Path) -> Result<(), String> {
                 let _ = s.stop();
             }
         }
-    });
-    let workers = Arc::new(AtomicUsize::new(0));
-    ipc::listen(root, move |mut pipe| {
-        if workers.fetch_add(1, Ordering::AcqRel) >= 24 {
-            workers.fetch_sub(1, Ordering::AcqRel);
+        if reap.idle_for(idle) {
+            idle_exit();
             return;
         }
-        let server = server.clone();
-        let workers = workers.clone();
-        std::thread::spawn(move || {
-            let result = (|| {
-                let v = ipc::receive(&mut pipe)?;
-                if v["protocol"] != PROTOCOL {
-                    return Err("Session protocol mismatch; existing sessions preserved".into());
-                }
-                server.request(required(&v, "host")?, required(&v, "method")?, &v["args"])
-            })();
-            let reply = match result {
-                Ok(v) => json!({"result":v}),
-                Err(e) => json!({"error":e}),
-            };
-            if ipc::send(&mut pipe, &reply).is_ok() {
-                // Closing a Windows pipe discards unread bytes. Keep the server
-                // handle until the client confirms it consumed the whole reply.
-                let mut acknowledgment = [0];
-                let _ = pipe.read_exact(&mut acknowledgment);
+    });
+    // A fixed pool serves requests. When it is busy, new connections wait in
+    // the queue, and then in the pipe itself, instead of being dropped.
+    let (queue, waiting) = mpsc::sync_channel::<ipc::Stream>(QUEUE);
+    let waiting = Arc::new(Mutex::new(waiting));
+    for _ in 0..WORKERS {
+        let (waiting, server, exit) = (waiting.clone(), server.clone(), exit.clone());
+        std::thread::spawn(move || loop {
+            let next = waiting.locked().recv();
+            match next {
+                Ok(pipe) => handle(&server, pipe, &exit),
+                Err(_) => return,
             }
-            workers.fetch_sub(1, Ordering::AcqRel);
         });
+    }
+    ipc::listen(root, move |pipe| {
+        let _ = queue.send(pipe);
     })
+}
+/// The runtime folder this broker runs from, if it is a cached runtime.
+fn runtime_dir(root: &Path) -> Option<PathBuf> {
+    let exe = std::env::current_exe().ok()?.canonicalize().ok()?;
+    let dir = exe.parent()?;
+    let cache = root.join("runtime").canonicalize().ok()?;
+    (dir.parent()? == cache).then(|| dir.to_path_buf())
+}
+fn build_id(root: &Path) -> String {
+    runtime_dir(root)
+        .and_then(|dir| Some(dir.file_name()?.to_string_lossy().into_owned()))
+        .unwrap_or_else(|| format!("dev-{}", env!("CARGO_PKG_VERSION")))
+}
+const IN_USE: &str = "in-use.lock";
+/// A shared lock tells pruning that a broker still runs from this folder.
+fn hold_runtime(root: &Path) -> Option<fs::File> {
+    let file = fs::OpenOptions::new()
+        .create(true)
+        .truncate(false)
+        .write(true)
+        .open(runtime_dir(root)?.join(IN_USE))
+        .ok()?;
+    file.try_lock_shared().ok()?;
+    Some(file)
+}
+#[cfg_attr(not(windows), allow(dead_code))]
+/// Keep the current runtime and the newest other one. Skip any folder a
+/// running broker uses.
+fn prune_runtimes(cache: &Path, current: &str) {
+    let Ok(entries) = fs::read_dir(cache) else {
+        return;
+    };
+    let mut others: Vec<(std::time::SystemTime, PathBuf)> = entries
+        .flatten()
+        .filter(|e| e.file_name() != current)
+        .filter_map(|e| {
+            let meta = e.path().symlink_metadata().ok()?;
+            meta.is_dir()
+                .then(|| (meta.modified().unwrap_or(std::time::UNIX_EPOCH), e.path()))
+        })
+        .collect();
+    others.sort_by(|a, b| b.0.cmp(&a.0));
+    for (_, dir) in others.into_iter().skip(1) {
+        let lock = dir.join(IN_USE);
+        let guard = match fs::OpenOptions::new().write(true).open(&lock) {
+            Ok(file) => match file.try_lock() {
+                Ok(()) => Some(file),
+                Err(_) => continue,
+            },
+            Err(_) => None,
+        };
+        // Renaming fails on Windows while a program inside is running, which
+        // also protects runtimes from brokers that predate the lock file.
+        let doomed = dir.with_extension(format!("old-{}", uuid::Uuid::new_v4().simple()));
+        drop(guard);
+        if fs::rename(&dir, &doomed).is_ok() {
+            let _ = fs::remove_dir_all(&doomed);
+        }
+    }
+}
+fn routes() -> &'static Mutex<HashMap<(PathBuf, String), u64>> {
+    static ROUTES: std::sync::OnceLock<Mutex<HashMap<(PathBuf, String), u64>>> =
+        std::sync::OnceLock::new();
+    ROUTES.get_or_init(Default::default)
 }
 #[derive(Clone)]
 pub struct Client {
@@ -576,58 +803,167 @@ pub struct Client {
     pub shell: String,
 }
 impl Client {
-    pub fn request(&self, method: &str, mut args: Value) -> Result<Value, String> {
+    fn version(&self) -> u64 {
+        routes()
+            .locked()
+            .get(&(self.root.clone(), self.host.clone()))
+            .copied()
+            .unwrap_or(PROTOCOL)
+    }
+    /// True while this host's sessions still live in an older broker.
+    pub fn legacy(&self) -> bool {
+        self.version() != PROTOCOL
+    }
+    pub fn request(&self, method: &str, args: Value) -> Result<Value, String> {
+        self.call(method, args).map_err(String::from)
+    }
+    /// Like `request`, with an error kind for ended sessions, a missing
+    /// broker and timeouts.
+    pub fn call(&self, method: &str, mut args: Value) -> Result<Value, SessionError> {
         if method == "create" && !args["shell"].is_string() {
             args["shell"] = json!(self.shell);
         }
-        let mut pipe = ipc::connect(&self.root)?;
+        let version = self.version();
+        let mut pipe = self.connect(method)?;
         ipc::send(
             &mut pipe,
-            &json!({"protocol":PROTOCOL,"host":self.host,"method":method,"args":args}),
+            &json!({"protocol":version,"host":self.host,"method":method,"args":args}),
         )?;
-        let result = ipc::receive(&mut pipe)?;
-        pipe.write_all(&[6]).map_err(|e| e.to_string())?;
-        if let Some(e) = result["error"].as_str() {
-            Err(e.into())
-        } else {
-            Ok(result["result"].clone())
+        let reply = ipc::receive(&mut pipe)?;
+        pipe.write_all(&[6]).map_err(SessionError::from)?;
+        let mut result = parse_reply(reply)?;
+        if method == "ping" && version != PROTOCOL {
+            result["upgradePending"] = json!(true);
+            result["notice"] = json!("PowerShell sessions from an earlier DazeDev are still running. End them and reconnect to finish the upgrade.");
+        }
+        Ok(result)
+    }
+    fn connect(&self, method: &str) -> Result<ipc::Stream, SessionError> {
+        let version = self.version();
+        match ipc::connect_version(&self.root, version) {
+            // A broker that exited while idle had no sessions; start it again.
+            Err(e)
+                if e.kind == SessionErrorKind::Unavailable
+                    && version == PROTOCOL
+                    && cfg!(windows)
+                    && !matches!(method, "ping" | "hello" | "exit") =>
+            {
+                self.start_broker()?;
+                ipc::connect_version(&self.root, version)
+            }
+            result => result,
         }
     }
+    /// Live sessions for this host in a broker from an earlier protocol.
+    fn legacy_sessions(&self) -> Option<usize> {
+        let mut pipe = ipc::connect_version(&self.root, LEGACY_PROTOCOL).ok()?;
+        ipc::send(
+            &mut pipe,
+            &json!({"protocol":LEGACY_PROTOCOL,"host":self.host,"method":"sessions","args":{}}),
+        )
+        .ok()?;
+        let reply = ipc::receive(&mut pipe).ok()?;
+        let _ = pipe.write_all(&[6]);
+        let sessions = parse_reply(reply).ok()?;
+        Some(
+            sessions
+                .as_array()?
+                .iter()
+                .filter(|s| s["running"] != false)
+                .count(),
+        )
+    }
+    fn hello(&self) -> Result<Value, SessionError> {
+        let mut pipe = ipc::connect_version(&self.root, PROTOCOL)?;
+        ipc::send(
+            &mut pipe,
+            &json!({"protocol":PROTOCOL,"host":self.host,"method":"hello","args":{}}),
+        )?;
+        let reply = ipc::receive(&mut pipe)?;
+        let _ = pipe.write_all(&[6]);
+        parse_reply(reply)
+    }
+    /// Connect to the broker, starting or replacing it as needed:
+    /// - an older broker still running this host's sessions keeps serving
+    ///   them; `ping` then reports `upgradePending`;
+    /// - a broker of this protocol is used, unless it is a different build
+    ///   with no sessions, which is asked to exit and replaced.
     pub fn ensure(root: PathBuf, host: String) -> Result<Self, String> {
         let c = Self {
             root,
             host,
             shell: "powershell".into(),
         };
-        if c.request("ping", json!({})).is_ok() {
+        let key = (c.root.clone(), c.host.clone());
+        if c.legacy_sessions().is_some_and(|n| n > 0) {
+            routes().locked().insert(key, LEGACY_PROTOCOL);
             return Ok(c);
         }
+        routes().locked().remove(&key);
+        if let Ok(info) = c.hello() {
+            let wanted = c.wanted_build();
+            let same = wanted.as_deref().is_none_or(|build| info["build"] == build);
+            if same || info["sessions"].as_u64().unwrap_or(0) > 0 {
+                return Ok(c);
+            }
+            let _ = c.call("exit", json!({}));
+            let gone = Instant::now();
+            while c.hello().is_ok() && gone.elapsed() < Duration::from_secs(5) {
+                std::thread::sleep(Duration::from_millis(50));
+            }
+        }
+        c.start_broker()?;
+        Ok(c)
+    }
+    /// The build this client would start, if it starts cached runtimes.
+    fn wanted_build(&self) -> Option<String> {
         #[cfg(windows)]
         {
-            use std::os::windows::process::CommandExt;
-            let executable = runtime_exe(&c.root)?;
-            std::process::Command::new(executable)
-                .args(["serve", &c.root.to_string_lossy()])
-                .creation_flags(0x08000000 | 0x00000200)
-                .stdin(std::process::Stdio::null())
-                .stdout(std::process::Stdio::null())
-                .stderr(std::process::Stdio::null())
-                .spawn()
-                .map_err(|e| e.to_string())?;
+            let exe = runtime_exe(&self.root).ok()?;
+            Some(exe.parent()?.file_name()?.to_string_lossy().into_owned())
         }
         #[cfg(not(windows))]
         {
-            return Err("Native PowerShell requires Windows".into());
+            None
         }
+    }
+    fn start_broker(&self) -> Result<(), SessionError> {
         #[cfg(windows)]
         {
-            for _ in 0..100 {
-                if c.request("ping", json!({})).is_ok() {
-                    return Ok(c);
+            use std::os::windows::process::CommandExt;
+            let executable = runtime_exe(&self.root)
+                .map_err(|e| SessionError::new(SessionErrorKind::Unavailable, e))?;
+            let started = Instant::now();
+            let mut spawned = None;
+            while started.elapsed() < Duration::from_secs(5) {
+                if self.hello().is_ok() {
+                    return Ok(());
+                }
+                // Spawn again if an exiting broker still held the lock.
+                if spawned.is_none_or(|at: Instant| at.elapsed() > Duration::from_secs(1)) {
+                    std::process::Command::new(&executable)
+                        .args(["serve", &self.root.to_string_lossy()])
+                        .creation_flags(0x08000000 | 0x00000200)
+                        .stdin(std::process::Stdio::null())
+                        .stdout(std::process::Stdio::null())
+                        .stderr(std::process::Stdio::null())
+                        .spawn()
+                        .map_err(SessionError::from)?;
+                    spawned = Some(Instant::now());
                 }
                 std::thread::sleep(Duration::from_millis(50));
             }
-            Err("Local session manager did not start".into())
+            Err(SessionError::new(
+                SessionErrorKind::Unavailable,
+                "Local session manager did not start",
+            ))
+        }
+        #[cfg(not(windows))]
+        {
+            Err(SessionError::new(
+                SessionErrorKind::Unavailable,
+                "Native PowerShell requires Windows",
+            ))
         }
     }
     pub fn external(&self, id: &str) -> Result<(), String> {
@@ -668,7 +1004,8 @@ fn runtime_exe(root: &Path) -> Result<PathBuf, String> {
         hash.update(name.to_string_lossy().as_bytes());
         hash.update(Sha256::digest(bytes));
     }
-    let dir = root.join("runtime").join(format!("{:x}", hash.finalize()));
+    let name = format!("{:x}", hash.finalize());
+    let dir = root.join("runtime").join(&name);
     fs::create_dir_all(&dir).map_err(|e| e.to_string())?;
     for (name, bytes) in &files {
         let target = dir.join(name);
@@ -682,6 +1019,7 @@ fn runtime_exe(root: &Path) -> Result<PathBuf, String> {
             fs::rename(temp, target).map_err(|e| e.to_string())?;
         }
     }
+    prune_runtimes(&root.join("runtime"), &name);
     let dest = dir.join("DazeDevSession.exe");
     Ok(dest)
 }
@@ -705,12 +1043,7 @@ mod tests {
             std::env::temp_dir().join(format!("dazedev-native-test-{}", uuid::Uuid::new_v4()));
         fs::create_dir_all(&root).unwrap();
         (
-            Server {
-                root,
-                sessions: Mutex::new(HashMap::new()),
-                files: Mutex::new(host::Files::default()),
-                profiles: Mutex::new(()),
-            },
+            Server::new(&root, "test".into()),
             uuid::Uuid::new_v4().to_string(),
         )
     }
@@ -843,30 +1176,9 @@ mod tests {
     }
     #[test]
     fn broker_ipc_receives_large_replies_before_server_disconnects() {
-        let (server, host) = fixture();
+        let (server, _) = fixture();
         let root = server.root.clone();
-        let serving = root.clone();
-        std::thread::spawn(move || {
-            if let Err(error) = serve(&serving) {
-                eprintln!("Broker listener failed: {error}");
-            }
-        });
-        let client = Client {
-            root: root.clone(),
-            host,
-            shell: "powershell".into(),
-        };
-        let started = Instant::now();
-        loop {
-            match client.request("ping", json!({})) {
-                Ok(_) => break,
-                Err(error) => assert!(
-                    started.elapsed() < Duration::from_secs(10),
-                    "Broker ping failed: {error}"
-                ),
-            }
-            std::thread::sleep(Duration::from_millis(20));
-        }
+        let (client, _) = broker(&root, IDLE_EXIT);
         let mut profile = client.request("profile_load", json!({})).unwrap();
         profile["testPayload"] = json!("r".repeat(180_000));
         client
@@ -875,6 +1187,269 @@ mod tests {
         let received = client.request("profile_load", json!({})).unwrap();
         assert_eq!(received["testPayload"], profile["testPayload"]);
         fs::remove_dir_all(root).unwrap();
+    }
+    #[cfg(unix)]
+    /// Start a broker on the fixture root. Its exit hook only sets a flag.
+    fn broker(root: &Path, idle: Duration) -> (Client, Arc<AtomicBool>) {
+        let exited = Arc::new(AtomicBool::new(false));
+        let flag = exited.clone();
+        let serving = root.to_path_buf();
+        std::thread::spawn(move || {
+            let exit: Exit = Arc::new(move || flag.store(true, Ordering::Release));
+            if let Err(error) = serve_with(&serving, idle, exit) {
+                eprintln!("Broker listener failed: {error}");
+            }
+        });
+        let client = Client {
+            root: root.into(),
+            host: uuid::Uuid::new_v4().to_string(),
+            shell: "test-sh".into(),
+        };
+        let started = Instant::now();
+        while let Err(error) = client.hello() {
+            assert!(
+                started.elapsed() < Duration::from_secs(10),
+                "Broker hello failed: {error}"
+            );
+            std::thread::sleep(Duration::from_millis(20));
+        }
+        (client, exited)
+    }
+    #[cfg(unix)]
+    fn wait_for(view: &mut ViewStream, token: &str) -> ViewUpdate {
+        let start = Instant::now();
+        let mut seen = String::new();
+        loop {
+            let update = view.next().unwrap();
+            seen.push_str(&String::from_utf8_lossy(&update.data));
+            if seen.contains(token) {
+                return update;
+            }
+            assert!(start.elapsed() < Duration::from_secs(15), "missing {token}");
+        }
+    }
+    #[cfg(unix)]
+    #[test]
+    fn streamed_view_receives_pushed_output_and_ends_on_detach() {
+        let (server, _) = fixture();
+        let (client, _) = broker(&server.root, IDLE_EXIT);
+        let info = client
+            .request("create", json!({"name":"stream","operation":"stream-test"}))
+            .unwrap();
+        let id = info["id"].as_str().unwrap();
+        let mut view = client.view_stream(id, "viewer", None, None).unwrap();
+        let first = view.next().unwrap();
+        assert!(first.reset && first.running);
+        let mut input = client.input_channel(id, None).unwrap();
+        input.resize(100, 40).unwrap();
+        input.send(b"echo STREAM_$((6*7))\n").unwrap();
+        let shown = wait_for(&mut view, "STREAM_42");
+        // Nothing new arrives: the next update is a heartbeat, not a busy loop.
+        let started = Instant::now();
+        let mut idle = view.next().unwrap();
+        while !idle.data.is_empty() {
+            idle = view.next().unwrap();
+        }
+        assert!(started.elapsed() >= Duration::from_secs(1));
+        assert!(idle.seq >= shown.seq);
+        client
+            .request("view_detach", json!({"id":id,"viewer":"viewer"}))
+            .unwrap();
+        let started = Instant::now();
+        loop {
+            let update = view.next().unwrap();
+            if update.detached {
+                break;
+            }
+            assert!(started.elapsed() < Duration::from_secs(8));
+        }
+        assert!(started.elapsed() < Duration::from_secs(8));
+        assert_eq!(view.next().unwrap_err().kind, SessionErrorKind::Ended);
+        client.request("destroy", json!({"id":id})).unwrap();
+        let gone = client.input_channel(id, None).err().unwrap();
+        assert_eq!(gone.kind, SessionErrorKind::Ended);
+        let gone = client.view_stream(id, "late", None, None).unwrap().next();
+        assert_eq!(gone.unwrap_err().kind, SessionErrorKind::Ended);
+        fs::remove_dir_all(server.root).unwrap();
+    }
+    #[cfg(unix)]
+    #[test]
+    fn view_stream_ends_when_the_shell_exits() {
+        let (server, _) = fixture();
+        let (client, _) = broker(&server.root, IDLE_EXIT);
+        let info = client
+            .request("create", json!({"name":"exit","operation":"exit-test"}))
+            .unwrap();
+        let id = info["id"].as_str().unwrap();
+        let mut view = client.view_stream(id, "viewer", None, None).unwrap();
+        client
+            .input_channel(id, None)
+            .unwrap()
+            .send(b"exit\n")
+            .unwrap();
+        let started = Instant::now();
+        while view.next().unwrap().running {
+            assert!(started.elapsed() < Duration::from_secs(15));
+        }
+        assert_eq!(view.next().unwrap_err().kind, SessionErrorKind::Ended);
+        fs::remove_dir_all(server.root).unwrap();
+    }
+    #[cfg(unix)]
+    #[test]
+    fn errors_tell_ended_sessions_from_a_missing_broker() {
+        let (server, host) = fixture();
+        let missing = Client {
+            root: server.root.clone(),
+            host,
+            shell: "test-sh".into(),
+        };
+        assert_eq!(
+            missing.call("sessions", json!({})).unwrap_err().kind,
+            SessionErrorKind::Unavailable
+        );
+        let (client, _) = broker(&server.root, IDLE_EXIT);
+        let error = client.call("describe", json!({"id":"gone"})).unwrap_err();
+        assert_eq!(error.kind, SessionErrorKind::Ended);
+        assert_eq!(error.message, SESSION_UNAVAILABLE);
+        assert_eq!(
+            client
+                .call("rename", json!({"name":"bad name"}))
+                .unwrap_err()
+                .kind,
+            SessionErrorKind::Failed
+        );
+        // A pipe closed mid-reply is end of file, not "no data yet".
+        let (mut near, far) = ipc::Stream::pair().unwrap();
+        drop(far);
+        assert_eq!(
+            ipc::receive(&mut near).unwrap_err().kind,
+            SessionErrorKind::Unavailable
+        );
+        fs::remove_dir_all(server.root).unwrap();
+    }
+    #[cfg(unix)]
+    #[test]
+    fn busy_broker_queues_connections_instead_of_dropping_them() {
+        let (server, _) = fixture();
+        let (client, _) = broker(&server.root, IDLE_EXIT);
+        // Silent connections occupy every worker.
+        let silent: Vec<_> = (0..WORKERS + 6)
+            .map(|_| ipc::Stream::connect(ipc::endpoint(&server.root)).unwrap())
+            .collect();
+        std::thread::sleep(Duration::from_millis(200));
+        let callers: Vec<_> = (0..10)
+            .map(|_| {
+                let client = client.clone();
+                std::thread::spawn(move || client.call("hello", json!({})))
+            })
+            .collect();
+        std::thread::sleep(Duration::from_millis(300));
+        drop(silent);
+        for caller in callers {
+            assert_eq!(caller.join().unwrap().unwrap()["protocol"], PROTOCOL);
+        }
+        fs::remove_dir_all(server.root).unwrap();
+    }
+    #[cfg(unix)]
+    #[test]
+    fn broker_reports_build_and_exits_only_without_sessions() {
+        let (server, _) = fixture();
+        let (client, exited) = broker(&server.root, IDLE_EXIT);
+        let hello = client.call("hello", json!({})).unwrap();
+        assert_eq!(hello["protocol"], PROTOCOL);
+        assert_eq!(hello["build"], format!("dev-{}", env!("CARGO_PKG_VERSION")));
+        assert_eq!(hello["sessions"], 0);
+        let info = client
+            .request("create", json!({"name":"held","operation":"exit-hold"}))
+            .unwrap();
+        assert_eq!(client.call("hello", json!({})).unwrap()["sessions"], 1);
+        assert!(client.call("exit", json!({})).is_err());
+        assert!(!exited.load(Ordering::Acquire));
+        client.request("destroy", json!({"id":info["id"]})).unwrap();
+        client.call("exit", json!({})).unwrap();
+        let started = Instant::now();
+        while !exited.load(Ordering::Acquire) {
+            assert!(started.elapsed() < Duration::from_secs(5));
+            std::thread::sleep(Duration::from_millis(10));
+        }
+        fs::remove_dir_all(server.root).unwrap();
+    }
+    #[cfg(unix)]
+    #[test]
+    fn idle_broker_exits_on_its_own() {
+        let (server, _) = fixture();
+        let (_client, exited) = broker(&server.root, Duration::from_millis(100));
+        let started = Instant::now();
+        while !exited.load(Ordering::Acquire) {
+            assert!(started.elapsed() < Duration::from_secs(8));
+            std::thread::sleep(Duration::from_millis(50));
+        }
+        fs::remove_dir_all(server.root).unwrap();
+    }
+    #[cfg(unix)]
+    #[test]
+    fn older_broker_with_sessions_keeps_serving_its_host() {
+        let (server, host) = fixture();
+        let listener =
+            std::os::unix::net::UnixListener::bind(ipc::endpoint_version(&server.root, 1)).unwrap();
+        std::thread::spawn(move || {
+            for pipe in listener.incoming() {
+                let mut pipe = pipe.unwrap();
+                let request = ipc::receive(&mut pipe).unwrap();
+                assert_eq!(request["protocol"], 1);
+                let result = match request["method"].as_str().unwrap() {
+                    "sessions" => json!([{"id":"old","running":true}]),
+                    _ => json!({"protocol":1}),
+                };
+                ipc::send(&mut pipe, &json!({ "result": result })).unwrap();
+                let _ = pipe.read_exact(&mut [0]);
+            }
+        });
+        let client = Client::ensure(server.root.clone(), host).unwrap();
+        assert!(client.legacy());
+        let ping = client.request("ping", json!({})).unwrap();
+        assert_eq!(ping["protocol"], 1);
+        assert_eq!(ping["upgradePending"], true);
+        assert!(client.input_channel("old", None).is_ok());
+        fs::remove_dir_all(server.root).unwrap();
+    }
+    #[cfg(unix)]
+    #[test]
+    fn current_broker_is_reused_by_ensure() {
+        let (server, _) = fixture();
+        let (client, _) = broker(&server.root, IDLE_EXIT);
+        let ensured = Client::ensure(server.root.clone(), client.host.clone()).unwrap();
+        assert!(!ensured.legacy());
+        assert_eq!(
+            ensured.request("ping", json!({})).unwrap()["protocol"],
+            PROTOCOL
+        );
+        fs::remove_dir_all(server.root).unwrap();
+    }
+    #[test]
+    fn runtime_pruning_keeps_current_previous_and_in_use() {
+        let cache =
+            std::env::temp_dir().join(format!("dazedev-runtime-test-{}", uuid::Uuid::new_v4()));
+        let mut held = None;
+        for name in ["oldest", "in-use", "older", "previous", "current"] {
+            fs::create_dir_all(cache.join(name)).unwrap();
+            fs::write(cache.join(name).join("DazeDevSession.exe"), b"MZ").unwrap();
+            if name == "in-use" {
+                let lock = fs::File::create(cache.join(name).join(IN_USE)).unwrap();
+                lock.lock_shared().unwrap();
+                held = Some(lock);
+            }
+            std::thread::sleep(Duration::from_millis(20));
+        }
+        prune_runtimes(&cache, "current");
+        let mut left: Vec<_> = fs::read_dir(&cache)
+            .unwrap()
+            .map(|e| e.unwrap().file_name().to_string_lossy().into_owned())
+            .collect();
+        left.sort();
+        assert_eq!(left, ["current", "in-use", "previous"]);
+        drop(held);
+        fs::remove_dir_all(cache).unwrap();
     }
     #[test]
     fn cursor_queries_are_owned_once_across_split_reads() {
@@ -1034,8 +1609,7 @@ mod tests {
         loop {
             let ready = session
                 .output
-                .lock()
-                .unwrap()
+                .locked()
                 .parser
                 .screen()
                 .contents()
