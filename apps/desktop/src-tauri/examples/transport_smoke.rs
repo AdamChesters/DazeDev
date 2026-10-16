@@ -27,6 +27,7 @@ fn main() {
         distro: "".into(),
         socket: socket.clone(),
         native_shell: None,
+        system_ssh: std::env::var_os("DAZED_SMOKE_SYSTEM_SSH").is_some(),
     };
     let (tx, rx) = mpsc::channel();
     let sink: EventSink = Arc::new(move |n, v| {
