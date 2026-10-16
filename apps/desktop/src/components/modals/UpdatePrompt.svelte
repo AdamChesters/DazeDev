@@ -1,5 +1,4 @@
 <script lang="ts">
-  import { Check, Download } from '@lucide/svelte';
   import type { ClientInfo, UpdateInfo, UpdateState } from './types';
   import { desktop } from '../../lib/bridge';
   import { releaseVersion } from '../../lib/release-version';

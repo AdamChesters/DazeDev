@@ -442,6 +442,7 @@
       class="markdown-preview"
       onclick={(event) => openPreviewLink(event, (e) => (error = String(e)))}
     >
+      <!-- eslint-disable-next-line svelte/no-at-html-tags -- markdownPreview escapes its input -->
       {@html markdownPreview(draft)}
     </article>
   {:else if preview && kind === 'html'}<HtmlPreview source={draft} />

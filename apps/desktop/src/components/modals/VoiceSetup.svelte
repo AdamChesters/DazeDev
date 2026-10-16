@@ -1,6 +1,5 @@
 <script lang="ts">
   import type { Device, ModelInfo } from '../../lib/types';
-  import { Download } from '@lucide/svelte';
   import type { Task } from './types';
   import { modelDescriptions } from '../../lib/voice-setup';
   let {
@@ -8,6 +7,7 @@
     changeVoiceModel,
     device = $bindable(),
     downloadProgress,
+    // eslint-disable-next-line @typescript-eslint/no-unused-vars -- write-only $bindable prop
     modal = $bindable(),
     models,
     openSettings,

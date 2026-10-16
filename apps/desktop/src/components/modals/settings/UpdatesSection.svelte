@@ -1,5 +1,4 @@
 <script lang="ts">
-  import { Check } from '@lucide/svelte';
   import type { ClientInfo, UpdateInfo } from '../types';
   import type { Device } from '../../../lib/types';
   import { exportDiagnostics } from '../../../lib/diagnostics';

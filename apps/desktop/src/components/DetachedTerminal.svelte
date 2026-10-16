@@ -760,6 +760,7 @@
       {:else if previewKind(viewedDocument.path) === 'markdown'}
         <!-- svelte-ignore a11y_click_events_have_key_events, a11y_no_noninteractive_element_interactions -->
         <article onclick={(event) => openPreviewLink(event, fail)}>
+          <!-- eslint-disable-next-line svelte/no-at-html-tags -- markdownPreview escapes its input -->
           {@html markdownPreview(viewedDocument.text)}
         </article>
       {:else}

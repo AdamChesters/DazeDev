@@ -1,5 +1,5 @@
 <script lang="ts">
-  import type { Device, Pane, Profile, Repo } from '../../../lib/types';
+  import type { Device, Pane, Profile } from '../../../lib/types';
   import { type PromptValues, defaultPrompt, promptVariables, renderPrompt, unknownVariables } from '../../../lib/prompt';
   import type { Task } from '../types';
   let {

@@ -1,5 +1,4 @@
 <script lang="ts">
-  import type { Session } from '../../lib/types';
   import type { Task } from './types';
   let {
     busy,

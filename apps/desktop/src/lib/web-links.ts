@@ -48,7 +48,7 @@ function urlContinues(terminal: Terminal, y: number): boolean {
   }
 }
 
-const urlPattern = /https?:\/\/[^\s"'!*(){}|\\^<>`]*[^\s"':,.!?{}|\\^~\[\]`()<>]/gi;
+const urlPattern = /https?:\/\/[^\s"'!*(){}|\\^<>`]*[^\s"':,.!?{}|\\^~[\]`()<>]/gi;
 
 export function wrappedWebLinks(terminal: Terminal, line: number): ILink[] {
   const buffer = terminal.buffer.active;

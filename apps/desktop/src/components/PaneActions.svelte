@@ -55,6 +55,7 @@
         measuring.inert = true;
         measuring.style.cssText =
           'position:fixed;visibility:hidden;display:flex;width:max-content;inset:auto;max-height:none';
+        // eslint-disable-next-line svelte/no-dom-manipulating -- detached clone, removed below
         root.appendChild(measuring);
         controlsWidth = measuring.getBoundingClientRect().width;
         measuring.remove();

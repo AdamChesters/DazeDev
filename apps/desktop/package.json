@@ -8,6 +8,7 @@
     "build": "node scripts/generate-icons.mjs && vite build",
     "check": "svelte-check --tsconfig ./tsconfig.json",
     "test": "vitest run",
+    "lint": "eslint .",
     "tauri": "tauri",
     "gate": "npm run check && npm test && npm run build"
   },

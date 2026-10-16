@@ -1,6 +1,6 @@
 <script lang="ts">
   import RepoPicker from '../../components/RepoPicker.svelte';
-  import type { Device, Inventory, Session } from '../../lib/types';
+  import type { Device, Inventory } from '../../lib/types';
   import type { SessionForm, Task } from './types';
   import { sessionNameError } from '../../lib/session-name';
   let {
@@ -9,6 +9,7 @@
     device,
     form = $bindable(),
     inv,
+    // eslint-disable-next-line @typescript-eslint/no-unused-vars -- write-only $bindable prop
     modal = $bindable(),
     nameError = $bindable(),
     selectedAgent,

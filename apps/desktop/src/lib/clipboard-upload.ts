@@ -69,6 +69,7 @@ export async function uploadClipboardFiles(
     if (paths.length)
       throw new Error(
         `${String(error)} Completed files remain on the source host: ${paths.join(', ')}`,
+        { cause: error },
       );
     throw error;
   }

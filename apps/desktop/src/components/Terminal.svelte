@@ -370,6 +370,7 @@
     } catch (e) {
       throw new Error(
         `Delivery uncertain; some text may already be in the terminal. Enter was not retried. ${e}`,
+        { cause: e },
       );
     }
   }

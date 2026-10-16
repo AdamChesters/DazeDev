@@ -67,7 +67,6 @@
     Download,
     PanelLeftClose,
     PanelLeftOpen,
-    Send,
     Radio,
     LayoutGrid,
     Palette,
@@ -126,7 +125,6 @@
     balanced,
     rectangles,
     insertAt,
-    dock,
     dropZone,
     ids,
     type Edge,
@@ -310,6 +308,7 @@
     cleanupWords = $state(0),
     voiceMode = $state<CaptureMode>('dictation'),
     voiceTarget = $state(''),
+    // eslint-disable-next-line @typescript-eslint/no-unused-vars -- written, never read
     voiceBackend = $state(''),
     commandText = $state('');
   let commandReview = $state<CommandReview | null>(null);
@@ -707,7 +706,6 @@
   let stageWidth = $state(1200);
   let draggingPane = $state('');
   let selectedPanes = $state<string[]>([]);
-  let draggingPanes = $state<string[]>([]);
   let selectionWorkspace = '';
   // Saves only when the remembered focus really changes.
   function setLocalFocus(workspaceId: string, paneId: string) {
@@ -1251,7 +1249,6 @@
       if (!group.length) return;
       moved = true;
       draggingPane = p.id;
-      draggingPanes = group;
       paneMenu = null;
       if (
         !viewer &&
@@ -1274,7 +1271,6 @@
     };
     const cleanup = () => {
       draggingPane = '';
-      draggingPanes = [];
       dropTarget = null;
       dragHover = '';
       window.removeEventListener('pointermove', move);
@@ -2438,7 +2434,9 @@
     } catch (e) {
       connections[sessionHost] = 'Disconnected';
       void connect(h);
-      throw new Error(`Connection lost. Reconnecting; reopen Tmux when connected. ${e}`);
+      throw new Error(`Connection lost. Reconnecting; reopen Tmux when connected. ${e}`, {
+        cause: e,
+      });
     }
     modal = 'sessions';
   }
@@ -3921,7 +3919,7 @@
                 node={layoutFor(w)}
                 onresize={(id, ratio) =>
                   updateWorkspace({ ...w, layout: resize(layoutFor(w), id, ratio) })}
-                >{#snippet pane(id)}{/snippet}</LayoutView
+                >{#snippet pane(_id)}{/snippet}</LayoutView
               >
             </div>
             {#if !ids(layoutFor(w)).filter(Boolean).length && current?.id === w.id}

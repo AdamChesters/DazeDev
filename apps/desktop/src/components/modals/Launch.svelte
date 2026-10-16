@@ -1,7 +1,7 @@
 <script lang="ts">
   import RepoPicker from '../../components/RepoPicker.svelte';
   import { ArrowUpRight } from '@lucide/svelte';
-  import type { Device, Host, Inventory, Workspace } from '../../lib/types';
+  import type { Device, Inventory } from '../../lib/types';
   import type { SessionForm, Task } from './types';
   let {
     busy,

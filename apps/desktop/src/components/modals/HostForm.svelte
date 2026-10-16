@@ -7,6 +7,7 @@
     busy,
     connect,
     device = $bindable(),
+    // eslint-disable-next-line @typescript-eslint/no-unused-vars -- write-only $bindable prop
     modal = $bindable(),
     newHost = $bindable(),
     persistDevice,
