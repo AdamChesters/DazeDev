@@ -1,5 +1,5 @@
 from unittest.mock import patch
-import base64, importlib.util, os, pathlib, subprocess, tempfile, unittest, uuid, time, json, pty, signal
+import base64, importlib.util, os, pathlib, shlex, subprocess, tempfile, unittest, uuid, time, json, pty, signal
 ROOT=pathlib.Path(__file__).resolve().parents[1]
 spec=importlib.util.spec_from_file_location('host',ROOT/'src-tauri/resources/host.py');host=importlib.util.module_from_spec(spec);spec.loader.exec_module(host)
 class HostTests(unittest.TestCase):
@@ -169,6 +169,23 @@ class HostTests(unittest.TestCase):
    self.assertEqual(host.terminal_status({'pid':400})['attachment'],'plain')
    self.assertEqual(calls,['ps','list-clients','ps'])
   host._snapshots.clear()
+ def test_launcher_ignores_python_modules_in_repository_folder(self):
+  root=pathlib.Path(self.temp.name);repo=root/'repo';repo.mkdir();result=root/'ran';marker=root/'hijacked'
+  (repo/'json.py').write_text('import pathlib\npathlib.Path('+repr(str(marker))+').write_text("yes")\n')
+  cli=root/'codex';cli.write_text('#!/bin/sh\n[ "$1" = --help ] && exit 0\nprintf ok > '+shlex.quote(str(result))+'\n');cli.chmod(0o700)
+  with patch.object(host,'agent_path',return_value=str(cli)):
+   host.create_session({'name':'isolated','path':str(repo),'agent':'codex','operation':str(uuid.uuid4())})
+  for _ in range(100):
+   if result.exists():break
+   time.sleep(.02)
+  self.assertEqual(result.read_text(),'ok');self.assertFalse(marker.exists())
+ def test_capabilities_survives_any_models_cache_format(self):
+  home=pathlib.Path(self.temp.name)/'home';(home/'.codex').mkdir(parents=True)
+  for content in ['[1,2]','{"models":[1,"x",null]}','{"models":{"slug":"a"}}','{"models":[{"slug":"a","supported_reasoning_levels":[1]}]}','not json']:
+   (home/'.codex/models_cache.json').write_text(content)
+   with patch.dict(os.environ,{'HOME':str(home)}),patch.object(host,'agent_path',side_effect=lambda n:'/bin/true' if n=='codex' else None):
+    result=host.capabilities()
+   self.assertEqual([a['id'] for a in result['agents']],['codex']);self.assertEqual(result['agents'][0]['models'],[])
  def test_plain_terminal_clone_reads_deepest_shell_directory(self):
   uid=os.getuid()
   with patch.object(host,'run',return_value=f'100 1 {uid} sh\n101 100 {uid} bash\n'),patch.object(host.shutil,'which',return_value=None),patch.object(host.os,'readlink',return_value="/tmp/space and ' quote") as readlink:

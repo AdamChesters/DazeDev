@@ -269,7 +269,8 @@ def capabilities():
             cache=P.home()/'.codex/models_cache.json'
             try:
                 models=[{'id':m['slug'],'efforts':[e.get('reasoning_effort',e.get('effort','')) for e in m.get('supported_reasoning_levels',[])]} for m in json.loads(cache.read_text()).get('models',[]) if m.get('slug')]
-            except (OSError,ValueError,KeyError): pass
+            # Any cache format change must not fail connect.
+            except Exception: models=[]
         agents.append({'id':name,'version':version,'models':models,'modelFlag':'--model' in helptext,'effortFlag':'--effort' in helptext or name=='codex'})
     return {'agents':agents,'protocol':1,'transport':'ssh-tmux','features':['profiles','sessions','repositories','tmux-settings']}
 
@@ -319,7 +320,8 @@ def create_session(a):
     # Keep installation/authentication failures visible in a usable shell.
     bootstrap = 'try:\n '+bootstrap+'\nexcept Exception as e:\n print(\"DazeDev: \"+str(e), flush=True)\n os.execl(os.environ.get(\"SHELL\",\"/bin/sh\"), os.environ.get(\"SHELL\",\"/bin/sh\"), \"-l\")'
     encoded=base64.b64encode(bootstrap.encode()).decode()
-    command='python3 -c '+shlex.quote('import base64;exec(base64.b64decode('+repr(encoded)+'))')
+    # -I keeps the repository folder and PYTHON* variables off sys.path.
+    command='python3 -I -u -c '+shlex.quote('import base64;exec(base64.b64decode('+repr(encoded)+'))')
     if BROWSER:
         browser = BROWSER.environment()['command']
         BROWSER.launch(op)
