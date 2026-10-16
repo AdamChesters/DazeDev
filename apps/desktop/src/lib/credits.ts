@@ -12,6 +12,30 @@ export const credits = [
     url: 'https://github.com/briansmith/ring',
   },
   {
+    name: 'russh',
+    by: 'Pierre-Étienne Meunier and russh contributors',
+    license: 'Apache-2.0',
+    url: 'https://github.com/Eugeny/russh',
+  },
+  {
+    name: 'RustCrypto SSH crates (ssh-key)',
+    by: 'RustCrypto Developers',
+    license: 'Apache-2.0 / MIT',
+    url: 'https://github.com/RustCrypto/SSH',
+  },
+  {
+    name: 'curve25519-dalek / ed25519-dalek',
+    by: 'isis agora lovecruft, Henry de Valence and dalek-cryptography contributors',
+    license: 'BSD-3-Clause',
+    url: 'https://github.com/dalek-cryptography/curve25519-dalek',
+  },
+  {
+    name: 'Tokio',
+    by: 'Tokio contributors',
+    license: 'MIT',
+    url: 'https://github.com/tokio-rs/tokio',
+  },
+  {
     name: 'Tauri',
     by: 'Tauri contributors',
     license: 'MIT / Apache-2.0',
@@ -71,7 +95,12 @@ export const credits = [
     license: 'MIT / Apache-2.0',
     url: 'https://github.com/microsoft/onnxruntime',
   },
-  { name: 'Whisper', by: 'OpenAI', license: 'MIT', url: 'https://github.com/openai/whisper' },
+  {
+    name: 'Whisper',
+    by: 'OpenAI',
+    license: 'Apache-2.0 (Small, Medium, Large v3); MIT (Large v3 Turbo)',
+    url: 'https://github.com/openai/whisper',
+  },
   {
     name: 'Parakeet Unified',
     by: 'NVIDIA',
@@ -81,7 +110,7 @@ export const credits = [
   {
     name: 'GGUF speech conversions',
     by: 'Handy Computer',
-    license: 'Whisper: MIT; Parakeet conversion: CC-BY-4.0 with upstream model terms',
+    license: 'Same license as each base model',
     url: 'https://huggingface.co/handy-computer',
   },
   {

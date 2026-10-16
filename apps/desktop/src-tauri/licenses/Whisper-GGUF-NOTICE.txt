@@ -1,0 +1,55 @@
+Whisper speech models (GGUF conversions by Handy Computer)
+
+Whisper Small, Medium and Large v3 are licensed under the Apache License 2.0
+(see Whisper-GGUF-LICENSE-APACHE.txt). Whisper Large v3 Turbo is licensed
+under the MIT License (see the Whisper entry in THIRD-PARTY-LICENSES.txt).
+DazeDev downloads these preconverted Q8_0 files without changing their weights.
+
+Each NOTICE below is reproduced verbatim from its repository on Hugging Face.
+Upstream added these files on 16 October 2026.
+
+The Whisper Large v3 Turbo file that DazeDev pins (revision ceea6c8a) is the
+earlier upload. Its embedded metadata (general.license) says apache-2.0.
+Upstream corrected this to MIT on 16 October 2026 in commit c70af6f8
+("Correct license metadata"). The upstream model card and LICENSE say MIT.
+
+----------------------------------------------------------------------
+https://huggingface.co/handy-computer/whisper-small-gguf/blob/main/NOTICE
+
+Modifications: handy-computer converted
+https://huggingface.co/openai/whisper-small at commit 973afd2 to GGUF for
+transcribe.cpp (https://github.com/handy-computer/transcribe.cpp). Conversion
+repackages the weights, renaming and re-laying-out tensors; the quantized
+files (Q8_0, Q6_K, Q5_K_M, Q4_K_M) also store them at reduced numeric
+precision. The weights were not retrained or fine-tuned.
+
+----------------------------------------------------------------------
+https://huggingface.co/handy-computer/whisper-medium-gguf/blob/main/NOTICE
+
+Modifications: handy-computer converted
+https://huggingface.co/openai/whisper-medium at commit abdf7c3 to GGUF for
+transcribe.cpp (https://github.com/handy-computer/transcribe.cpp). Conversion
+repackages the weights, renaming and re-laying-out tensors; the quantized
+files (Q8_0, Q6_K, Q5_K_M, Q4_K_M) also store them at reduced numeric
+precision. The weights were not retrained or fine-tuned.
+
+----------------------------------------------------------------------
+https://huggingface.co/handy-computer/whisper-large-v3-gguf/blob/main/NOTICE
+
+Modifications: handy-computer converted
+https://huggingface.co/openai/whisper-large-v3 at commit 06f233f to GGUF for
+transcribe.cpp (https://github.com/handy-computer/transcribe.cpp). Conversion
+repackages the weights, renaming and re-laying-out tensors; the quantized
+files (Q8_0, Q6_K, Q5_K_M, Q4_K_M) also store them at reduced numeric
+precision. The weights were not retrained or fine-tuned.
+
+----------------------------------------------------------------------
+https://huggingface.co/handy-computer/whisper-large-v3-turbo-gguf/blob/main/NOTICE
+
+Modifications: handy-computer converted
+https://huggingface.co/openai/whisper-large-v3-turbo at commit 41f01f3 to GGUF
+for transcribe.cpp (https://github.com/handy-computer/transcribe.cpp).
+Conversion repackages the weights, renaming and re-laying-out tensors; the
+quantized files (Q8_0, Q6_K, Q5_K_M, Q4_K_M) also store them at reduced
+numeric precision. The weights were not retrained or fine-tuned.
+

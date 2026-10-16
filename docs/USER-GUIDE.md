@@ -19,9 +19,14 @@ Screenshots show the app interface with sample hosts and terminal output.
 ## Connect a machine
 
 - **New host → Location:** choose PowerShell, WSL or SSH, then **Save & connect**.
-- Native PowerShell needs no WSL. WSL and remote Unix hosts need Python 3 and tmux.
+- Native PowerShell needs no WSL. WSL and remote Unix hosts need Python 3.9 or newer and tmux. Login shells such as fish, nu and tcsh work.
 - Remote layouts and preferences stay on the host; reconnect from another device to reuse them.
-- **Tailscale SSH** uses the destination's Tailscale SSH service. Native Windows cannot serve it. For WSL, connect to the Linux device's own tailnet name and username. Ordinary SSH over Tailscale uses separate SSH credentials; DazeDev's remote host still needs Python 3 and tmux.
+- **SSH hosts** use DazeDev's built-in SSH client. You sign in once per host, and every terminal on that host shares the connection.
+- DazeDev reads your `~/.ssh/config` through `ssh -G`, so `Include`, `Match`, `ProxyJump`, `ProxyCommand`, `IdentityFile` and known_hosts settings still apply.
+- Host keys are checked against known_hosts. DazeDev asks before it trusts an unknown key and refuses a key that has changed.
+- Sign-in can use your SSH agent (the Windows OpenSSH agent, Pageant or `SSH_AUTH_SOCK`), key files, certificates, keyboard-interactive prompts and passwords. DazeDev asks for a key's passphrase only after the server accepts that key.
+- A host that needs PKCS#11 or a hardware security key can use your system's OpenSSH instead: turn on **Use system OpenSSH** in that host's settings.
+- **Tailscale SSH** uses the destination's Tailscale SSH service and checks the host key against the keys the tailnet publishes for that device. Native Windows cannot serve it. For WSL, connect to the Linux device's own tailnet name and username. Ordinary SSH over Tailscale uses separate SSH credentials; DazeDev's remote host still needs Python 3.9 or newer and tmux.
 
 <img src="assets/screenshots/connect.png" width="490" alt="New host dialog with Local Windows PowerShell selected." />
 
@@ -50,6 +55,19 @@ Screenshots show the app interface with sample hosts and terminal output.
 - **Send** pastes the message **and presses Enter** in each listed session, including bare shells.
 
 <img src="assets/screenshots/broadcast.png" width="490" alt="Broadcast review listing three terminal recipients before sending." />
+
+## Questions DazeDev asks first
+
+- When a host asks to open a link in your browser, DazeDev shows the host name and the full address. Choose **Open** or **Don't open**. Tick **Allow links from this host until DazeDev restarts** to stop the questions for that host.
+- If a repository has `scripts/new-worktree.sh`, creating a worktree asks whether to **Run script**, **Create without script** or **Cancel**.
+- Pasting text with a line break shows the line count and the first lines before it pastes. Tick **Don't ask again**, or clear **Ask before pasting text with line breaks** in **Settings → Terminal**.
+- **Remote copy (OSC 52)** in **Settings → Terminal** decides what happens when a program on a host copies to this device's clipboard: **Block**, **Allow and notify** (the default) or **Allow silently**. A fourth option also lets programs on the host read your clipboard.
+
+## Shortcuts and history
+
+- **Settings → Keyboard shortcuts** changes the keys for the command palette (Ctrl+K), terminal search (Ctrl+Shift+F) and full screen (F11). DazeDev refuses a key that another action or a voice hotkey already uses. **Reset to defaults** puts them back.
+- While a terminal has focus, Ctrl+letter keys without Shift or Alt go to the terminal, so Ctrl+K works in your shell or editor there.
+- **Settings → Terminal → History lines** sets how much scrollback each terminal keeps in memory: 10,000 lines by default, up to 100,000.
 
 ## Open files beside your terminals
 

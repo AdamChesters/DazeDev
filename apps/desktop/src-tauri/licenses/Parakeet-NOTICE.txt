@@ -1,13 +1,21 @@
-Parakeet Unified English 0.6B
+Parakeet Unified English 0.6B (GGUF Q8_0 by Handy Computer)
+https://huggingface.co/handy-computer/parakeet-unified-en-0.6b-gguf
+File revision used by DazeDev: d5249700b2382bf5c5024c2421d101b8db54a629
+Base model: https://huggingface.co/nvidia/parakeet-unified-en-0.6b
+
+The model is licensed under the NVIDIA Open Model License. Its full text is in
+NVIDIA-Open-Model-License.txt and NVIDIA-Open-Model-License.pdf.
+
+NOTICE, reproduced verbatim from
+https://huggingface.co/handy-computer/parakeet-unified-en-0.6b-gguf/blob/main/NOTICE
+
 Licensed by NVIDIA Corporation under the NVIDIA Open Model License
 
-Base model: https://huggingface.co/nvidia/parakeet-unified-en-0.6b
-Upstream revision used by the conversion: d4ac992 (10 May 2026).
-GGUF conversion and Q8_0 quantization: Handy Computer contributors.
-https://huggingface.co/handy-computer/parakeet-unified-en-0.6b-gguf
-Conversion revision: d5249700b2382bf5c5024c2421d101b8db54a629
-The conversion card declares CC-BY-4.0. The NVIDIA base model remains subject
-to the NVIDIA Open Model License; see the accompanying license text/PDF.
-https://creativecommons.org/licenses/by/4.0/
+Modifications: handy-computer converted
+https://huggingface.co/nvidia/parakeet-unified-en-0.6b at commit d4ac992 to
+GGUF for transcribe.cpp (https://github.com/handy-computer/transcribe.cpp).
+Conversion repackages the weights, renaming and re-laying-out tensors; the
+quantized files (Q8_0, Q6_K, Q5_K_M, Q4_K_M) also store them at reduced
+numeric precision. The weights were not retrained or fine-tuned.
 
 DazeDev downloads this preconverted model without changing its weights.
