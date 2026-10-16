@@ -19,12 +19,12 @@ class TerminalDestinationTest {
         assertEquals("other-socket",target.profile().socket)
     }
     @Test fun freshPhoneUsesNonSecretTailscaleDetails() {
-        val details=HostReference("Devbox","tailscale","devbox.example.ts.net","ubuntu",2222,"work")
+        val details=HostReference("Workstation","tailscale","workstation.example.ts.net","user",2222,"work")
         val target=DazeDevMobileUiState(profile=owner).destination(row(details=details))
-        assertEquals("Devbox",target.label)
+        assertEquals("Workstation",target.label)
         assertEquals(AuthMethod.TailscaleSsh,target.profile().authMethod)
         assertEquals(2222,target.profile().port)
-        assertEquals("devbox.example.ts.net",target.profile().host)
+        assertEquals("workstation.example.ts.net",target.profile().host)
         assertNull(target.profile().privateKeyUri)
         assertEquals("work",target.profile().socket)
     }
