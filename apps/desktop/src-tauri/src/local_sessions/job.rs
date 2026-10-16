@@ -35,7 +35,7 @@ impl Job {
             let error = std::io::Error::last_os_error();
             CloseHandle(process);
             if result == 0 {
-                return Err(format!("Cannot own the PowerShell process tree: {error}"));
+                return Err(format!("Cannot own the process tree: {error}"));
             }
             Ok(job)
         }
