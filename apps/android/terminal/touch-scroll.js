@@ -56,3 +56,20 @@ export function installTouchScroll(element, { lineHeight, scroll, select }) {
     element.removeEventListener("pointercancel", up);
   };
 }
+
+// Turns dragged rows into whole wheel steps and keeps the remainder.
+// Negative rows and steps point into history (wheel up).
+export function wheelAccumulator(rowsPerWheel = 3) {
+  let rows = 0;
+  return {
+    add(lines) {
+      rows += lines;
+      const steps = Math.trunc(rows / rowsPerWheel);
+      rows -= steps * rowsPerWheel;
+      return steps || 0;
+    },
+    reset() {
+      rows = 0;
+    },
+  };
+}

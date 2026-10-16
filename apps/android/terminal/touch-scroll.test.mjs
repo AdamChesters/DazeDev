@@ -3,7 +3,7 @@ import assert from "node:assert/strict";
 import { readFile } from "node:fs/promises";
 
 const source = await readFile(new URL("./touch-scroll.js", import.meta.url), "utf8");
-const { installTouchScroll } = await import(`data:text/javascript;base64,${Buffer.from(source).toString("base64")}`);
+const { installTouchScroll, wheelAccumulator } = await import(`data:text/javascript;base64,${Buffer.from(source).toString("base64")}`);
 function setup() {
   const element = new EventTarget();
   const lines = [];
@@ -55,4 +55,26 @@ test("long press still selects text and does not scroll", async () => {
   assert.equal(f.selections(), 1);
   assert.deepEqual(f.lines, []);
   f.dispose();
+});
+test("wheel steps send one event per three dragged rows and keep the remainder", () => {
+  const wheel = wheelAccumulator(3);
+  assert.deepEqual([-1, -1, -1, -1, -1].map((n) => wheel.add(n)), [0, 0, -1, 0, 0]);
+  assert.equal(wheel.add(-7), -3);
+  assert.equal(wheel.add(4), 1);
+  wheel.reset();
+  assert.equal(wheel.add(2), 0);
+  assert.equal(wheel.add(1), 1);
+});
+test("scroll callback receives the touch event for wheel coordinates", () => {
+  const element = new EventTarget();
+  const seen = [];
+  installTouchScroll(element, { lineHeight: () => 10, scroll: (n, e) => seen.push([n, e.clientX, e.clientY]), select: () => {} });
+  const send = (type, x, y) => {
+    const event = new Event(type, { cancelable: true });
+    Object.assign(event, { clientX: x, clientY: y, pointerType: "touch", pointerId: 1 });
+    element.dispatchEvent(event);
+  };
+  send("pointerdown", 20, 100);
+  send("pointermove", 20, 140);
+  assert.deepEqual(seen, [[-4, 20, 140]]);
 });

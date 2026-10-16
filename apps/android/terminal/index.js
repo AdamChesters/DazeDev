@@ -4,7 +4,7 @@ import { Unicode11Addon } from "@xterm/addon-unicode11";
 import { WebLinksAddon } from "@xterm/addon-web-links";
 import "@xterm/xterm/css/xterm.css";
 import "./terminal.css";
-import { installTouchScroll } from "./touch-scroll.js";
+import { installTouchScroll, wheelAccumulator } from "./touch-scroll.js";
 const term = new Terminal({
   cursorBlink: false,
   scrollback: 5000,
@@ -46,6 +46,8 @@ term.onData((data) => {
     submission.push(data);
     return;
   }
+  // Typing after a wheel scroll first returns tmux or the app to live output.
+  if (!wheeling && wheelNet > 0) returnToLive();
   if (
     !dispatching &&
     [...data].length === 1 &&
@@ -270,9 +272,13 @@ window.daze = {
     updateMods();
     term.blur();
   },
-  paste: (text) => term.paste(text),
+  paste: (text) => {
+    returnToLive();
+    term.paste(text);
+  },
   submit: (text) => {
     if (!ready || typeof text !== "string" || !text.trim()) return false;
+    returnToLive();
     submission = [];
     let payload;
     try {
@@ -391,12 +397,74 @@ for (const [i, handle] of handles.entries()) {
     selectRange();
   };
 }
+// Touch scrolling never puts the shared tmux pane into copy mode from here.
+// With mouse tracking on (tmux mouse on), a drag becomes wheel events, as on
+// desktop: tmux passes them to apps that use the mouse and scrolls otherwise.
+// Wheel events are never sent with mouse tracking off, because xterm would turn
+// them into arrow keys.
+const wheelRows = wheelAccumulator(3);
+let wheelNet = 0,
+  wheeling = false,
+  hintAt = 0,
+  scrolledShown = false;
+function reportScrolled() {
+  const buffer = term.buffer.active;
+  const scrolled = wheelNet > 0 || buffer.viewportY < buffer.baseY;
+  if (scrolled !== scrolledShown) {
+    scrolledShown = scrolled;
+    bridge("scrolled", scrolled);
+  }
+}
+function wheel(direction, x, y, count) {
+  if (term.modes.mouseTrackingMode === "none") return;
+  wheeling = true;
+  try {
+    for (let i = 0; i < count; i++)
+      screen.dispatchEvent(
+        new WheelEvent("wheel", {
+          deltaY: direction,
+          deltaMode: WheelEvent.DOM_DELTA_LINE,
+          clientX: x,
+          clientY: y,
+          bubbles: true,
+          cancelable: true,
+        }),
+      );
+  } finally {
+    wheeling = false;
+  }
+  wheelNet = Math.max(0, wheelNet - direction * count);
+  reportScrolled();
+}
+function returnToLive() {
+  if (wheelNet > 0 && term.modes.mouseTrackingMode !== "none") {
+    const box = screen.getBoundingClientRect();
+    wheel(1, box.left + box.width / 2, box.top + box.height / 2, Math.min(wheelNet, 500));
+  }
+  wheelNet = 0;
+  wheelRows.reset();
+  reportScrolled();
+}
+term.onScroll(reportScrolled);
 const disposeTouchScroll = installTouchScroll(screen, {
   lineHeight: () => screen.getBoundingClientRect().height / term.rows,
-  scroll: (lines) => {
+  scroll: (lines, event) => {
     window.daze.clearSelection();
-    if (term.buffer.active.type === "alternate") bridge("scroll", lines);
-    else term.scrollLines(lines);
+    if (term.modes.mouseTrackingMode !== "none") {
+      const events = wheelRows.add(lines);
+      if (events) {
+        wheel(Math.sign(events), event.clientX, event.clientY, Math.abs(events));
+      }
+    } else if (term.buffer.active.type === "alternate") {
+      const now = Date.now();
+      if (now - hintAt > 15000) {
+        hintAt = now;
+        bridge("hint", "To scroll this terminal, turn on tmux mouse in Settings.");
+      }
+    } else {
+      term.scrollLines(lines);
+      reportScrolled();
+    }
   },
   select: (event) => {
     selectionStart = selectionEnd = cell(event);
@@ -426,6 +494,8 @@ window.daze.clearSelection = () => {
   handles.forEach((handle) => (handle.hidden = true));
 };
 window.daze.bottom = () => {
-  if (term.buffer.active.type === "alternate") bridge("scrollBottom", null);
+  returnToLive();
   term.scrollToBottom();
+  // Also leaves tmux copy mode if another client or tmux itself entered it.
+  bridge("scrollBottom", null);
 };
