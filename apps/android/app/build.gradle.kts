@@ -118,7 +118,8 @@ dependencies {
     implementation("ai.moonshine:moonshine-voice:0.1.5")
 
     testImplementation("junit:junit:4.13.2")
-    testImplementation("org.json:json:20250517")
+    // Android's own org.json implementation (AOSP libcore), so JVM tests parse and print JSON as the phone does.
+    testImplementation("com.vaadin.external.google:android-json:0.0.20131108.vaadin1")
     testImplementation("org.jetbrains.kotlinx:kotlinx-coroutines-test:1.11.0")
 
     androidTestImplementation("androidx.test.ext:junit:1.3.0")
