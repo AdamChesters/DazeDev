@@ -394,6 +394,59 @@ async fn terminal_resize(
         .await
         .map_err(|e| e.to_string())?
 }
+/// Terminal windows send their own pane's keystrokes and size directly,
+/// instead of through the workspace window. Only the pane's window may.
+fn pane_window(window: &tauri::WebviewWindow, pane_id: &str) -> Result<(), String> {
+    if window.label() == format!("terminal-{pane_id}") {
+        Ok(())
+    } else {
+        Err("Only this pane's terminal window can send to it".into())
+    }
+}
+#[tauri::command]
+async fn terminal_window_input(
+    pane_id: String,
+    data: String,
+    window: tauri::WebviewWindow,
+    state: State<'_, AppState>,
+) -> Result<(), String> {
+    pane_window(&window, &pane_id)?;
+    let t = state.transport.clone();
+    tauri::async_runtime::spawn_blocking(move || t.input(&pane_id, &data))
+        .await
+        .map_err(|e| e.to_string())?
+}
+#[tauri::command]
+async fn terminal_window_binary(
+    pane_id: String,
+    data: String,
+    window: tauri::WebviewWindow,
+    state: State<'_, AppState>,
+) -> Result<(), String> {
+    use base64::Engine;
+    pane_window(&window, &pane_id)?;
+    let bytes = base64::engine::general_purpose::STANDARD
+        .decode(data)
+        .map_err(|e| e.to_string())?;
+    let t = state.transport.clone();
+    tauri::async_runtime::spawn_blocking(move || t.binary(&pane_id, &bytes))
+        .await
+        .map_err(|e| e.to_string())?
+}
+#[tauri::command]
+async fn terminal_window_resize(
+    pane_id: String,
+    cols: u16,
+    rows: u16,
+    window: tauri::WebviewWindow,
+    state: State<'_, AppState>,
+) -> Result<(), String> {
+    pane_window(&window, &pane_id)?;
+    let t = state.transport.clone();
+    tauri::async_runtime::spawn_blocking(move || t.resize(&pane_id, cols, rows))
+        .await
+        .map_err(|e| e.to_string())?
+}
 #[tauri::command]
 async fn terminal_close(
     id: String,
@@ -1030,6 +1083,9 @@ pub fn run() {
                 terminal_open,
                 terminal_view_open,
                 terminal_view_close,
+                terminal_window_input,
+                terminal_window_binary,
+                terminal_window_resize,
                 terminal_input,
                 terminal_ack,
                 terminal_binary,

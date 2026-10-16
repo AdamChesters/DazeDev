@@ -1,5 +1,5 @@
 """DazeDev's stdlib-only host protocol. Executed in memory; installs no daemon."""
-import threading, concurrent.futures, collections
+import threading, concurrent.futures, collections, bisect
 import base64, contextlib, errno, fcntl, getpass, hashlib, json, os, pathlib, re, shlex, shutil, signal, socket, subprocess, sys, tempfile, time, uuid
 P = pathlib.Path
 os.environ['PATH']=str(P.home()/'.local/bin')+os.pathsep+os.environ.get('PATH','')
@@ -458,26 +458,42 @@ def upload_begin(a):
     fd, path = tempfile.mkstemp(prefix='.dazedev-upload-', dir=folder)
     os.close(fd)
     key = uuid.uuid4().hex
-    UPLOADS[key] = dict(path=P(path), target=target, size=size, offset=0,
+    UPLOADS[key] = dict(path=P(path), target=target, size=size, offset=0, ranges=[],
                         device=folder.stat().st_dev, touched=time.monotonic())
-    return {'id':key, 'path':str(target), 'chunk':upload_chunk_size()}
+    reply = {'id':key, 'path':str(target), 'chunk':upload_chunk_size()}
+    # Over binary frames several chunks may be in flight and arrive in any order.
+    if BINARY: reply['parallel'] = UPLOAD_PARALLEL
+    return reply
 
+UPLOAD_PARALLEL = 4
 def upload_chunk_size():
     # Protocol 2 frames carry large requests; terminal lines stay small.
     return 1048576 if BINARY else 32768
 def upload_chunk(a):
     item = UPLOADS[a['id']]
     data = base64.b64decode(a['data'], validate=True)
-    if len(data) > upload_chunk_size() or type(a['offset']) is not int or a['offset'] != item['offset'] or item['offset'] + len(data) > item['size']:
+    start = a['offset']
+    if not data or len(data) > upload_chunk_size() or type(start) is not int or start < 0 or start + len(data) > item['size']:
         raise ValueError('Upload offset or chunk size does not match; cancel and retry')
+    # Terminal-line clients send in order. Over binary frames chunks may arrive
+    # in any order; either way each byte range is written exactly once.
+    if not BINARY and start != item['offset']:
+        raise ValueError('Upload offset or chunk size does not match; cancel and retry')
+    ranges = item['ranges']; end = start + len(data)
+    at = bisect.bisect_left(ranges, [start, end])
+    if (at > 0 and ranges[at - 1][1] > start) or (at < len(ranges) and ranges[at][0] < end):
+        raise ValueError('Upload chunk overlaps data already received; cancel and retry')
     upload_space(item['path'].parent, item['size'] - item['offset'], excluding=a['id'])
     try:
-        with item['path'].open('ab') as out: out.write(data)
+        with item['path'].open('r+b') as out:
+            out.seek(start); out.write(data)
     except OSError:
         upload_abort({'id':a['id']})
         raise
+    ranges.insert(at, [start, end])
     item['offset'] += len(data); item['touched'] = time.monotonic()
-    return {'offset':item['offset']}
+    contiguous = ranges[0][1] if ranges and ranges[0][0] == 0 else 0
+    return {'offset':contiguous, 'received':item['offset']}
 
 def upload_finish(a):
     item = UPLOADS[a['id']]

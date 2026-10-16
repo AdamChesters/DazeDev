@@ -100,3 +100,36 @@ class UploadSpaceTests(unittest.TestCase):
         self.assertEqual(pathlib.Path(item['path']).read_bytes(), b'concurrent')
 
 if __name__ == '__main__': unittest.main()
+
+class OutOfOrderUploadTests(unittest.TestCase):
+    def setUp(self):
+        self.temp = tempfile.TemporaryDirectory()
+        self.root = pathlib.Path(self.temp.name)
+        host.BINARY = True
+    def tearDown(self):
+        host.BINARY = False
+        host.cleanup_uploads()
+        self.temp.cleanup()
+    def chunk(self, key, offset, data):
+        return host.upload_chunk({'id': key, 'offset': offset, 'data': base64.b64encode(data).decode()})
+    def test_chunks_in_any_order_build_the_file_and_overlaps_are_refused(self):
+        data = bytes(range(256)) * 40
+        begun = host.upload_begin(dict(directory=str(self.root), name='out.bin', size=len(data)))
+        self.assertEqual(begun['parallel'], host.UPLOAD_PARALLEL)
+        key = begun['id']
+        parts = [(0, data[:4000]), (8000, data[8000:]), (4000, data[4000:8000])]
+        replies = [self.chunk(key, offset, part) for offset, part in [parts[1], parts[0], parts[2]]]
+        self.assertEqual([r['received'] for r in replies], [len(data) - 8000, len(data) - 4000, len(data)])
+        self.assertEqual(replies[1]['offset'], 4000)
+        with self.assertRaisesRegex(ValueError, 'overlaps'):
+            self.chunk(key, 100, b'x')
+        finished = host.upload_finish({'id': key})
+        self.assertEqual(pathlib.Path(finished['path']).read_bytes(), data)
+    def test_incomplete_upload_cannot_finish(self):
+        begun = host.upload_begin(dict(directory=str(self.root), name='gap.bin', size=10))
+        self.chunk(begun['id'], 5, b'12345')
+        with self.assertRaisesRegex(ValueError, 'incomplete'):
+            host.upload_finish({'id': begun['id']})
+    def test_terminal_protocol_offers_no_parallel_chunks(self):
+        host.BINARY = False
+        self.assertNotIn('parallel', host.upload_begin(dict(directory=str(self.root), name='seq.bin', size=1)))
