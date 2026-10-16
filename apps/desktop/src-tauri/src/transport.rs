@@ -1809,6 +1809,9 @@ mod tests {
         let old_runtime = std::env::var_os("XDG_RUNTIME_DIR");
         std::env::set_var("XDG_RUNTIME_DIR", &runtime);
         std::env::set_var("BROWSER", "/bin/true");
+        // A caller's tmux must not decide how the test pane finds its terminal.
+        std::env::remove_var("TMUX");
+        std::env::remove_var("TMUX_PANE");
         let transport = Transport::default();
         let host: Host =
             serde_json::from_value(json!({"id":"browser-test","name":"test","kind":"local"}))
