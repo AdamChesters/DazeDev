@@ -132,14 +132,16 @@ fun InteractiveTerminal(stream:TerminalStream?,controller:TerminalController,onM
         val proxy=withTimeoutOrNull(15_000){reply.filterNotNull().first()}
         if(proxy==null){stream.close();onMessage("Terminal renderer did not start. Reconnect before sending input.");return@LaunchedEffect}
         controller.stream=stream;controller.ready=true
-        val binary=WebViewFeature.isFeatureSupported(WebViewFeature.WEB_MESSAGE_ARRAY_BUFFER)
         var sent=0L
         try {
             // Several chunks stay in flight; a slow page only slows output, it never ends the stream.
             stream.output.collect {bytes->
                 while(sent-acknowledged.get()>OUTPUT_WINDOW)ackSignal.receive()
-                if(binary)proxy.postMessage(bytes)
-                else proxy.postMessage("o"+withContext(Dispatchers.Default){Base64.getEncoder().encodeToString(bytes)})
+                if(WebViewFeature.isFeatureSupported(WebViewFeature.WEB_MESSAGE_ARRAY_BUFFER))proxy.postMessage(bytes)
+                else {
+                    val text="o"+withContext(Dispatchers.Default){Base64.getEncoder().encodeToString(bytes)}
+                    if(WebViewFeature.isFeatureSupported(WebViewFeature.WEB_MESSAGE_LISTENER))proxy.postMessage(text)
+                }
                 sent+=bytes.size
             }
             onMessage("Terminal disconnected. Refresh to reconnect; pending input is discarded.")

@@ -81,6 +81,12 @@ fun DazeDevMobileApp(viewModel: MainViewModel) {
         onDispose { lifecycleOwner.lifecycle.removeObserver(observer) }
     }
 
+    LaunchedEffect(uiState.secureScreen) {
+        val window=(context as? android.app.Activity)?.window ?: return@LaunchedEffect
+        if(uiState.secureScreen)window.addFlags(android.view.WindowManager.LayoutParams.FLAG_SECURE)
+        else window.clearFlags(android.view.WindowManager.LayoutParams.FLAG_SECURE)
+    }
+
     LaunchedEffect(uiState.message?.id) {
         val message = uiState.message ?: return@LaunchedEffect
         snackbarHostState.showSnackbar(message.text)

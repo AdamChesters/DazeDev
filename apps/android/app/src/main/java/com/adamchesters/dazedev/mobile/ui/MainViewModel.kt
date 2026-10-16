@@ -81,6 +81,7 @@ data class DazeDevMobileUiState(
     val hostKeys:List<HostKeyEntry>? = null,
     val browserRequest:BrowserRequest? = null,
     val authNotice:AuthNotice? = null,
+    val secureScreen:Boolean = false,
 )
 
 class MainViewModel(application: Application) : AndroidViewModel(application) {
@@ -88,7 +89,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     private val localGroups=store.localWorkspaces()?.let(::SharedProfile)?:SharedProfile.empty()
     private var groupConnectQueue=listOf<String>()
     private val ids=AtomicLong(1)
-    private val _uiState=MutableStateFlow(DazeDevMobileUiState(profile=store.load()))
+    private val _uiState=MutableStateFlow(DazeDevMobileUiState(profile=store.load(),secureScreen=store.secureScreen))
     val uiState: StateFlow<DazeDevMobileUiState> = _uiState.asStateFlow()
     private var foreground=true
     private var backgroundDetach: Job?=null
@@ -572,6 +573,8 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
             _uiState.update {it.copy(hostKeys=list,hostKeyChange=null)}
         }
     }
+    /** Blocks screenshots and the Recents preview when on. */
+    fun setSecureScreen(value:Boolean){store.secureScreen=value;_uiState.update {it.copy(secureScreen=value)}}
     fun closeHostKeys(){_uiState.update {it.copy(hostKeys=null)}}
     fun dismissHostKeyChange(){_uiState.update {it.copy(hostKeyChange=null)}}
     fun forgetHostKey(entry:HostKeyEntry) {
