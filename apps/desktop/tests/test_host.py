@@ -124,6 +124,18 @@ class HostTests(unittest.TestCase):
   self.assertEqual(path.read_text(),result['text'])
   binary=path.parent/'secret.env';binary.write_text('not a document')
   with self.assertRaises(ValueError):host.document_read({'path':str(binary)})
+ def test_document_save_lock_survives_atomic_replace(self):
+  import fcntl,threading
+  path=pathlib.Path(self.temp.name)/'NOTES.md';path.write_text('one\n')
+  for text in ['two\n','three\n']:
+   before=path.stat().st_ino;revision=host.document_read({'path':str(path)})['revision']
+   with open(host.document_lock_path(path.resolve()),'a+') as lock:
+    fcntl.flock(lock,fcntl.LOCK_EX)
+    worker=threading.Thread(target=host.document_save,args=({'path':str(path),'revision':revision,'text':text},));worker.start()
+    worker.join(.3);self.assertTrue(worker.is_alive(),'save must wait for the path lock')
+    fcntl.flock(lock,fcntl.LOCK_UN)
+   worker.join(5);self.assertFalse(worker.is_alive())
+   self.assertEqual(path.read_text(),text);self.assertNotEqual(path.stat().st_ino,before)
  def test_document_discovery_scopes_nested_and_references(self):
   root=pathlib.Path(self.temp.name)/'repo';root.mkdir();(root/'sub').mkdir();(root/'node_modules').mkdir()
   (root/'AGENTS.md').write_text('Read [private guidance](../private.md) and `sub/CLAUDE.md`.')

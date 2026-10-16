@@ -584,13 +584,26 @@ def document_read(a):
     if len(data) > MAX_DOCUMENT: raise ValueError('Document exceeds 512 KiB')
     return {'path':str(path), 'text':data.decode('utf-8'), 'revision':hashlib.sha256(data).hexdigest(), 'writable':os.access(path, os.W_OK) and os.access(path.parent, os.W_OK)}
 
+def document_lock_path(path):
+    folder = config_dir()/'locks'
+    folder.mkdir(mode=0o700, parents=True, exist_ok=True)
+    return folder/(hashlib.sha256(str(path).encode()).hexdigest() + '.lock')
+
+@contextlib.contextmanager
+def document_lock(path):
+    # Lock the path, not the file: an atomic replace gives the file a new
+    # inode, so a lock on the old inode would not cover the next save.
+    fd = os.open(document_lock_path(path), os.O_RDWR | os.O_CREAT | getattr(os, 'O_NOFOLLOW', 0), 0o600)
+    with os.fdopen(fd, 'a+') as lock:
+        fcntl.flock(lock, fcntl.LOCK_EX)
+        yield
+
 def document_save(a):
     path = document_path(a['path'])
     data = a['text'].encode('utf-8')
     if len(data) > MAX_DOCUMENT: raise ValueError('Document exceeds 512 KiB')
-    # Lock the actual inode; compare content again immediately before replacement.
-    with path.open('rb') as original:
-        fcntl.flock(original, fcntl.LOCK_EX)
+    # Compare content again immediately before replacement.
+    with document_lock(path):
         before = document_read({'path':str(path)})
         if not before['writable']: raise PermissionError('File is read only')
         if before['revision'] != a['revision']: raise RuntimeError('CONFLICT: file changed on the host. Copy your edits before reloading.')
