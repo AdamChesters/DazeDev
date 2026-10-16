@@ -174,7 +174,9 @@
   import { releaseVersion } from './lib/release-version';
   import { focusDialog } from './lib/focus';
   import Agents from './components/modals/Agents.svelte';
+  import BrowserRequest from './components/modals/BrowserRequest.svelte';
   import Changelog from './components/modals/Changelog.svelte';
+  import CloseFailure from './components/modals/CloseFailure.svelte';
   import CloseNative from './components/modals/CloseNative.svelte';
   import CloseTerminal from './components/modals/CloseTerminal.svelte';
   import CommandDialog from './components/modals/CommandDialog.svelte';
@@ -182,6 +184,7 @@
   import DestroySession from './components/modals/DestroySession.svelte';
   import HostColors from './components/modals/HostColors.svelte';
   import HostForm from './components/modals/HostForm.svelte';
+  import HostlessConnect from './components/modals/HostlessConnect.svelte';
   import Launch from './components/modals/Launch.svelte';
   import ListenIntro from './components/modals/ListenIntro.svelte';
   import NewSession from './components/modals/NewSession.svelte';
@@ -193,6 +196,7 @@
   import Repos from './components/modals/Repos.svelte';
   import Sessions from './components/modals/Sessions.svelte';
   import TerminalHostConnection from './components/modals/TerminalHostConnection.svelte';
+  import UpdatePrompt from './components/modals/UpdatePrompt.svelte';
   import VoiceSetup from './components/modals/VoiceSetup.svelte';
   import WorkspaceOptions from './components/modals/WorkspaceOptions.svelte';
   import Worktree from './components/modals/Worktree.svelte';
@@ -4853,37 +4857,7 @@
       tabindex="-1"
       use:focusDialog
     >
-      <h2>{hostlessConnect.name}</h2>
-      <p>
-        {hostlessNeeds.required.length
-          ? `Connect to ${hostlessNeeds.required.length} hosts to open this group's terminals?`
-          : 'Some hosts need to be set up on this device.'}
-      </p>
-      {#each hostlessNeeds.required as required}<p>{required.name}</p>{/each}
-      {#if hostlessNeeds.missing.length}<p class="hint">
-          Add these hosts with their original user and tmux socket: {hostlessNeeds.missing.join(
-            ', ',
-          )}.
-        </p>{/if}
-      <div class="row">
-        {#if hostlessNeeds.required.length}<button
-            class="primary"
-            onclick={() => {
-              const hosts = hostlessNeeds!.required;
-              hostlessConnect = null;
-              void task(async () => {
-                await Promise.all(hosts.map((h) => connect(h)));
-              });
-            }}>Connect to {hostlessNeeds.required.length} hosts</button
-          >{/if}
-        {#if hostlessNeeds.missing.length}<button
-            onclick={() => {
-              hostlessConnect = null;
-              addHost();
-            }}>Add host</button
-          >{/if}
-        <button onclick={() => (hostlessConnect = null)}>Keep disconnected</button>
-      </div>
+      <HostlessConnect {addHost} {connect} bind:hostlessConnect {hostlessNeeds} {task} />
     </div>
   </div>
 {/if}
@@ -5360,43 +5334,21 @@
       tabindex="-1"
       use:focusDialog
     >
-      <h2>
-        {availableUpdate
-          ? `DazeDev ${releaseVersion(availableUpdate.version)} is available`
-          : 'DazeDev updates'}
-      </h2>
-      <p class="hint">
-        Installed: {releaseVersion(clientInfo.version)}.{availableUpdate
-          ? ` Download: ${(availableUpdate.size / 1000000).toFixed(1)} MB.`
-          : ''}
-      </p>
-      <button disabled={updateState === 'installing'} onclick={() => showChangelog('')}
-        >Changelog</button
-      >
-      {#if availableUpdate}<p class="hint">
-          The app restarts after updating. Your settings, models and remote tmux sessions are
-          preserved.
-        </p>{/if}
-      {#if !desktop || !clientInfo.updateSupported}<p class="hint">
-          Download updates manually for this platform.
-        </p>{/if}
-      <p role="status">
-        {updateStatus || updateLabel}{updateState === 'installing' ? ` ${updateProgress}%` : ''}
-      </p>
-      <div class="form-row">
-        <button disabled={updateState === 'installing'} onclick={closeUpdates}
-          >{availableUpdate ? 'Later' : 'Close'}</button
-        >
-        {#if desktop && clientInfo.updateSupported}<button
-            disabled={updateBusy}
-            onclick={() => void checkUpdates()}>Check again</button
-          >{/if}
-        {#if availableUpdate}<button
-            class="primary"
-            disabled={updateBusy || voiceStatus !== 'idle' || busy}
-            onclick={() => void installUpdate()}>Download &amp; restart</button
-          >{/if}
-      </div>
+      <UpdatePrompt
+        {availableUpdate}
+        {busy}
+        {checkUpdates}
+        {clientInfo}
+        {closeUpdates}
+        {installUpdate}
+        {showChangelog}
+        {updateBusy}
+        {updateLabel}
+        {updateProgress}
+        {updateState}
+        {updateStatus}
+        {voiceStatus}
+      />
     </div>
   </div>
 {/if}
@@ -5459,16 +5411,7 @@
       tabindex="-1"
       use:focusDialog
     >
-      <h2 id="close-failure-title">DazeDev could not check everything before closing</h2>
-      <p class="inline-error">{closeFailure}</p>
-      <p class="hint">
-        Close anyway ends this window now. Remote tmux sessions keep running; local PowerShell
-        sessions may be left in the background.
-      </p>
-      <div class="row">
-        <button class="danger" onclick={() => void task(closeAnyway)}>Close anyway</button>
-        <button onclick={() => (closeFailure = '')}>Cancel</button>
-      </div>
+      <CloseFailure {closeAnyway} bind:closeFailure {task} />
     </div>
   </div>
 {/if}
@@ -5483,23 +5426,13 @@
       tabindex="-1"
       use:focusDialog={{ key: browserRequest.requestId }}
     >
-      <h2 id="browser-request-title">
-        {device.hosts.find((h) => h.id === browserRequest.hostId)?.name || 'A connected host'} wants
-        to open
-      </h2>
-      <p id="browser-request-url" class="browser-request-url"><code>{browserRequest.url}</code></p>
-      <label class="check"
-        ><input type="checkbox" bind:checked={browserTrust} /> Allow links from this host until
-        DazeDev restarts</label
-      >
-      {#if browserRequests.length > 1}<p class="hint">
-          {browserRequests.length - 1} more {browserRequests.length === 2 ? 'request' : 'requests'}
-          waiting.
-        </p>{/if}
-      <div class="row">
-        <button class="primary" onclick={() => void decideBrowserRequest(true)}>Open</button>
-        <button onclick={() => void decideBrowserRequest(false)}>Don't open</button>
-      </div>
+      <BrowserRequest
+        {browserRequest}
+        {browserRequests}
+        bind:browserTrust
+        {decideBrowserRequest}
+        {device}
+      />
     </div>
   </div>
 {/if}
