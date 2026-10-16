@@ -22,4 +22,6 @@ Updates: the app checks public `android/v*` GitHub releases once a day. Download
 
 Built with AndroidX/Compose, JSch, xterm.js and Moonshine. Full notices are available offline in Licenses and credits.
 
+Device tests for the terminal: `TerminalBridgeDeviceTest` checks the WebView message channel in both directions, drag-to-wheel routing with and without tmux mouse tracking, the extra keys (Esc, one-shot Ctrl) and keyboard text through the WebView input connection. Run `./gradlew connectedDebugAndroidTest` with a phone or emulator attached; the local check only compiles them (`assembleDebugAndroidTest`).
+
 Device-only voice tests never download models. Build `./gradlew assembleDebugAndroidTest`, install the debug app and test APK, then run `MoonshineDeviceTest#modelManifest` with AndroidJUnitRunner to inspect the pinned runtime's download manifest. After separately preparing and verifying the model, run `MoonshineDeviceTest#offlineInferenceWithExplicitlyStagedFixture` with `modelDirectory` and `pcmFixture` arguments. The fixture must be at most ten seconds of 16 kHz mono signed 16-bit PCM; optional `expectedPhrase` checks its transcription. Disable device networking to verify installed inference. The result records load/inference times and final PSS, not a thermal or peak-memory qualification.
