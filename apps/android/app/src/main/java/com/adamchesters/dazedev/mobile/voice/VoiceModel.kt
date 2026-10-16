@@ -15,7 +15,9 @@ import java.io.File
 internal object VoiceModel {
     interface Listener {
         fun text(value: String)
+
         fun line(value: String)
+
         fun error(error: Throwable)
     }
 
@@ -23,15 +25,20 @@ internal object VoiceModel {
     private var loaded: MicTranscriber? = null
     private var callbacks: ComponentCallbacks2? = null
 
-    @Synchronized fun acquire(context: Context, directory: File): MicTranscriber {
+    @Synchronized fun acquire(
+        context: Context,
+        directory: File,
+    ): MicTranscriber {
         loaded?.let { return it }
         val app = context.applicationContext
-        val capture = MicTranscriber(app).language("en")
-            .modelArch(JNI.MOONSHINE_MODEL_ARCH_MEDIUM_STREAMING)
-            .callbacksOnMainThread(false)
-            .onText { listener?.text(it) }
-            .onLine { listener?.line(it.text.orEmpty()) }
-            .onError { listener?.error(it) }
+        val capture =
+            MicTranscriber(app)
+                .language("en")
+                .modelArch(JNI.MOONSHINE_MODEL_ARCH_MEDIUM_STREAMING)
+                .callbacksOnMainThread(false)
+                .onText { listener?.text(it) }
+                .onLine { listener?.line(it.text.orEmpty()) }
+                .onError { listener?.error(it) }
         try {
             capture.loadFromFiles(directory.absolutePath, JNI.MOONSHINE_MODEL_ARCH_MEDIUM_STREAMING)
         } catch (error: Throwable) {
@@ -39,15 +46,20 @@ internal object VoiceModel {
             throw error
         }
         loaded = capture
-        if (callbacks == null) callbacks = object : ComponentCallbacks2 {
-            override fun onTrimMemory(level: Int) {
-                @Suppress("DEPRECATION")
-                if (level >= ComponentCallbacks2.TRIM_MEMORY_RUNNING_LOW) releaseIfIdle()
-            }
-            override fun onConfigurationChanged(newConfig: Configuration) = Unit
-            @Deprecated("Deprecated in Java")
-            override fun onLowMemory() = releaseIfIdle()
-        }.also(app::registerComponentCallbacks)
+        if (callbacks == null) {
+            callbacks =
+                object : ComponentCallbacks2 {
+                    override fun onTrimMemory(level: Int) {
+                        @Suppress("DEPRECATION")
+                        if (level >= ComponentCallbacks2.TRIM_MEMORY_RUNNING_LOW) releaseIfIdle()
+                    }
+
+                    override fun onConfigurationChanged(newConfig: Configuration) = Unit
+
+                    @Deprecated("Deprecated in Java")
+                    override fun onLowMemory() = releaseIfIdle()
+                }.also(app::registerComponentCallbacks)
+        }
         return capture
     }
 

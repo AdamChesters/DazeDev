@@ -18,9 +18,9 @@ class ShellQuoterTest {
     fun quotesEmptyText() {
         assertEquals("''", ShellQuoter.quote(""))
     }
+
     @Test(expected = IllegalArgumentException::class)
     fun rejectsNullBytes() {
         ShellQuoter.quote("command\u0000suffix")
     }
-
 }

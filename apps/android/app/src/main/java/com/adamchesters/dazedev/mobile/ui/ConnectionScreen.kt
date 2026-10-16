@@ -49,6 +49,7 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import com.adamchesters.dazedev.mobile.data.AuthMethod
 import com.adamchesters.dazedev.mobile.data.ConnectionProfile
+import com.adamchesters.dazedev.mobile.host.ConnectionPhase
 
 @Composable
 fun ConnectionScreen(
@@ -57,25 +58,28 @@ fun ConnectionScreen(
     onPickPrivateKey: () -> Unit,
     onConnect: (ConnectionProfile, String) -> Unit,
     onCancel: () -> Unit,
+    onRemove: () -> Unit = {},
 ) {
     val savedProfile = uiState.profile
     var host by rememberSaveable(savedProfile.id) { mutableStateOf(savedProfile.host) }
-    var socket by rememberSaveable(savedProfile.id) {mutableStateOf(savedProfile.socket)}
-    var hostName by rememberSaveable(savedProfile.id) {mutableStateOf(savedProfile.name)}
+    var socket by rememberSaveable(savedProfile.id) { mutableStateOf(savedProfile.socket) }
+    var hostName by rememberSaveable(savedProfile.id) { mutableStateOf(savedProfile.name) }
     var port by rememberSaveable(savedProfile.id) { mutableStateOf(savedProfile.port.toString()) }
     var username by rememberSaveable(savedProfile.id) { mutableStateOf(savedProfile.username) }
     var authMethod by rememberSaveable(savedProfile.id) { mutableStateOf(savedProfile.authMethod) }
     var secret by remember(savedProfile.id) { mutableStateOf("") }
+    var rememberPassphrase by rememberSaveable(savedProfile.id) { mutableStateOf(savedProfile.rememberPassphrase) }
     var formError by remember { mutableStateOf<String?>(null) }
     val isConnecting = uiState.connectionPhase == ConnectionPhase.Connecting
 
     Column(
-        modifier = Modifier
-            .fillMaxSize()
-            .padding(contentPadding)
-            .imePadding()
-            .verticalScroll(rememberScrollState())
-            .padding(horizontal = 20.dp, vertical = 24.dp),
+        modifier =
+            Modifier
+                .fillMaxSize()
+                .padding(contentPadding)
+                .imePadding()
+                .verticalScroll(rememberScrollState())
+                .padding(horizontal = 20.dp, vertical = 24.dp),
         horizontalAlignment = Alignment.CenterHorizontally,
     ) {
         Surface(
@@ -104,30 +108,31 @@ fun ConnectionScreen(
             color = MaterialTheme.colorScheme.onSurfaceVariant,
         )
 
-        uiState.linkError?.let {reason->
+        uiState.linkError?.let { reason ->
             Spacer(Modifier.height(16.dp))
-            Surface(color=MaterialTheme.colorScheme.errorContainer,shape=RoundedCornerShape(16.dp),modifier=Modifier.fillMaxWidth()) {
-                Column(Modifier.padding(16.dp),verticalArrangement=Arrangement.spacedBy(6.dp)) {
-                    Text("Disconnected",style=MaterialTheme.typography.titleMedium,color=MaterialTheme.colorScheme.onErrorContainer)
-                    Text("$reason Connect again to reconnect.",color=MaterialTheme.colorScheme.onErrorContainer)
+            Surface(color = MaterialTheme.colorScheme.errorContainer, shape = RoundedCornerShape(16.dp), modifier = Modifier.fillMaxWidth()) {
+                Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
+                    Text("Disconnected", style = MaterialTheme.typography.titleMedium, color = MaterialTheme.colorScheme.onErrorContainer)
+                    Text("$reason Connect again to reconnect.", color = MaterialTheme.colorScheme.onErrorContainer)
                 }
             }
         }
-        uiState.pendingTerminalConnection?.let {pending->
+        uiState.pendingTerminalConnection?.let { pending ->
             Spacer(Modifier.height(16.dp))
-            Surface(color=MaterialTheme.colorScheme.secondaryContainer,shape=RoundedCornerShape(16.dp),modifier=Modifier.fillMaxWidth()) {
-                Column(Modifier.padding(16.dp),verticalArrangement=Arrangement.spacedBy(6.dp)) {
-                    Text("Terminal on another host",style=MaterialTheme.typography.titleMedium,color=MaterialTheme.colorScheme.onSecondaryContainer)
-                    Text(pending.row.name,style=MaterialTheme.typography.bodyLarge,color=MaterialTheme.colorScheme.onSecondaryContainer)
-                    Text(if(savedProfile.host.isBlank()) "Its SSH address is not saved in this workspace. Enter the address and choose how to sign in." else "Connect to ${savedProfile.username}@${savedProfile.host}. The saved terminal opens after its host identity is verified.",color=MaterialTheme.colorScheme.onSecondaryContainer)
+            Surface(color = MaterialTheme.colorScheme.secondaryContainer, shape = RoundedCornerShape(16.dp), modifier = Modifier.fillMaxWidth()) {
+                Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
+                    Text("Terminal on another host", style = MaterialTheme.typography.titleMedium, color = MaterialTheme.colorScheme.onSecondaryContainer)
+                    Text(pending.row.name, style = MaterialTheme.typography.bodyLarge, color = MaterialTheme.colorScheme.onSecondaryContainer)
+                    Text(if (savedProfile.host.isBlank()) "Its SSH address is not saved in this workspace. Enter the address and choose how to sign in." else "Connect to ${savedProfile.username}@${savedProfile.host}. The saved terminal opens after its host identity is verified.", color = MaterialTheme.colorScheme.onSecondaryContainer)
                 }
             }
         }
         Spacer(Modifier.height(28.dp))
         Card(
-            modifier = Modifier
-                .widthIn(max = 600.dp)
-                .fillMaxWidth(),
+            modifier =
+                Modifier
+                    .widthIn(max = 600.dp)
+                    .fillMaxWidth(),
             colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface),
         ) {
             Column(
@@ -139,9 +144,9 @@ fun ConnectionScreen(
                     style = MaterialTheme.typography.titleLarge,
                 )
 
-                OutlinedTextField(value=hostName,onValueChange={hostName=it},label={Text("Host name (optional)")},singleLine=true,modifier=Modifier.fillMaxWidth())
-            OutlinedTextField(value=socket,onValueChange={socket=it},label={Text("tmux socket (optional)")},singleLine=true,modifier=Modifier.fillMaxWidth())
-            OutlinedTextField(
+                OutlinedTextField(value = hostName, onValueChange = { hostName = it }, label = { Text("Host name (optional)") }, singleLine = true, modifier = Modifier.fillMaxWidth())
+                OutlinedTextField(value = socket, onValueChange = { socket = it }, label = { Text("tmux socket (optional)") }, singleLine = true, modifier = Modifier.fillMaxWidth())
+                OutlinedTextField(
                     value = host,
                     onValueChange = { host = it },
                     label = { Text("SSH host") },
@@ -239,9 +244,10 @@ fun ConnectionScreen(
                     OutlinedButton(
                         onClick = onPickPrivateKey,
                         enabled = !isConnecting,
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .height(52.dp),
+                        modifier =
+                            Modifier
+                                .fillMaxWidth()
+                                .height(52.dp),
                     ) {
                         Icon(Icons.Rounded.Key, contentDescription = null)
                         Spacer(Modifier.size(8.dp))
@@ -273,6 +279,7 @@ fun ConnectionScreen(
                         modifier = Modifier.fillMaxWidth(),
                     )
                 }
+                if (authMethod == AuthMethod.PrivateKey) RememberPassphraseRow(rememberPassphrase, !isConnecting) { rememberPassphrase = it }
 
                 formError?.let { error ->
                     Text(
@@ -284,27 +291,32 @@ fun ConnectionScreen(
 
                 Button(
                     onClick = {
-                        val candidate = savedProfile.copy(
-                            host = host,
-                        name = hostName,
-                        socket = socket,
-                            port = port.toIntOrNull() ?: 0,
-                            username = username,
-                            authMethod = authMethod,
-                        )
-                        formError = candidate.copy(
-                            host = candidate.host.trim(),
-                            username = candidate.username.trim(),
-                        ).validationError(secret)
+                        val candidate =
+                            savedProfile.copy(
+                                host = host,
+                                name = hostName,
+                                socket = socket,
+                                port = port.toIntOrNull() ?: 0,
+                                username = username,
+                                authMethod = authMethod,
+                                rememberPassphrase = rememberPassphrase && authMethod == AuthMethod.PrivateKey,
+                            )
+                        formError =
+                            candidate
+                                .copy(
+                                    host = candidate.host.trim(),
+                                    username = candidate.username.trim(),
+                                ).validationError(secret)
                         if (formError == null) {
                             onConnect(candidate, secret)
                             secret = ""
                         }
                     },
                     enabled = !isConnecting,
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .height(54.dp),
+                    modifier =
+                        Modifier
+                            .fillMaxWidth()
+                            .height(54.dp),
                 ) {
                     if (isConnecting) {
                         CircularProgressIndicator(
@@ -323,13 +335,17 @@ fun ConnectionScreen(
 
         Spacer(Modifier.height(18.dp))
         Text(
-            text = "Connect over a reachable LAN, VPN, or internet connection. DazeDev Mobile verifies SSH host keys and never saves passwords or passphrases. Keys stay in the selected document provider; its storage and sync policy and your key passphrase protect them.",
+            text = "Connect over a reachable LAN, VPN, or internet connection. DazeDev Mobile verifies SSH host keys. A chosen private key is copied into this app's private storage, encrypted with a key kept in Android Keystore. Passwords are never saved; a key passphrase is saved, encrypted the same way, only if you choose to remember it.",
             style = MaterialTheme.typography.bodyMedium,
             color = MaterialTheme.colorScheme.onSurfaceVariant,
-            modifier = Modifier
-                .widthIn(max = 600.dp)
-                .fillMaxWidth(),
+            modifier =
+                Modifier
+                    .widthIn(max = 600.dp)
+                    .fillMaxWidth(),
         )
-        if(isConnecting)OutlinedButton(onClick=onCancel){Text("Cancel connection")}
+        if (isConnecting) OutlinedButton(onClick = onCancel) { Text("Cancel connection") }
+        if (!isConnecting && uiState.pendingTerminalConnection == null && uiState.groupConnectionHost == null && uiState.hosts.any { it.profile.id == savedProfile.id }) {
+            RemoveHostButton(savedProfile.name.ifBlank { savedProfile.host }, onRemove)
+        }
     }
 }

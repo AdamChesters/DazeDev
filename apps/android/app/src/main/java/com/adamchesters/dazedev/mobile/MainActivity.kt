@@ -5,8 +5,8 @@ import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
 import androidx.activity.enableEdgeToEdge
 import androidx.lifecycle.viewmodel.compose.viewModel
-import com.adamchesters.dazedev.mobile.ui.MainViewModel
 import com.adamchesters.dazedev.mobile.ui.DazeDevMobileApp
+import com.adamchesters.dazedev.mobile.ui.MainViewModel
 import com.adamchesters.dazedev.mobile.ui.theme.DazeDevMobileTheme
 
 class MainActivity : ComponentActivity() {

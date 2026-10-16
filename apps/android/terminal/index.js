@@ -162,20 +162,49 @@ function updateMods() {
 const drawer = document.getElementById("keys");
 const quick = document.getElementById("quick");
 const container = document.getElementById("terminal");
+const shownArea = document.getElementById("viewport");
 let nativeViewport = null;
+// The size the terminal is fitted to. An on-screen keyboard only covers the bottom of the
+// view, so it keeps this size (other devices do not resize) and the view scrolls instead.
+let stable = null;
+let cursorOffset = 0;
 function layout() {
   const width = nativeViewport?.width ?? innerWidth;
-  const height = nativeViewport?.height ?? innerHeight;
+  const visible = nativeViewport?.height ?? innerHeight;
+  const keyboardOnly =
+    nativeViewport?.keyboard && stable && stable.width === width && visible < stable.height;
+  if (!keyboardOnly) stable = { width, height: visible };
   document.documentElement.style.width = `${width}px`;
-  document.documentElement.style.height = `${height}px`;
+  document.documentElement.style.height = `${visible}px`;
   document.body.style.width = `${width}px`;
-  document.body.style.height = `${height}px`;
-  drawer.style.maxHeight = `${height * 0.4}px`;
+  document.body.style.height = `${visible}px`;
+  drawer.style.maxHeight = `${visible * 0.4}px`;
   const keysHeight = drawer.hidden ? 0 : Math.ceil(drawer.getBoundingClientRect().height);
   const quickHeight = quick.hidden ? 0 : Math.ceil(quick.getBoundingClientRect().height);
-  container.style.height = `${Math.max(0, height - keysHeight - quickHeight)}px`;
-  requestAnimationFrame(() => fit.fit());
+  container.style.height = `${Math.max(0, stable.height - keysHeight - quickHeight)}px`;
+  shownArea.style.height = `${Math.max(0, visible - keysHeight - quickHeight)}px`;
+  requestAnimationFrame(() => {
+    fit.fit();
+    followCursor();
+  });
 }
+// Keeps the cursor row inside the part of the terminal the keyboard leaves visible.
+function followCursor() {
+  const shown = shownArea.clientHeight;
+  const total = container.clientHeight;
+  if (shown >= total || term.rows < 1) cursorOffset = 0;
+  else {
+    const screen = container.querySelector(".xterm-screen");
+    const rowHeight = (screen?.getBoundingClientRect().height || total) / term.rows;
+    const top = 4 + term.buffer.active.cursorY * rowHeight;
+    const bottom = top + rowHeight + 4;
+    if (bottom > cursorOffset + shown) cursorOffset = bottom - shown;
+    if (top < cursorOffset) cursorOffset = top;
+    cursorOffset = Math.max(0, Math.min(total - shown, cursorOffset));
+  }
+  container.style.transform = cursorOffset ? `translateY(${-cursorOffset}px)` : "";
+}
+term.onCursorMove(followCursor);
 addEventListener("resize", layout);
 new ResizeObserver(layout).observe(drawer);
 const heldModifiers = new Set(),
@@ -385,9 +414,13 @@ window.daze = {
     term.options.fontSize = Math.min(28, Math.max(14, 14 * scale));
     fit.fit();
   },
-  viewport: (width, height) => {
+  viewport: (width, height, keyboard) => {
     // Android may lay out the WebView after its first document measurement.
-    nativeViewport = {width: width / devicePixelRatio, height: height / devicePixelRatio};
+    nativeViewport = {
+      width: width / devicePixelRatio,
+      height: height / devicePixelRatio,
+      keyboard: !!keyboard,
+    };
     layout();
   },
   dispose: () => {

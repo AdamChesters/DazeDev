@@ -1,12 +1,12 @@
 package com.adamchesters.dazedev.mobile.ssh
 
+import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.StateFlow
+import kotlinx.coroutines.flow.asStateFlow
 import java.util.concurrent.CompletableFuture
 import java.util.concurrent.TimeUnit
 import java.util.concurrent.atomic.AtomicLong
 import java.util.concurrent.atomic.AtomicReference
-import kotlinx.coroutines.flow.MutableStateFlow
-import kotlinx.coroutines.flow.StateFlow
-import kotlinx.coroutines.flow.asStateFlow
 
 data class HostKeyChallenge(
     val id: Long,
@@ -26,10 +26,11 @@ class HostKeyPromptCoordinator {
     val challenge: StateFlow<HostKeyChallenge?> = _challenge.asStateFlow()
 
     fun request(message: String): Boolean {
-        val request = PendingChallenge(
-            challenge = HostKeyChallenge(nextId.getAndIncrement(), message),
-            answer = CompletableFuture(),
-        )
+        val request =
+            PendingChallenge(
+                challenge = HostKeyChallenge(nextId.getAndIncrement(), message),
+                answer = CompletableFuture(),
+            )
 
         if (!pending.compareAndSet(null, request)) {
             return false
@@ -48,7 +49,10 @@ class HostKeyPromptCoordinator {
         }
     }
 
-    fun answer(challengeId: Long, trust: Boolean) {
+    fun answer(
+        challengeId: Long,
+        trust: Boolean,
+    ) {
         val request = pending.get() ?: return
         if (request.challenge.id != challengeId) return
 
