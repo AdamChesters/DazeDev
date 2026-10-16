@@ -61,6 +61,7 @@ class SshConnection(
         require(profile.validationError(secret) == null) { "Invalid SSH connection profile." }
         disconnectNow()
         prepareKnownHostsFile()
+        JschAlgorithms.install()
 
         val guard: GuardedHostKeys
         val nextJsch = JSch().apply {
@@ -230,5 +231,15 @@ class SshConnection(
         const val COMMAND_TIMEOUT_MS = 15_000L
         const val SERVER_ALIVE_INTERVAL_MS = 15_000
         const val SERVER_ALIVE_COUNT_MAX = 3
+    }
+}
+
+/** Android has no Java 15 EdDSA or XDH, so JSch must use Bouncy Castle. JVM tests use the same classes. */
+private object JschAlgorithms {
+    fun install() {
+        JSch.setConfig("ssh-ed25519", "com.jcraft.jsch.bc.SignatureEd25519")
+        JSch.setConfig("ssh-ed448", "com.jcraft.jsch.bc.SignatureEd448")
+        JSch.setConfig("keypairgen.eddsa", "com.jcraft.jsch.bc.KeyPairGenEdDSA")
+        JSch.setConfig("xdh", "com.jcraft.jsch.bc.XDH")
     }
 }

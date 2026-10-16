@@ -8,6 +8,15 @@ p.mkdir(parents=True, exist_ok=True)
 server_key=paramiko.RSAKey.generate(2048)
 client_key=paramiko.RSAKey.generate(2048)
 client_key.write_private_key_file(str(p/'fixture-key.pem'),password='fixture-passphrase')
+# Ed25519 client and host keys check the Bouncy Castle path JSch uses on Android.
+from cryptography.hazmat.primitives import serialization
+from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey
+def ed25519(path,password):
+ raw=Ed25519PrivateKey.generate().private_bytes(serialization.Encoding.PEM,serialization.PrivateFormat.OpenSSH,serialization.BestAvailableEncryption(password.encode()) if password else serialization.NoEncryption())
+ path.write_bytes(raw);path.chmod(0o600)
+ return paramiko.Ed25519Key(filename=str(path),password=password or None)
+ed_client_key=ed25519(p/'fixture-ed25519.pem','fixture-passphrase')
+ed_server_key=ed25519(p/'host-ed25519.pem',None)
 (p/'fixture-key.pem').chmod(0o600)
 events=[]
 fixture_socket='dazedev-fixture-'+str(os.getpid())
@@ -38,7 +47,7 @@ class Server(paramiko.ServerInterface):
   if options.real_host:return paramiko.AUTH_FAILED
   return paramiko.AUTH_SUCCESSFUL if u=='password-user' and password=='fixture-password' else paramiko.AUTH_FAILED
  def check_auth_publickey(self,u,k):
-  events.append([u,'publickey']);return paramiko.AUTH_SUCCESSFUL if u=='key-user' and k==client_key else paramiko.AUTH_FAILED
+  events.append([u,'publickey']);return paramiko.AUTH_SUCCESSFUL if (u=='key-user' and k==client_key) or (u=='ed-user' and k==ed_client_key) else paramiko.AUTH_FAILED
  def check_channel_request(self,k,i):return paramiko.OPEN_SUCCEEDED if k=='session' else paramiko.OPEN_FAILED_ADMINISTRATIVELY_PROHIBITED
  def check_channel_pty_request(self,c,term,width,height,pixelwidth,pixelheight,modes):
   self.pty_requests[c.get_id()]=((width,height),term.decode());return options.real_host
@@ -111,7 +120,9 @@ def serve(s):
   def handle(conn):
    t=paramiko.Transport(conn)
    try:
-    t.add_server_key(server_key);t.start_server(server=Server())
+    t.add_server_key(server_key)
+    if not options.real_host:t.add_server_key(ed_server_key)
+    t.start_server(server=Server())
     while t.is_active():time.sleep(.05)
    except Exception:pass
    finally:t.close();(p/'ssh-events.json').write_text(json.dumps(events))

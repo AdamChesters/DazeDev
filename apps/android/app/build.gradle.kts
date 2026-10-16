@@ -75,6 +75,9 @@ dependencies {
     implementation("androidx.compose.material:material-icons-extended")
     implementation("org.jetbrains.kotlinx:kotlinx-coroutines-android:1.11.0")
     implementation("com.github.mwiede:jsch:2.28.7")
+    // JSch on Android needs Bouncy Castle for Ed25519, X25519 and ChaCha20 on every API level.
+    implementation("org.bouncycastle:bcprov-jdk18on:1.86")
+    implementation("androidx.webkit:webkit:1.17.1")
     implementation("ai.moonshine:moonshine-voice:0.1.5")
 
     testImplementation("junit:junit:4.13.2")
