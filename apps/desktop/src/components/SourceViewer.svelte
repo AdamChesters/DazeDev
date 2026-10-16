@@ -21,9 +21,11 @@
     let model: editor.ITextModel | undefined;
     let subscription: { dispose(): void } | undefined;
     void import('../lib/monaco')
-      .then(({ monaco, languageForPath }) => {
+      .then(async ({ monaco, languageForPath, loadLanguage }) => {
+        const language = languageForPath(path);
+        await loadLanguage(language);
         if (disposed) return;
-        model = monaco.editor.createModel(value, languageForPath(path));
+        model = monaco.editor.createModel(value, language);
         instance = monaco.editor.create(container, {
           model,
           readOnly: readonly,
