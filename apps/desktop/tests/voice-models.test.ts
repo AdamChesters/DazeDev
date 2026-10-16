@@ -28,7 +28,6 @@ function setup(list: ModelInfo[], overrides: Partial<VoiceModelsDeps> = {}) {
     device: () => device,
     voiceStatus: () => 'idle',
     persist: vi.fn(),
-    resetBackend: vi.fn(),
     notice: vi.fn(),
     fail: vi.fn(),
     mediaDevices: () => undefined,
@@ -107,7 +106,6 @@ describe('VoiceModels', () => {
       'voice_cache',
     ]);
     expect(device.voice.model).toBe('whisper');
-    expect(deps.resetBackend).toHaveBeenCalled();
     expect(deps.persist).toHaveBeenCalled();
     expect(voice.switching).toBe(false);
   });

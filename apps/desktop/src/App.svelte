@@ -2,46 +2,20 @@
   import TerminalSearch from './components/TerminalSearch.svelte';
   import type { SearchTarget, SearchHit, SearchNavigation } from './lib/terminal-search';
   import type { WindowTerminalState } from './lib/terminal-window';
-  import { MixedHostRecovery, type HostRecovery } from './lib/mixed-host-recovery';
-  import { refreshHostIdentity } from './lib/host-identity';
   import PinSettings from './components/PinSettings.svelte';
   import TerminalActionMenu from './components/TerminalActionMenu.svelte';
-  import type { TerminalMenuItem } from './lib/terminal-menu';
   import BroadcastDialog from './components/BroadcastDialog.svelte';
-  import {
-    snapshotBroadcast,
-    broadcastRevision,
-    createBroadcastDelivery,
-    type BroadcastSnapshot,
-  } from './lib/broadcast';
-  import { voiceDestination, type CaptureMode } from './lib/voice-routing';
   import DictionarySettings from './components/DictionarySettings.svelte';
-  import { dictionaryState, startDictionarySync } from './lib/dictionary-store';
-  import { applyFinalDictionary } from './lib/dictionary';
-  let dictionarySelection = $state<string | null>(null);
-
+  import { startDictionarySync } from './lib/dictionary-store';
   import PaneActions from './components/PaneActions.svelte';
   import { needsChangelog } from './lib/repositories';
   import FilesDialog from './components/FilesDialog.svelte';
   import ViewerWindow from './components/ViewerWindow.svelte';
   import Licenses from './components/Licenses.svelte';
-  import {
-    hostLabel,
-    terminalPresentation,
-    unknownStatus,
-    type PaneStatus,
-  } from './lib/pane-status';
-  import { diagnostic } from './lib/diagnostics';
-  import { onMount, tick, untrack } from 'svelte';
+  import { hostLabel, terminalPresentation, unknownStatus } from './lib/pane-status';
+  import { onMount, tick } from 'svelte';
   import { AlertThrottle } from './lib/terminal-alerts';
   import {
-    migrateClipboardPolicy,
-    paneContainers,
-    pruneKeys,
-    prunePaneChoices,
-  } from './lib/device-state';
-  import {
-    appActions,
     appActionFor,
     appShortcut,
     shortcutConflict,
@@ -77,9 +51,8 @@
     Palette,
     Upload,
   } from '@lucide/svelte';
-  import { defaultPrompt, renderPrompt, type PromptValues } from './lib/prompt';
-  import { terminals, terminalDefaults, deliverDictation } from './lib/terminals';
-  import { tabColors, retainedPaneColors } from './lib/colors';
+  import { terminals, terminalDefaults } from './lib/terminals';
+  import { tabColors } from './lib/colors';
   import TmuxSettings from './components/TmuxSettings.svelte';
   import Brand from './components/Brand.svelte';
   import SupportDialog from '../donate/SupportDialog.svelte';
@@ -88,7 +61,6 @@
   import {
     defaultShortcut,
     defaultCommandShortcut,
-    sameShortcut,
     mouseMatches,
     keyboardShortcut,
     matches,
@@ -102,60 +74,32 @@
     type Host,
     type Pane,
     type Workspace,
-    type Layout,
-    type Device,
     type Profile,
-    type Inventory,
     type Session,
-    defaults,
     blankProfile,
     uid,
   } from './lib/types';
-  import {
-    tile,
-    split,
-    remove,
-    resize,
-    swap,
-    rebindOwner,
-    columns,
-    balanced,
-    rectangles,
-    insertAt,
-    dropZone,
-    ids,
-    type Edge,
-  } from './lib/layout';
-  import {
-    createNativeTerminalPane,
-    selectPanes,
-    removePanes,
-    insertPaneStack,
-    reorderWorkspaces,
-  } from './lib/pane-transfer';
-  import { terminalProjection, reconcileViewerLayout } from './lib/viewer-layout';
-  import { HOSTLESS, workspaceHosts } from './lib/workspace-groups';
-  import { ReviewHotkey } from './lib/review-hotkey';
-  import {
-    cleanTabGroups,
-    terminalTabs,
-    tabLayout,
-    retainTabPanes,
-    tabSelections,
-  } from './lib/terminal-tabs';
+  import { resize, balanced, columns, ids } from './lib/layout';
+  import { reorderWorkspaces } from './lib/pane-transfer';
+  import { HOSTLESS } from './lib/workspace-groups';
+  import { terminalTabs } from './lib/terminal-tabs';
   import { call, on, rpc, desktop } from './lib/bridge';
-  import { parseCommand, type Action } from './lib/commands';
-  import { reviewCommand, consumeReview, type CommandReview } from './lib/command-review';
   import { pollUpdates, canPresentUpdate } from './lib/update-checks';
   import { Updates, type UpdateInfo } from './lib/state/updates.svelte';
   import { version as appVersion } from '../package.json';
-  import { Capture } from './lib/audio';
   import { VoiceCaptureKeys } from './lib/voice-capture-keys';
-  import { RecordingTail } from './lib/recording-tail';
   import { voiceStackReady } from './lib/voice-setup';
   import { changelog, mergeChangelog, type ReleaseEntry } from './lib/changelog';
   import { releaseVersion } from './lib/release-version';
   import { focusDialog } from './lib/focus';
+  import type { App } from './lib/state/app';
+  import { Shell, hostDefaults } from './lib/state/shell.svelte';
+  import { Panes } from './lib/state/panes.svelte';
+  import { Profiles, type DeviceFile } from './lib/state/profiles.svelte';
+  import { Sessions as Launcher } from './lib/state/sessions.svelte';
+  import { Dictation } from './lib/state/dictation.svelte';
+  import { Commands } from './lib/state/commands.svelte';
+  import { Broadcast } from './lib/state/broadcast.svelte';
   import { DeviceStore } from './lib/state/device-store.svelte';
   import { VoiceModels } from './lib/state/voice.svelte';
   import { Connections } from './lib/state/connections.svelte';
@@ -195,60 +139,58 @@
   import UpdatesSection from './components/modals/settings/UpdatesSection.svelte';
   import VoiceHotkeysSection from './components/modals/settings/VoiceHotkeysSection.svelte';
   import VoiceModelsSection from './components/modals/settings/VoiceModelsSection.svelte';
-  let device = $state<Device>({
-      ...defaults(),
-      inputMode: 'toggle',
-      highlightMotion: 'animate',
-      terminal: { ...terminalDefaults },
-    }),
-    profiles = $state<Record<string, Profile>>({}),
-    inventories = $state<Record<string, Inventory>>({}),
-    terminalState = $state<Record<string, string>>({});
-  const net = new Connections({
+
+  // State lives in the modules under lib/state; see lib/state/app.ts.
+  const app = { appHasFocus } as App;
+  const ui = (app.ui = new Shell());
+  const panes = (app.panes = new Panes(app));
+  const profiles = (app.profiles = new Profiles(app));
+  const launcher = (app.sessions = new Launcher(app));
+  const dictation = (app.dictation = new Dictation(app));
+  const commands = (app.commands = new Commands(app));
+  const broadcast = (app.broadcast = new Broadcast(app));
+  const { fail, task, nativePane } = ui;
+  const net = (app.net = new Connections({
     desktop,
-    hosts: () => device.hosts,
+    hosts: () => ui.device.hosts,
     call: (name, args) => call(name, args),
     onready: (hostId, hostNotice) => {
       // A native host can report that older sessions keep an old broker running.
-      if (hostNotice) {
-        const name = device.hosts.find((h) => h.id === hostId)?.name || 'Host';
-        notice = `${name}: ${hostNotice}`;
-      }
-      void joined(hostId);
+      if (hostNotice) ui.notice = `${ui.host(hostId)?.name || 'Host'}: ${hostNotice}`;
+      void profiles.joined(hostId);
     },
-  });
+  }));
   const connections = net.connections,
-    logs = net.logs,
-    hostAttempts = net.attempts,
-    reconnectHosts = net.reconnect;
-  const deviceStore = new DeviceStore({
-    device: () => device,
-    profiles: () => profiles,
-    enabled: () => mounted,
+    logs = net.logs;
+  const connect = (h: Host) => net.connect(h);
+  const reconnectHost = (h: Host) => net.reconnectHost(h);
+  const disconnectHost = (hostId: string) => net.disconnect(hostId);
+  const checkConnections = (onlyHost?: string) => net.check(onlyHost);
+  const deviceStore = (app.deviceStore = new DeviceStore({
+    device: () => ui.device,
+    profiles: () => ui.profiles,
+    enabled: () => ui.mounted,
     connected: (hostId) => connections[hostId] === 'Connected',
     saveDevice: (value) => call('device_save', { value }),
     saveProfile: (hostId, profile) =>
       rpc<Profile>(hostId, 'profile_save', { profile, revision: profile.revision }),
     ondevicefail: fail,
     onprofilefail: (e) => {
-      error = String(e);
+      ui.error = String(e);
     },
-  });
-  const voiceModels = new VoiceModels({
+  }));
+  const voiceModels = (app.voiceModels = new VoiceModels({
     desktop,
     call: (name, args) => call(name, args),
-    device: () => device,
-    voiceStatus: () => voiceStatus,
+    device: () => ui.device,
+    voiceStatus: () => dictation.status,
     persist: () => persistDevice(),
-    resetBackend: () => {
-      voiceBackend = '';
-    },
     notice: (message) => {
-      notice = message;
+      ui.notice = message;
     },
     fail: (e) => fail(e),
     mediaDevices: () => navigator.mediaDevices,
-  });
+  }));
   const downloadProgress = voiceModels.downloadProgress;
   const {
     loadModels,
@@ -259,89 +201,96 @@
     setup: setupVoice,
     refreshMicrophones,
   } = voiceModels;
-  let modal = $state(''),
-    error = $state(''),
-    notice = $state(''),
-    busy = $state(false),
-    maximize = $state(''),
-    search = $state(''),
-    newHost = $state<Host>(hostDefaults()),
-    sessions = $state<Session[]>([]);
-  let form = $state({
-      hostId: '',
-      name: '',
-      repo: '',
-      identity: '',
-      agent: 'shell',
-      model: '',
-      effort: '',
-      count: 1,
-      brief: true,
-      exactName: false,
-    }),
-    renameValue = $state(''),
-    renameTarget = $state<Pane | null>(null),
-    destroyTarget = $state<(Session & { hostId?: string }) | null>(null),
-    roots = $state(''),
-    guidance = $state(''),
-    promptTemplate = $state(defaultPrompt),
-    settingsHost = $state(''),
-    githubRepos = $state<{ full_name: string; description: string }[]>([]),
-    branch = $state(''),
-    destination = $state('');
-  // Dictation that could not be tidied or delivered. It stays here until the
-  // user sends, copies or discards it; new recordings are never blocked by it.
-  let heldDictation = $state<{ text: string; raw: string; target: string; error: string } | null>(
-    null,
-  );
-  let dictation = $state(''),
-    raw = $state(''),
-    voiceStatus = $state('idle'),
-    voicePreparing = $state('Preparing…'),
-    cleanupPart = $state(0),
-    cleanupTotal = $state(0),
-    cleanupWords = $state(0),
-    voiceMode = $state<CaptureMode>('dictation'),
-    voiceTarget = $state(''),
-    // eslint-disable-next-line @typescript-eslint/no-unused-vars -- written, never read
-    voiceBackend = $state(''),
-    commandText = $state('');
-  let commandReview = $state<CommandReview | null>(null);
-  let commandError = $state('');
-  let capture: Capture | undefined;
-  const recordingTail = new RecordingTail();
-  let recordingId = '';
-  let finishWithoutSubmit = false;
-  let shortcutHeld: 'dictation' | 'command' | null = null;
-  let releasePending = false;
-  let terminalProgress = $state<Record<string, { state: number; value: number }>>({});
-  let agentTarget = $state<Pane | null>(null);
-  let repoTarget = $state<Pane | null>(null);
-  let repoPath = $state('');
-  let repoHost = $state('');
-  let repoContext = '';
-  let repoChoices = $state<Repo[]>([]);
-  let repoWarnings = $state<string[]>([]);
+  const {
+    layoutFor,
+    selectPane,
+    setLocalFocus,
+    updateWorkspace,
+    selectWorkspace,
+    addTerminal,
+    closeViewer,
+    menuPaneDrop,
+    startPaneDrag,
+    openFiles,
+    pasteFilePath,
+    choosePaneHost,
+    switchPaneHost,
+    finishNativeClose,
+    cancelNativeClose,
+    confirmPendingClose,
+    offerNativeClose,
+    closePane,
+    closeWorkspace,
+    contextPane,
+    captureTerminalSelection,
+  } = panes;
+  const {
+    answerRecovery,
+    showHostConnection,
+    disconnectHostTerminals,
+    connectAllHosts,
+    connectHostTerminals,
+    refresh,
+    saveHostPreferences,
+    reloadHostProfile,
+    deleteHost,
+    promptValues,
+    promptFor,
+  } = profiles;
+  const {
+    agentPicker,
+    agentMenu,
+    startAgentFromPicker,
+    showLaunch,
+    launch,
+    retry,
+    showSessions,
+    startSession,
+    createSession,
+    useSharedWorkingCopy,
+    attach,
+    renameSession,
+    destroySession,
+    refreshSessions,
+    loadGithubRepos,
+    cloneRepo,
+  } = launcher;
+  const {
+    bindingFor,
+    configureShortcut,
+    saveShortcut,
+    captureShortcut,
+    inputEdge,
+    record,
+    sendHeld: sendHeldDictation,
+    copyHeld: copyHeldDictation,
+  } = dictation;
+  const cancelVoice = dictation.cancel;
+  const { submit: commandSubmit, implement: implementCommand } = commands;
+  const { sendWorktree, createWorktree } = commands;
+  const { open: openBroadcast, review: reviewBroadcast, send: sendBroadcast } = broadcast;
+  const host = $derived(ui.host(ui.device.activeHost));
+  let backdropPress = false;
   function appHasFocus() {
     return document.hasFocus() || !!detached.focus;
   }
-  const detached = new DetachedWindows({
+  const detached = (app.detached = new DetachedWindows({
     desktop,
     call: (name, args) => call(name, args),
     appWindow: getCurrentWindow,
     terminal: (paneId) => terminals.get(paneId),
-    workspaces: () => workspaces,
+    workspaces: () => panes.workspaces,
     windowState,
     title: (pane, owner) =>
-      `${owner.name} / ${terminalPresentation(pane, paneStatus[pane.id]).name} - DazeDev`,
-    busy: () => !!modal || dictationActive,
+      `${owner.name} / ${terminalPresentation(pane, ui.paneStatus[pane.id]).name} - DazeDev`,
+    busy: () => !!ui.modal || dictation.active,
     selectWorkspace,
     focusPane: (owner, paneId) => {
       owner.focused = paneId;
       setLocalFocus(owner.id, paneId);
-      if (device.activeWorkspace !== owner.id || device.activeHost !== owner.hostId) {
-        device.activeWorkspace = owner.id;
-        device.activeHost = owner.hostId;
+      if (ui.device.activeWorkspace !== owner.id || ui.device.activeHost !== owner.hostId) {
+        ui.device.activeWorkspace = owner.id;
+        ui.device.activeHost = owner.hostId;
         persistDevice();
       }
     },
@@ -353,8 +302,8 @@
     },
     disablePasteConfirmation: () => setPasteConfirmation(false),
     reconnect: async (hostId) => {
-      const host = device.hosts.find((h) => h.id === hostId);
-      if (host) await reconnectHost(host);
+      const host = ui.host(hostId);
+      if (host) await net.reconnectHost(host);
     },
     paneAction: async (action, pane) => {
       if (action === 'repo') await chooseRepo(pane);
@@ -364,45 +313,51 @@
       if (action === 'close') closePane(pane);
     },
     onopen: () => {
-      paneMenu = null;
+      ui.paneMenu = null;
     },
     onfail: fail,
-  });
+  }));
   const detachedPanes = detached.panes;
   function windowState(pane: Pane, workspace: Workspace): WindowTerminalState {
+    const device = ui.device;
     return {
       pane: $state.snapshot(pane),
-      host: $state.snapshot(device.hosts.find((h) => h.id === pane.hostId)),
+      host: $state.snapshot(ui.host(pane.hostId)),
       workspaceName: workspace.name,
       workspaceColors: $state.snapshot(workspace.colors),
       theme: device.theme || 'blue',
       inputShortcut: device.inputShortcut || defaultShortcut,
       commandShortcut: device.commandShortcut || defaultCommandShortcut,
       searchShortcut: appShortcut(device.appShortcuts, 'search'),
-      voiceStatus,
-      voiceMode,
-      voiceTarget,
-      dictation,
+      voiceStatus: dictation.status,
+      voiceMode: dictation.mode,
+      voiceTarget: dictation.target,
+      dictation: dictation.text,
       settings: {
         ...(device.terminal || terminalDefaults),
         clipboard: device.clipboardByHost?.[pane.hostId] || device.terminal?.clipboard || 'notify',
       },
-      status: terminalState[pane.id] || '',
+      status: ui.terminalState[pane.id] || '',
       ready: !!terminals.get(pane.id)?.context(),
-      metadata: paneStatus[pane.id],
+      metadata: ui.paneStatus[pane.id],
     };
   }
   $effect(() => {
     detached.sync();
   });
-  let terminalReturnFocus = '';
   function restoreTerminalFocus() {
-    const id = terminalReturnFocus;
-    terminalReturnFocus = '';
+    const id = ui.terminalReturnFocus;
+    ui.terminalReturnFocus = '';
     if (!id) return false;
     void tick().then(() => terminals.get(id)?.focus?.());
     return true;
   }
+  let repoTarget = $state<Pane | null>(null);
+  let repoPath = $state('');
+  let repoHost = $state('');
+  let repoContext = '';
+  let repoChoices = $state<Repo[]>([]);
+  let repoWarnings = $state<string[]>([]);
   let repoRequest = 0;
   async function refreshRepoChoices() {
     const request = ++repoRequest;
@@ -410,7 +365,7 @@
     repoChoices = [];
     repoWarnings = [];
     const result = await rpc<{ repos: Repo[]; warnings: string[] }>(host, 'repositories');
-    if (request !== repoRequest || host !== repoHost || modal !== 'pane-repo') return;
+    if (request !== repoRequest || host !== repoHost || ui.modal !== 'pane-repo') return;
     repoChoices = result.repos;
     repoWarnings = [...new Set(result.warnings)];
   }
@@ -419,13 +374,13 @@
     repoHost = p.hostId;
     repoPath = p.repo;
     repoContext = terminals.get(p.id)?.context() || '';
-    search = '';
-    modal = 'pane-repo';
+    ui.search = '';
+    ui.modal = 'pane-repo';
     await refreshRepoChoices();
-    if (repoTarget?.id === p.id && modal === 'pane-repo') repoPath = p.repo;
+    if (repoTarget?.id === p.id && ui.modal === 'pane-repo') repoPath = p.repo;
   }
   async function pasteRepoPrompt() {
-    const owner = workspaces.find((w) => w.panes.some((p) => p.id === repoTarget?.id));
+    const owner = panes.owner(repoTarget?.id);
     const target = owner?.panes.find((p) => p.id === repoTarget?.id);
     const terminal = target && terminals.get(target.id);
     if (!target || !owner || !terminal || !repoContext || terminal.context() !== repoContext)
@@ -438,12 +393,13 @@
     );
     if (repoHost === target.hostId) target.repo = repoPath;
     saved(owner.hostId);
-    terminalReturnFocus = target.id;
-    modal = '';
-    notice = 'Repository prompt pasted for review. Press Enter in the terminal when ready.';
+    ui.terminalReturnFocus = target.id;
+    ui.modal = '';
+    ui.notice = 'Repository prompt pasted for review. Press Enter in the terminal when ready.';
   }
   let alertAudio: AudioContext | undefined;
   const alertThrottle = new AlertThrottle();
+  panes.onprune = (live) => alertThrottle.retain(live);
   async function softAlert() {
     alertAudio ||= new AudioContext();
     await alertAudio.resume();
@@ -464,137 +420,13 @@
   }
   function terminalAlert(pane: Pane, message: string) {
     if (!alertThrottle.allow(pane.id)) return;
-    if (device.terminalAlerts?.visual) notice = `${pane.name}: ${message}`;
-    if (device.terminalAlerts?.sound) void softAlert().catch(() => {});
+    if (ui.device.terminalAlerts?.visual) ui.notice = `${pane.name}: ${message}`;
+    if (ui.device.terminalAlerts?.sound) void softAlert().catch(() => {});
   }
-  let paneStatus = $state<Record<string, PaneStatus>>({});
-  type FileContext = Pick<Pane, 'id' | 'hostId' | 'repo'>;
-  let filesTarget = $state<FileContext | null>(null);
-  let filesContext = '';
-  let filesLocked = $state(false);
-  let viewers = $state<
-    {
-      id: string;
-      workspaceId: string;
-      pane: FileContext;
-      initialPath?: string;
-      locked: boolean;
-      title: string;
-      order: number;
-    }[]
-  >([]);
-  let viewerLayouts = $state<Record<string, Layout>>({});
-  let viewerOrder = 0;
-  const viewerLocked = $derived(viewers.some((v) => v.locked));
-  function openFiles(
-    p: FileContext,
-    mode: 'upload' | 'documents',
-    workspaceId?: string,
-    initialPath = '',
-  ) {
-    if (mode === 'documents') {
-      const owner =
-        workspaces.find((w) => w.id === workspaceId) ||
-        workspaces.find((w) => w.panes.some((x) => x.id === p.id)) ||
-        current;
-      if (!owner) {
-        filesTarget = p;
-        filesContext = '';
-        filesLocked = false;
-        modal = 'documents';
-        paneMenu = null;
-        return;
-      }
-      const id = uid();
-      const prior = layoutFor(owner);
-      viewerLayouts[owner.id] = ids(prior).filter(Boolean).length
-        ? insertAt(prior, ids(prior).includes(p.id) ? p.id : ids(prior).at(-1)!, id, 'right')
-        : { kind: 'pane' as const, id };
-      viewers.push({
-        id,
-        workspaceId: owner.id,
-        pane: { ...p },
-        locked: false,
-        title: 'Files and previews',
-        initialPath,
-        order: ++viewerOrder,
-      });
-      maximize = '';
-      paneMenu = null;
-      return;
-    }
-    terminalReturnFocus = p.id;
-    filesTarget = p;
-    filesContext = terminals.get(p.id)?.context() || '';
-    filesLocked = false;
-    modal = mode;
-    paneMenu = null;
-  }
-  async function pasteFilePath(text: string) {
-    const terminal = filesTarget && terminals.get(filesTarget.id);
-    if (!terminal || !filesContext || terminal.context() !== filesContext)
-      throw new Error('Terminal changed. Copy the path or reopen Upload for the current terminal.');
-    await terminal.pasteForReview(text, filesContext);
-    filesContext = terminal.context();
-  }
-  function toggleStatus(p: Pane) {
-    p.hideStatus = !p.hideStatus;
-    const owner = workspaces.find((w) => w.panes.some((x) => x.id === p.id));
-    if (owner) saved(owner.hostId);
-    paneMenu = null;
-  }
-  let switchTarget = $state<Pane | null>(null);
-  let switchHost = $state('');
-  function choosePaneHost(p: Pane) {
-    switchTarget = p;
-    switchHost = p.hostId;
-    modal = 'pane-host';
-    paneMenu = null;
-  }
-  async function switchPaneHost() {
-    const target = switchTarget;
-    const owner = workspaces.find((w) => w.panes.some((p) => p.id === target?.id));
-    if (!target || !owner) throw new Error('Terminal no longer exists.');
-    if (voiceStatus !== 'idle')
-      throw new Error('Finish dictation before changing this connection.');
-    if (connections[switchHost] !== 'Connected')
-      throw new Error('Connect the selected host first.');
-    if (switchHost === target.hostId) {
-      modal = '';
-      return;
-    }
-    const replacement: Pane = {
-      ...target,
-      id: uid(),
-      hostId: switchHost,
-      hostKey: device.hosts.find((h) => h.id === switchHost)?.fingerprint,
-      sessionId: '',
-      stamp: undefined,
-      shell: true,
-      name: 'Terminal',
-      repo: '',
-      agent: 'shell',
-      identity: '',
-      model: '',
-      effort: '',
-      operation: uid(),
-      error: undefined,
-    };
-    await call('terminal_close', { id: target.id });
-    updateWorkspace({
-      ...owner,
-      panes: owner.panes.map((p) => (p.id === target.id ? replacement : p)),
-      layout: swap(layoutFor(owner), target.id, replacement.id),
-      focused: replacement.id,
-    });
-    if (maximize === target.id) maximize = replacement.id;
-    modal = '';
-  }
-  let colorPane = $state<Pane | null>(null);
   let colorHost = $state<Host | null>(null);
   let tmuxHost = $state<Host | null>(null);
-  let deleteHostTarget = $state<Host | null>(null);
   let workspaceTarget = $state<Workspace | null>(null);
+  let newHost = $state<Host>(hostDefaults());
   let aliases = $state<string[]>([]);
   let clientInfo = $state({
     version: appVersion,
@@ -602,37 +434,43 @@
     migration: '',
     updateSupported: true,
   });
-  const updates = new Updates({
+  const updates = (app.updates = new Updates({
     desktop,
     supported: () => clientInfo.updateSupported,
-    modal: () => modal,
+    modal: () => ui.modal,
     setModal: (value) => {
-      modal = value;
+      ui.modal = value;
     },
     canPresent: () => updateCanPresent,
-    voiceBusy: () => voiceStatus !== 'idle' || !!dictation.trim() || !!heldDictation,
+    voiceBusy: () => dictation.status !== 'idle' || !!dictation.text.trim() || !!dictation.held,
     check: () => call<UpdateInfo | null>('update_check'),
     download: (version) => call('update_download', { version }),
     install: () => call('update_install'),
     saveDevice: () => deviceStore.saveNow(),
     onerror: (message) => {
-      error = message;
+      ui.error = message;
     },
-  });
+  }));
   const {
     open: openUpdates,
     close: closeUpdates,
     check: checkUpdates,
     install: installUpdate,
   } = updates;
+  const updateCanPresent = $derived(
+    canPresentUpdate(ui.modal, dictation.status, !!panes.draggingPane),
+  );
+  $effect(() => {
+    updates.presentPending();
+  });
   let changelogReturn = $state('settings');
   let releaseHistory = $state<ReleaseEntry[]>(changelog);
   let releaseFilter = $state<'all' | 'desktop' | 'mobile'>('all');
   let historyStatus = $state('');
   let pendingChangelog = $state('');
   $effect(() => {
-    if (pendingChangelog && !modal && !busy) {
-      device.lastChangelogVersion = pendingChangelog;
+    if (pendingChangelog && !ui.modal && !ui.busy) {
+      ui.device.lastChangelogVersion = pendingChangelog;
       pendingChangelog = '';
       showChangelog('');
       persistDevice();
@@ -643,10 +481,10 @@
   let feedbackError = $state('');
   let feedbackSent = $state(false);
   function openFeedback() {
-    device.feedbackContact ||= { name: '', email: '' };
+    ui.device.feedbackContact ||= { name: '', email: '' };
     feedbackSent = false;
-    error = '';
-    modal = 'feedback';
+    ui.error = '';
+    ui.modal = 'feedback';
   }
   async function sendFeedback() {
     if (feedbackBusy) return;
@@ -656,11 +494,11 @@
     try {
       await deviceStore.saveNow();
       await call('feedback_send', {
-        feedback: { ...$state.snapshot(device.feedbackContact), message: feedbackMessage },
+        feedback: { ...$state.snapshot(ui.device.feedbackContact), message: feedbackMessage },
       });
       feedbackMessage = '';
       feedbackSent = true;
-      if (modal !== 'feedback') notice = supportContent.feedback.success;
+      if (ui.modal !== 'feedback') ui.notice = supportContent.feedback.success;
     } catch (e) {
       feedbackError = String(e);
     } finally {
@@ -668,24 +506,24 @@
     }
   }
   $effect(() => {
-    document.documentElement.dataset.theme = device.theme || 'blue';
-    document.documentElement.dataset.highlightMotion = device.highlightMotion || 'animate';
+    document.documentElement.dataset.theme = ui.device.theme || 'blue';
+    document.documentElement.dataset.highlightMotion = ui.device.highlightMotion || 'animate';
   });
   function addHost() {
     newHost = hostDefaults();
-    error = '';
-    modal = 'host';
+    ui.error = '';
+    ui.modal = 'host';
   }
   function showChangelog(origin = 'settings') {
     changelogReturn = origin;
-    releaseHistory = mergeChangelog(device.releaseHistory);
-    modal = 'changelog';
+    releaseHistory = mergeChangelog(ui.device.releaseHistory);
+    ui.modal = 'changelog';
     if (desktop) {
       historyStatus = 'Checking public release history…';
       void call<unknown>('release_history')
         .then((value) => {
           releaseHistory = mergeChangelog(value, releaseHistory);
-          device.releaseHistory = releaseHistory;
+          ui.device.releaseHistory = releaseHistory;
           persistDevice();
           historyStatus = '';
         })
@@ -697,80 +535,11 @@
   function respond(hostId: string, value: string) {
     return net.respond(hostId, value);
   }
-  let sessionPane = $state<Pane | null>(null);
-  let sessionHost = $state('');
-  let sessionStep = $state(0);
-  let nameError = $state('');
-  let sessionOperation = $state('');
-  let stageWidth = $state(1200);
-  let draggingPane = $state('');
-  let selectedPanes = $state<string[]>([]);
-  let selectionWorkspace = '';
-  // Saves only when the remembered focus really changes.
-  function setLocalFocus(workspaceId: string, paneId: string) {
-    if (device.localFocus?.[workspaceId] === paneId) return;
-    (device.localFocus ||= {})[workspaceId] = paneId;
-    persistDevice();
-  }
-  function selectPane(paneId: string, workspace: Workspace, additive = false) {
-    const group = terminalTabs(workspace, paneId);
-    if (group && device.activeTerminalTabs?.[group.id] !== paneId) {
-      (device.activeTerminalTabs ||= {})[group.id] = paneId;
-      persistDevice();
-    }
-    if (selectionWorkspace !== workspace.id) selectedPanes = [];
-    selectionWorkspace = workspace.id;
-    selectedPanes = selectPanes(selectedPanes, paneId, additive);
-    workspace.focused = paneId;
-    setLocalFocus(workspace.id, paneId);
-  }
-  const updateCanPresent = $derived(canPresentUpdate(modal, voiceStatus, !!draggingPane));
-  $effect(() => {
-    updates.presentPending();
-  });
-  let dropTarget = $state<{ id: string; edge: Edge | 'center' } | null>(null);
-  let paneMenu = $state<{ pane: Pane; x: number; y: number; selection?: string } | null>(null);
-  type VoiceMode = 'dictation' | 'command';
-  let capturingShortcut = $state<VoiceMode | null>(null);
-  const reviewHotkey = new ReviewHotkey();
-  let listenIntroTarget = '';
-  let shortcutStatus = $state('');
-  let backdropPress = false;
-  function bindingFor(mode: VoiceMode) {
-    return mode === 'dictation'
-      ? device.inputShortcut || defaultShortcut
-      : device.commandShortcut || defaultCommandShortcut;
-  }
-  async function configureShortcut() {
-    // Disable the legacy OS-wide sampler. DOM events belong only to this window.
-    if (desktop) await call('input_configure', { binding: null });
-    shortcutStatus = 'Both hotkeys work only while DazeDev is focused.';
-  }
-  async function saveShortcut(
-    binding: Shortcut,
-    mode: VoiceMode = capturingShortcut || 'dictation',
-  ) {
-    if (sameShortcut(binding, bindingFor(mode === 'dictation' ? 'command' : 'dictation')))
-      throw new Error('Choose different hotkeys for terminal dictation and IDE commands.');
-    const clash = appActions.find((a) =>
-      sameShortcut(appShortcut(device.appShortcuts, a.id), binding),
-    );
-    if (clash) throw new Error(`${binding.label} is already used by ${clash.label}.`);
-    if (mode === 'dictation') device.inputShortcut = binding;
-    else device.commandShortcut = binding;
-    capturingShortcut = null;
-    persistDevice();
-    await configureShortcut();
-  }
-  function captureShortcut(mode: VoiceMode) {
-    capturingShortcut = mode;
-    shortcutStatus = 'Press a key combination, or choose a mouse/device button.';
-  }
   let capturingAppShortcut = $state<AppAction | null>(null);
   let appShortcutStatus = $state('');
   const mac = macPlatform();
   function saveAppShortcut(action: AppAction, binding: Shortcut) {
-    const clash = shortcutConflict(action, binding, device.appShortcuts, [
+    const clash = shortcutConflict(action, binding, ui.device.appShortcuts, [
       { label: 'Terminal dictation', shortcut: bindingFor('dictation') },
       { label: 'IDE voice command', shortcut: bindingFor('command') },
     ]);
@@ -778,894 +547,36 @@
       appShortcutStatus = `${binding.label} is already used by ${clash}. Press another combination, or Escape to cancel.`;
       return;
     }
-    device.appShortcuts = { ...device.appShortcuts, [action]: binding };
+    ui.device.appShortcuts = { ...ui.device.appShortcuts, [action]: binding };
     capturingAppShortcut = null;
     appShortcutStatus = '';
     persistDevice();
   }
   function resetAppShortcuts() {
-    device.appShortcuts = {};
+    ui.device.appShortcuts = {};
     capturingAppShortcut = null;
     appShortcutStatus = 'Shortcuts reset to defaults.';
     persistDevice();
   }
-  async function inputEdge(pressed: boolean, mode: VoiceMode) {
-    if (capturingShortcut || (pressed && !appHasFocus())) return;
-    const destination = voiceDestination(mode, modal);
-    if (voiceStatus !== 'idle' && voiceMode !== destination) return;
-    if (broadcastBusy || (broadcastResult && modal === 'broadcast')) return;
-    if (device.inputMode !== 'hold') {
-      if (
-        pressed &&
-        mode === 'dictation' &&
-        destination === 'dictation' &&
-        voiceStatus === 'idle' &&
-        recentDictation?.submitContext &&
-        !modal
-      ) {
-        const reviewed = recentDictation;
-        const target = activePane?.id;
-        reviewHotkey.tap(
-          () => {
-            if (appHasFocus() && !modal && activePane?.id === target)
-              void task(() => record(destination));
-          },
-          () => {
-            if (!appHasFocus() || modal || activePane?.id !== reviewed.target) {
-              notice = 'Select the terminal containing the reviewed dictation before sending.';
-              return;
-            }
-            const expected = reviewed.submitContext!;
-            reviewed.submitContext = undefined;
-            void task(async () => {
-              const terminal = terminals.get(reviewed.target);
-              if (!terminal?.submitReviewed)
-                throw new Error(
-                  'Terminal is unavailable. The dictation remains available to copy.',
-                );
-              await terminal.submitReviewed(expected);
-              terminal.focus?.();
-            });
-          },
-        );
-        return;
-      }
-      if (pressed) await record(destination);
-      return;
-    }
-    if (pressed) {
-      if (shortcutHeld || voiceStatus !== 'idle') return;
-      shortcutHeld = mode;
-      releasePending = false;
-      await record(destination);
-      if (releasePending && String(voiceStatus) === 'listening') await record(destination);
-    } else if (shortcutHeld === mode) {
-      shortcutHeld = null;
-      releasePending = true;
-      if (voiceStatus === 'listening') await record(destination);
-    }
-  }
-  async function agentPicker(p: Pane | null = null) {
-    agentTarget = p;
-    if (p) device.activeHost = p.hostId;
-    await refresh(p?.hostId || device.activeHost);
-    modal = 'agents';
-  }
-  async function agentMenu(p: Pane, effort = false) {
-    if (!['codex', 'claude', 'gemini', 'opencode'].includes(p.agent)) return;
-    const terminal = terminals.get(p.id);
-    const expectedContext = terminal?.context();
-    if (!terminal || !expectedContext) throw new Error('Wait for the terminal to be ready.');
-    const actual = await rpc<string>(p.hostId, 'session_agent', {
-      id: p.sessionId,
-      stamp: p.stamp,
-    });
-    if (actual !== p.agent) {
-      p.agent = actual;
-      const owner = workspaces.find((w) => w.panes.some((pane) => pane.id === p.id));
-      if (owner) saved(owner.hostId);
-      throw new Error(
-        'The agent in this terminal changed. Refresh its controls before choosing a model.',
-      );
-    }
-    await terminal.paste(
-      effort && p.agent === 'claude' ? '/effort' : p.agent === 'opencode' ? '/models' : '/model',
-      true,
-      expectedContext,
-      'command',
-    );
-    terminals.get(p.id)?.focus?.();
-  }
-  async function startAgentFromPicker(agent: string) {
-    sessionPane = agentTarget;
-    sessionHost = agentTarget?.hostId || device.activeHost;
-    await startSession();
-    form.agent = agent;
-    form.name = `${agent}-${Date.now().toString(36)}`;
-    await createSession();
-  }
-  function addTerminal(edge: Edge, target = activePane, asTab = false) {
-    if (!current) return;
-    let w = current;
-    if (w.hostId === HOSTLESS) {
-      notice =
-        'Open a terminal in a host workspace, then hold Ctrl and drag its view into this group.';
-      return;
-    }
-    target ||= {
-      id: ids(layoutFor(w)).find(Boolean) || '',
-      hostId: w.hostId,
-      hostKey: device.hosts.find((h) => h.id === w.hostId)?.fingerprint,
-    } as Pane;
-    let pane: Pane = {
-      id: uid(),
-      hostId: target.hostId,
-      hostKey: target.hostKey,
-      sessionId: '',
-      shell: true,
-      name: `Terminal ${w.panes.length + 1}`,
-      repo: '',
-      identity: '',
-      agent: 'shell',
-      model: '',
-      effort: '',
-      operation: uid(),
-    };
-    const insert = () => {
-      const owner = profiles[w.hostId]?.workspaces.find((item) => item.id === w.id);
-      if (!owner) return false;
-      w = owner;
-      maximize = '';
-      paneMenu = null;
-      updateWorkspace({
-        ...w,
-        panes: [...w.panes, pane],
-        layout: ids(layoutFor(w)).filter(Boolean).length
-          ? insertAt(
-              layoutFor(w),
-              ids(layoutFor(w)).includes(target.id) ? target.id : ids(layoutFor(w))[0],
-              pane.id,
-              edge,
-            )
-          : { kind: 'pane', id: pane.id },
-        focused: pane.id,
-        tabGroups: asTab
-          ? [
-              ...(w.tabGroups || []).filter((group) => !group.panes.includes(target!.id)),
-              {
-                id: terminalTabs(w, target.id)?.id || uid(),
-                panes: [...(terminalTabs(w, target.id)?.panes || [target.id]), pane.id],
-              },
-            ]
-          : w.tabGroups,
-      });
-      const updated = profiles[w.hostId].workspaces.find((item) => item.id === w.id)!;
-      selectPane(pane.id, updated);
-      return true;
-    };
-    if (nativePane(pane)) {
-      void task(async () => {
-        pane = await createNativeTerminalPane(pane, (args) =>
-          rpc<Session>(pane.hostId, 'create', args),
-        );
-        if (!insert()) await rpc(pane.hostId, 'destroy', { id: pane.sessionId, stamp: pane.stamp });
-      });
-    } else insert();
-  }
-  let dragCopy = $state(false);
-  let dragHover = $state('');
-  let dragPosition = $state({ x: 0, y: 0 });
-  let cancelPaneDrag: (() => void) | null = null;
-  async function preparePaneDrop(
-    source: Workspace,
-    destination: Workspace,
-    original: Pane,
-    copy: boolean,
-  ) {
-    let pane = original;
-    if (destination.hostId === HOSTLESS && !copy)
-      throw new Error(
-        'Hold Ctrl while dragging to add a view to this hostless workspace. The original stays in place.',
-      );
-    if (source.id !== destination.id) {
-      const header = document.querySelector<HTMLElement>(
-        `[data-pane-id="${CSS.escape(original.id)}"] .pane-header`,
-      );
-      const style = header ? getComputedStyle(header) : null;
-      const toHex = (value: string | undefined, fallback: string) => {
-        const rgb = value?.match(/^rgba?\((\d+),\s*(\d+),\s*(\d+)/);
-        return rgb
-          ? '#' +
-              rgb
-                .slice(1, 4)
-                .map((v) => Number(v).toString(16).padStart(2, '0'))
-                .join('')
-          : fallback;
-      };
-      pane = {
-        ...original,
-        colors: retainedPaneColors(
-          original.colors,
-          source.colors,
-          device.hosts.find((h) => h.id === original.hostId)?.colors,
-          {
-            background: toHex(style?.backgroundColor, '#242822'),
-            foreground: toHex(style?.color, '#edede8'),
-          },
-        ),
-      };
-    }
-    if (copy) {
-      const terminal = terminals.get(original.id);
-      const context = terminal?.context();
-      const status = desktop
-        ? await rpc<import('./lib/pane-status').PaneStatus>(original.hostId, 'terminal_status', {
-            pid: terminal?.processId() || 0,
-          })
-        : {
-            attachment: original.shell ? 'plain' : 'tmux',
-            sessionId: original.sessionId,
-            stamp: original.stamp,
-            nestedSsh: false,
-            directory: undefined,
-          };
-      if (desktop && (!context || terminal?.context() !== context))
-        throw new Error('The source terminal changed. Try duplicating it again.');
-      if (status.attachment === 'unknown' || status.nestedSsh)
-        throw new Error(
-          'Cannot identify this terminal’s session safely. Return to its managed host shell and try again.',
-        );
-      const attached = status.attachment === 'tmux' || status.attachment === 'native';
-      if (destination.hostId === HOSTLESS && !attached)
-        throw new Error(
-          'Hostless workspaces need a persistent session. Open or create a managed terminal on its host first.',
-        );
-      if (destination.hostId === HOSTLESS && (!status.stamp || !original.hostKey))
-        throw new Error(
-          'Reconnect the source host before cloning this view so its host and session identities can be verified.',
-        );
-      if (attached && !status.sessionId)
-        throw new Error(
-          'The host helper needs reconnecting before this session can be duplicated.',
-        );
-      pane = {
-        ...pane,
-        id: uid(),
-        operation: uid(),
-        error: undefined,
-        sessionId: attached ? status.sessionId! : '',
-        stamp: attached ? status.stamp : undefined,
-        shell: !attached,
-        directory: attached ? undefined : status.directory,
-        agent: attached ? original.agent : 'shell',
-        model: attached ? original.model : '',
-        effort: attached ? original.effort : '',
-        name: attached ? original.name : 'Terminal',
-      };
-    }
-    return pane;
-  }
-  async function commitPaneDrop(
-    sourceId: string,
-    destinationId: string,
-    paneIds: string | string[],
-    target: { id: string; edge: Edge | 'center' },
-    copy: boolean,
-    sidebar = false,
-  ) {
-    const source = workspaces.find((w) => w.id === sourceId);
-    const destination = workspaces.find((w) => w.id === destinationId);
-    const wanted = new Set(typeof paneIds === 'string' ? [paneIds] : paneIds);
-    const originals = source?.panes.filter((p) => wanted.has(p.id));
-    if (!source || !destination || !originals?.length || originals.length !== wanted.size) return;
-    if (sidebar && !copy && sourceId === destinationId) return;
-    const prepared = await Promise.all(
-      originals.map((pane) => preparePaneDrop(source, destination, pane, copy)),
-    );
-    const from = workspaces.find((w) => w.id === sourceId);
-    const to = workspaces.find((w) => w.id === destinationId);
-    if (
-      !from ||
-      !to ||
-      originals.some((p) => from.panes.find((x) => x.id === p.id) !== p) ||
-      (target.id && !ids(layoutFor(to)).includes(target.id))
-    )
-      return;
-    if (!copy && from.id === to.id && wanted.has(target.id)) return;
-    const moving = originals.map((p) => p.id);
-    const remaining =
-      !copy && from.id === to.id ? removePanes(layoutFor(to), moving) : layoutFor(to);
-    const incoming = prepared.map((p) => p.id);
-    let layout: Layout;
-    if (sidebar || !ids(remaining).some(Boolean)) layout = insertPaneStack(remaining, incoming);
-    else if (target.edge === 'center') {
-      const order = ids(remaining);
-      order.splice(Math.max(0, order.indexOf(target.id)), 0, ...incoming);
-      layout = balanced(order, stageWidth);
-    } else layout = insertPaneStack(remaining, incoming, target.id, target.edge);
-    if (!copy && from.id !== to.id) {
-      const panes = from.panes.filter((p) => !wanted.has(p.id));
-      updateWorkspace({
-        ...from,
-        panes,
-        layout: removePanes(layoutFor(from), moving),
-        focused: wanted.has(from.focused) ? panes[0]?.id || '' : from.focused,
-      });
-    }
-    updateWorkspace({
-      ...to,
-      panes: [...to.panes.filter((p) => copy || !wanted.has(p.id)), ...prepared],
-      layout,
-      focused: incoming[0],
-    });
-    selectedPanes = [];
-    if (sidebar) {
-      notice = `${prepared.length === 1 ? prepared[0].name : prepared.length + ' terminals'} ${copy ? 'duplicated in' : 'moved to'} ${to.name}.`;
-      if (maximize && wanted.has(maximize) && !copy) maximize = '';
-    } else selectWorkspace(to);
-  }
-  function commitViewerDrop(
-    id: string,
-    destinationId: string,
-    target: { id: string; edge: Edge | 'center' },
-    sidebar = false,
-  ) {
-    const viewer = viewers.find((v) => v.id === id);
-    const from = workspaces.find((w) => w.id === viewer?.workspaceId);
-    const to = workspaces.find((w) => w.id === destinationId);
-    if (
-      !viewer ||
-      !from ||
-      !to ||
-      target.id === id ||
-      (sidebar && from.id === to.id) ||
-      (target.id && !ids(layoutFor(to)).includes(target.id))
-    )
-      return;
-    const sourceLayout = remove(layoutFor(from), id) || { kind: 'pane' as const, id: '' };
-    const remaining = from.id === to.id ? sourceLayout : layoutFor(to);
-    let layout: Layout;
-    if (sidebar) layout = insertPaneStack(remaining, [id]);
-    else if (!ids(remaining).filter(Boolean).length) layout = { kind: 'pane' as const, id };
-    else if (target.edge === 'center') {
-      const order = ids(remaining);
-      order.splice(Math.max(0, order.indexOf(target.id)), 0, id);
-      layout = balanced(order, stageWidth);
-    } else layout = insertAt(remaining, target.id, id, target.edge);
-    viewer.workspaceId = to.id;
-    if (from.id !== to.id) updateWorkspace({ ...from, layout: sourceLayout });
-    updateWorkspace({ ...to, layout });
-    maximize = '';
-    if (!sidebar) selectWorkspace(to);
-  }
-  function closeViewer(id: string) {
-    const viewer = viewers.find((v) => v.id === id);
-    if (!viewer || viewer.locked) return;
-    const owner = workspaces.find((w) => w.id === viewer.workspaceId);
-    const layout = owner && remove(layoutFor(owner), id);
-    viewers = viewers.filter((v) => v.id !== id);
-    if (owner) updateWorkspace({ ...owner, layout: layout || { kind: 'pane' as const, id: '' } });
-    if (maximize === id) maximize = '';
-  }
-  function menuPaneDrop(pane: Pane, destination: Workspace, copy: boolean) {
-    const source = workspaces.find((w) => w.panes.some((p) => p.id === pane.id));
-    const target =
-      destination.panes.find((p) => p.id === destination.focused && (copy || p.id !== pane.id)) ||
-      destination.panes.find((p) => copy || p.id !== pane.id);
-    paneMenu = null;
-    if (!source || (!copy && source.id === destination.id && !target)) return;
-    void task(() =>
-      commitPaneDrop(
-        source.id,
-        destination.id,
-        pane.id,
-        { id: target?.id || '', edge: 'right' },
-        copy,
-      ),
-    );
-  }
-  function startPaneDrag(
-    e: PointerEvent,
-    p: Pick<Pane, 'id'>,
-    workspace: Workspace,
-    viewer = false,
-  ) {
-    if (
-      e.button !== 0 ||
-      (e.target as HTMLElement).closest('button, .pane-actions') ||
-      dictationActive ||
-      modal
-    )
-      return;
-    cancelPaneDrag?.();
-    if (!viewer) {
-      if (e.shiftKey) selectPane(p.id, workspace, true);
-      else if (selectionWorkspace !== workspace.id || !selectedPanes.includes(p.id))
-        selectPane(p.id, workspace);
-    }
-    const group = viewer
-      ? [p.id]
-      : workspace.panes.filter((pane) => selectedPanes.includes(pane.id)).map((pane) => pane.id);
-    const header = e.currentTarget as HTMLElement;
-    const origin = device.activeWorkspace,
-      originHost = device.activeHost,
-      originMax = maximize;
-    const startX = e.clientX,
-      startY = e.clientY;
-    let moved = false;
-    let destination = '',
-      last = e;
-    let sidebar = false;
-    header.setPointerCapture(e.pointerId);
-    const locate = (event: PointerEvent) => {
-      dragCopy = !viewer && event.ctrlKey;
-      dragPosition = { x: event.clientX + 14, y: event.clientY + 14 };
-      const hit = document.elementFromPoint(event.clientX, event.clientY);
-      const tab = hit?.closest<HTMLElement>('[data-workspace-tab]')?.dataset.workspaceTab || '';
-      dragHover = tab;
-      sidebar = false;
-      if (tab) {
-        dropTarget = null;
-        destination = '';
-        if (workspaces.some((w) => w.id === tab) && (dragCopy || tab !== workspace.id)) {
-          destination = tab;
-          dropTarget = { id: '', edge: 'right' };
-          sidebar = true;
-        }
-        return;
-      }
-      const element = hit?.closest<HTMLElement>('[data-pane-id]');
-      const w =
-        element &&
-        workspaces.find(
-          (w) =>
-            w.id === device.activeWorkspace &&
-            ids(layoutFor(w)).includes(element.dataset.paneId || ''),
-        );
-      dropTarget = null;
-      destination = '';
-      // Headers and navigation are never docking targets.
-      if (
-        !w ||
-        !element ||
-        hit?.closest('.pane-header') ||
-        (!dragCopy && group.includes(element.dataset.paneId || ''))
-      ) {
-        const empty = hit?.closest<HTMLElement>('[data-empty-workspace]');
-        if (empty) {
-          destination = empty.dataset.emptyWorkspace!;
-          dropTarget = { id: '', edge: 'center' };
-        }
-        return;
-      }
-      const r = element.getBoundingClientRect();
-      destination = w.id;
-      dropTarget = {
-        id: element.dataset.paneId!,
-        edge: dropZone((event.clientX - r.left) / r.width, (event.clientY - r.top) / r.height),
-      };
-    };
-    const move = (event: PointerEvent) => {
-      if (event.pointerId !== e.pointerId) return;
-      last = event;
-      if (!moved && Math.hypot(event.clientX - startX, event.clientY - startY) < 6) return;
-      if (!group.length) return;
-      moved = true;
-      draggingPane = p.id;
-      paneMenu = null;
-      if (
-        !viewer &&
-        group.length === 1 &&
-        !event.ctrlKey &&
-        desktop &&
-        (event.clientX < 0 ||
-          event.clientX > innerWidth ||
-          event.clientY < 0 ||
-          event.clientY > innerHeight)
-      ) {
-        cleanup();
-        restore();
-        const pane = workspace.panes.find((pane) => pane.id === group[0]);
-        if (pane)
-          void detached.detach(pane, event.screenX - 120, event.screenY - 24, true).catch(fail);
-        return;
-      }
-      locate(event);
-    };
-    const cleanup = () => {
-      draggingPane = '';
-      dropTarget = null;
-      dragHover = '';
-      window.removeEventListener('pointermove', move);
-      window.removeEventListener('pointerup', finish);
-      window.removeEventListener('pointercancel', abort);
-      window.removeEventListener('keydown', key, true);
-      window.removeEventListener('keyup', key, true);
-      window.removeEventListener('blur', abort);
-      header.removeEventListener('lostpointercapture', abort);
-      if (header.hasPointerCapture(e.pointerId)) header.releasePointerCapture(e.pointerId);
-      cancelPaneDrag = null;
-    };
-    const restore = () => {
-      device.activeWorkspace = origin;
-      device.activeHost = originHost;
-      maximize = originMax;
-    };
-    const abort = () => {
-      cleanup();
-      restore();
-    };
-    const key = (event: KeyboardEvent) => {
-      if (event.key === 'Escape') {
-        event.preventDefault();
-        event.stopImmediatePropagation();
-        abort();
-      } else if (event.key === 'Control' && moved)
-        locate(
-          new PointerEvent('pointermove', {
-            clientX: last.clientX,
-            clientY: last.clientY,
-            ctrlKey: event.type === 'keydown',
-          }),
-        );
-    };
-    const finish = (event: PointerEvent) => {
-      if (event.pointerId !== e.pointerId) return;
-      if (moved) locate(event);
-      const target = dropTarget,
-        to = destination,
-        copy = dragCopy;
-      cleanup();
-      if (!moved || !target || !to) {
-        if (!moved && !viewer && !e.shiftKey) selectPane(p.id, workspace);
-        restore();
-        return;
-      }
-      const direct = sidebar;
-      void task(async () => {
-        try {
-          if (viewer) commitViewerDrop(p.id, to, target, direct);
-          else await commitPaneDrop(workspace.id, to, group, target, copy, direct);
-        } catch (error) {
-          restore();
-          throw error;
-        }
-      });
-    };
-    cancelPaneDrag = abort;
-    window.addEventListener('pointermove', move);
-    window.addEventListener('pointerup', finish);
-    window.addEventListener('pointercancel', abort);
-    window.addEventListener('keydown', key, true);
-    window.addEventListener('keyup', key, true);
-    window.addEventListener('blur', abort);
-    header.addEventListener('lostpointercapture', abort);
-  }
-  const terminalMenuItems = $derived.by((): TerminalMenuItem[] => {
-    if (!paneMenu) return [];
-    const p = paneMenu.pane;
-    const close = (run: () => void) => () => {
-      run();
-      paneMenu = null;
-    };
-    const owner = workspaces.find((w) => w.panes.some((pane) => pane.id === p.id));
-    const items: TerminalMenuItem[] = [{ id: 'split', label: 'Split', kind: 'split' }];
-    if (owner?.hostId !== HOSTLESS)
-      items.push({
-        id: 'new-tab',
-        label: 'New terminal tab',
-        run: close(() => addTerminal('right', p, true)),
-      });
-    if (owner && terminalTabs(owner, p.id))
-      items.push({
-        id: 'ungroup-tab',
-        label: 'Move tab into its own pane',
-        run: close(() => {
-          updateWorkspace({
-            ...owner,
-            tabGroups: (owner.tabGroups || []).map((group) => ({
-              ...group,
-              panes: group.panes.filter((id) => id !== p.id),
-            })),
-          });
-        }),
-      });
-    if (owner && selectedPanes.length > 1)
-      items.push({
-        id: 'group-tabs',
-        label: 'Group selected terminals as tabs',
-        run: close(() => {
-          const members = owner.panes
-            .filter((pane) => selectedPanes.includes(pane.id))
-            .map((pane) => pane.id);
-          if (members.length < 2) return;
-          const group = { id: uid(), panes: members };
-          updateWorkspace({
-            ...owner,
-            tabGroups: [
-              ...(owner.tabGroups || []).map((g) => ({
-                ...g,
-                panes: g.panes.filter((id) => !members.includes(id)),
-              })),
-              group,
-            ],
-          });
-          (device.activeTerminalTabs ||= {})[group.id] = p.id;
-          persistDevice();
-        }),
-      });
-    if (recentDictation?.target === p.id)
-      items.push({
-        id: 'copy-last',
-        label: 'Copy last dictation',
-        run: close(() => {
-          void navigator.clipboard.writeText(recentDictation!.text).catch(fail);
-        }),
-      });
-    if (heldDictation?.target === p.id)
-      items.push(
-        {
-          id: 'send-held',
-          label: 'Send held dictation',
-          run: close(() => void task(sendHeldDictation)),
-        },
-        {
-          id: 'copy-held',
-          label: 'Copy held dictation',
-          run: close(copyHeldDictation),
-        },
-        {
-          id: 'discard-held',
-          label: 'Discard held dictation',
-          run: close(() => (heldDictation = null)),
-        },
-      );
-    items.push({ id: 'transfer', label: 'Move or duplicate to workspace', kind: 'transfer' });
-    const selection = paneMenu.selection || '';
-    items.push({
-      id: 'dictionary',
-      label: selection
-        ? 'Add selection to dictation dictionary'
-        : 'Add dictation dictionary phrase',
-      run: close(() => {
-        dictionarySelection = selection;
-      }),
-    });
-    items.push(
-      { id: 'host', label: 'Change host', run: () => choosePaneHost(p) },
-      { id: 'upload', label: 'Upload file', run: () => openFiles(p, 'upload') },
-      { id: 'files', label: 'Files and previews', run: () => openFiles(p, 'documents') },
-      {
-        id: 'status',
-        label: p.hideStatus ? 'Show status line' : 'Hide status line',
-        run: () => toggleStatus(p),
-      },
-      {
-        id: 'copy',
-        label: 'Copy',
-        run: close(() => {
-          void terminals.get(p.id)?.copy();
-        }),
-      },
-      {
-        id: 'paste',
-        label: 'Paste',
-        run: close(() => {
-          void task(async () => {
-            const terminal = terminals.get(p.id);
-            if (terminal?.pasteClipboard) await terminal.pasteClipboard();
-            else await terminal?.paste(await navigator.clipboard.readText());
-          });
-        }),
-      },
-      {
-        id: 'select-all',
-        label: 'Select all',
-        run: close(() => {
-          terminals.get(p.id)?.selectAll();
-        }),
-      },
-      {
-        id: 'find',
-        label: 'Find',
-        run: close(() => {
-          terminals.get(p.id)?.search();
-        }),
-      },
-      {
-        id: 'export',
-        label: 'Export terminal output',
-        run: close(() => {
-          terminals.get(p.id)?.exportOutput();
-        }),
-      },
-      {
-        id: 'clear',
-        label: 'Clear scrollback',
-        run: close(() => {
-          terminals.get(p.id)?.clear();
-        }),
-      },
-      {
-        id: 'colors',
-        label: 'Terminal colors',
-        run: close(() => {
-          colorPane = p;
-          modal = 'pane-colors';
-        }),
-      },
-      {
-        id: 'maximize',
-        label: 'Maximise / restore',
-        run: close(() => {
-          maximize = maximize === p.id ? '' : p.id;
-        }),
-      },
-    );
-    if (p.sessionId)
-      items.push({
-        id: 'rename',
-        label: nativePane(p) ? 'Rename PowerShell session' : 'Rename tmux session',
-        run: close(() => {
-          renameTarget = p;
-          renameValue = p.name;
-          modal = 'rename';
-        }),
-      });
-    items.push({ id: 'close', label: 'Close', run: close(() => closePane(p)) });
-    return items;
-  });
-  function contextPane(
-    e: MouseEvent,
-    p: Pane,
-    selection = terminals.get(p.id)?.selection?.() || '',
-  ) {
-    e.preventDefault();
-    paneMenu = {
-      pane: p,
-      selection: selection.trim().slice(0, 160),
-      x: Math.max(8, Math.min(e.clientX, innerWidth - 316)),
-      y: Math.max(8, Math.min(e.clientY, innerHeight - 420)),
-    };
-  }
-  function captureTerminalSelection(node: HTMLElement, pane: Pane) {
-    const capture = (event: MouseEvent) => {
-      const selection = terminals.get(pane.id)?.selection?.() || '';
-      if (!selection.trim()) return;
-      event.stopPropagation();
-      contextPane(event, pane, selection);
-    };
-    node.addEventListener('contextmenu', capture, true);
-    return {
-      update(value: Pane) {
-        pane = value;
-      },
-      destroy() {
-        node.removeEventListener('contextmenu', capture, true);
-      },
-    };
-  }
   $effect(() => {
-    if (capturingShortcut && modal !== 'settings') {
-      capturingShortcut = null;
-      void task(() => configureShortcut());
-    }
-  });
-  $effect(() => {
-    if (capturingAppShortcut && modal !== 'settings') capturingAppShortcut = null;
-  });
-  let launchAxis = $state<'row' | 'column' | null>(null);
-  $effect(() => {
-    if (
-      voiceMode === 'command' &&
-      modal !== 'command' &&
-      (voiceStatus === 'loading' ||
-        voiceStatus === 'listening' ||
-        voiceStatus === 'finishing-recording')
-    )
-      void cancelVoice().catch(fail);
-  });
-  let launchFromCommand = $state(false);
-  let launchChooseRepo = $state(false);
-  let launchWorkspaceId = '';
-  let mounted = false;
-  const workspaces = $derived(Object.values(profiles).flatMap((p) => p.workspaces));
-  const workspaceLayouts = $derived(
-    Object.fromEntries(
-      workspaces.map((w) => [
-        w.id,
-        tabLayout(
-          reconcileViewerLayout(
-            terminalProjection(viewerLayouts[w.id] || w.layout, [
-              ...w.panes.filter((p) => !detachedPanes.has(p.id)).map((p) => p.id),
-              ...viewers.filter((v) => v.workspaceId === w.id).map((v) => v.id),
-            ]),
-            terminalProjection(
-              w.layout,
-              w.panes.filter((p) => !detachedPanes.has(p.id)).map((p) => p.id),
-            ) || { kind: 'pane' as const, id: '' },
-            viewers.filter((v) => v.workspaceId === w.id).map((v) => v.id),
-          ) || { kind: 'pane' as const, id: '' },
-          cleanTabGroups(
-            w.tabGroups,
-            w.panes.map((p) => p.id),
-          ),
-          tabSelections(w, device.activeTerminalTabs),
-        ),
-      ]),
-    ),
-  );
-  function layoutFor(w: Workspace): Layout {
-    return workspaceLayouts[w.id] || w.layout;
-  }
-  const workspaceBoxes = $derived(
-    Object.fromEntries(workspaces.map((w) => [w.id, rectangles(layoutFor(w))])),
-  );
-  const current = $derived(workspaces.find((w) => w.id === device.activeWorkspace));
-  // Per-pane state goes when its pane goes, so the device file does not grow.
-  const seenContainers = new Set<string>();
-  $effect(() => {
-    const { byWorkspace, byGroup } = paneContainers(workspaces);
-    const live = new Set(workspaces.flatMap((w) => w.panes.map((p) => p.id)));
-    const hostIds = new Set([HOSTLESS, ...device.hosts.map((h) => h.id)]);
-    const complete = device.hosts.every((h) => !!profiles[h.id]);
-    untrack(() => {
-      for (const id of [...byWorkspace.keys(), ...byGroup.keys()]) seenContainers.add(id);
-      const status = pruneKeys(paneStatus, live);
-      if (status !== paneStatus) paneStatus = status;
-      const states = pruneKeys(terminalState, live);
-      if (states !== terminalState) terminalState = states;
-      const progress = pruneKeys(terminalProgress, live);
-      if (progress !== terminalProgress) terminalProgress = progress;
-      alertThrottle.retain(live);
-      let changed = false;
-      const focus = prunePaneChoices(
-        device.localFocus || {},
-        byWorkspace,
-        seenContainers,
-        complete,
-      );
-      if (device.localFocus && focus !== device.localFocus) {
-        device.localFocus = focus;
-        changed = true;
-      }
-      const tabs = prunePaneChoices(
-        device.activeTerminalTabs || {},
-        byGroup,
-        seenContainers,
-        complete,
-      );
-      if (device.activeTerminalTabs && tabs !== device.activeTerminalTabs) {
-        device.activeTerminalTabs = tabs;
-        changed = true;
-      }
-      for (const key of ['clipboardByHost', 'collapsedHosts'] as const) {
-        const record = device[key] as Record<string, unknown> | undefined;
-        if (!record) continue;
-        const pruned = pruneKeys(record, hostIds);
-        if (pruned !== record) {
-          (device as unknown as Record<string, unknown>)[key] = pruned;
-          changed = true;
-        }
-      }
-      if (changed) persistDevice();
-    });
+    if (capturingAppShortcut && ui.modal !== 'settings') capturingAppShortcut = null;
   });
   let searchOrigin = $state<SearchTarget | null>(null);
   let searchPanel = $state<TerminalSearch>();
   const searchTargets = $derived(
-    workspaces.flatMap((w) =>
+    panes.workspaces.flatMap((w) =>
       w.panes.map((p) => ({
         paneId: p.id,
         hostId: p.hostId,
-        host: device.hosts.find((h) => h.id === p.hostId)?.name || 'Unavailable host',
+        host: ui.host(p.hostId)?.name || 'Unavailable host',
         workspaceId: w.id,
         workspace: w.name,
         terminal: p.name,
         session: [
           p.agent,
-          paneStatus[p.id]?.sessionId ||
-            inventories[p.hostId]?.sessions.find((session) => session.id === p.sessionId)?.name ||
+          ui.paneStatus[p.id]?.sessionId ||
+            ui.inventories[p.hostId]?.sessions.find((session) => session.id === p.sessionId)
+              ?.name ||
             (p.shell ? 'Plain shell' : p.sessionId),
         ]
           .filter(Boolean)
@@ -1673,32 +584,32 @@
       })),
     ),
   );
-  function openTerminalSearch(paneId = current?.focused || '') {
-    if (modal || dictationActive) {
-      notice = 'Finish the current action before searching.';
+  function openTerminalSearch(paneId = panes.current?.focused || '') {
+    if (ui.modal || dictation.active) {
+      ui.notice = 'Finish the current action before searching.';
       return;
     }
     const origin =
       searchTargets.find((target) => target.paneId === paneId) ||
       searchTargets.find((target) => !!terminals.get(target.paneId)?.context());
     if (!origin) {
-      notice = 'Select a live terminal to search.';
+      ui.notice = 'Select a live terminal to search.';
       return;
     }
-    paneMenu = null;
+    ui.paneMenu = null;
     searchOrigin = null;
     void tick().then(() => {
       searchOrigin = origin;
     });
   }
   function closeTerminalSearch() {
-    const id = current?.focused;
+    const id = panes.current?.focused;
     searchOrigin = null;
     if (id) void tick().then(() => terminals.get(id)?.focus?.());
   }
   async function jumpSearch(hit: SearchHit) {
-    if (dictationActive) throw Error('Stop dictation before switching terminals.');
-    const owner = workspaces.find((w) => w.panes.some((p) => p.id === hit.paneId));
+    if (dictation.active) throw Error('Stop dictation before switching terminals.');
+    const owner = panes.owner(hit.paneId);
     const controls = terminals.get(hit.paneId);
     if (!owner || !controls?.revealMatch?.(hit.id)) return false;
     selectWorkspace(owner);
@@ -1732,561 +643,28 @@
         void call('terminal_window_focus', { paneId: hit.paneId }).catch(fail);
       });
   }
-
-  const host = $derived(device.hosts.find((h) => h.id === device.activeHost));
-  const inv = $derived(inventories[form.hostId || device.activeHost]);
-  const activePane = $derived(current?.panes.find((p) => p.id === current.focused));
-  const dictationActive = $derived(voiceMode === 'dictation' && voiceStatus !== 'idle');
-  function revealDictationTarget(target: string) {
-    const w = workspaces.find((w) => w.panes.some((p) => p.id === target));
-    if (!w) throw new Error('The dictation terminal was closed. Your text is preserved.');
-    device.activeWorkspace = w.id;
-    device.activeHost = w.hostId;
-    w.focused = target;
-    if (maximize && maximize !== target) maximize = '';
-    if (device.collapsedHosts?.[w.hostId])
-      device.collapsedHosts = { ...device.collapsedHosts, [w.hostId]: false };
-    return w;
-  }
-  $effect(() => {
-    if (dictationActive && workspaces.some((w) => w.panes.some((p) => p.id === voiceTarget))) {
-      revealDictationTarget(voiceTarget);
-      // Dialogs must not cover the receiving terminal during capture or final paste.
-      if (modal) modal = '';
-    }
-  });
-  async function focusDictationTarget(target: string) {
-    revealDictationTarget(target);
-    modal = '';
-    paneMenu = null;
-    if (detachedPanes.has(target)) {
-      await call('terminal_window_focus', { paneId: target });
-      return;
-    }
-    if (desktop) {
-      const window = getCurrentWindow();
-      await window.show();
-      await window.unminimize();
-      await window.setFocus();
-    }
-    await tick();
-    const pane = document.querySelector<HTMLElement>(`[data-pane-id="${CSS.escape(target)}"]`);
-    if (!pane || !pane.getClientRects().length || pane.getBoundingClientRect().width <= 0)
-      throw new Error('The dictation terminal is not visible. Your text is preserved.');
-    pane.querySelector<HTMLTextAreaElement>('.xterm-helper-textarea')?.focus();
-  }
-  const selectedAgent = $derived(inv?.agents.find((a) => a.id === form.agent));
-  function hostDefaults(): Host {
-    return {
-      id: uid(),
-      name: '',
-      kind: 'ssh',
-      address: '',
-      user: '',
-      key: '',
-      jump: '',
-      distro: '',
-      socket: '',
-    };
-  }
-  function fail(e: unknown) {
-    error = String(e);
-    diagnostic('operation.failed');
-  }
-  let pendingTasks = 0;
-  async function task(fn: () => Promise<void>) {
-    error = '';
-    pendingTasks++;
-    busy = true;
-    try {
-      await fn();
-    } catch (e) {
-      fail(e);
-    } finally {
-      busy = --pendingTasks > 0;
-    }
-  }
   function persistDevice() {
     deviceStore.persist();
   }
   function setPasteConfirmation(confirm: boolean) {
-    device.terminal = { ...(device.terminal || terminalDefaults), confirmPaste: confirm };
+    ui.device.terminal = { ...(ui.device.terminal || terminalDefaults), confirmPaste: confirm };
     persistDevice();
     if (!confirm)
-      notice = 'Multi-line paste no longer asks first. Change this in Settings > Terminal.';
+      ui.notice = 'Multi-line paste no longer asks first. Change this in Settings > Terminal.';
   }
   function saved(hostId: string) {
     deviceStore.saved(hostId);
   }
-  function updateWorkspace(w: Workspace) {
-    const p = profiles[w.hostId];
-    w = {
-      ...w,
-      tabGroups: cleanTabGroups(
-        w.tabGroups,
-        w.panes.map((p) => p.id),
-      ),
-    };
-    const previous = p.workspaces.find((x) => x.id === w.id);
-    if (w.layout !== previous?.layout) viewerLayouts[w.id] = w.layout;
-    let savedLayout = retainTabPanes(w.layout, w.tabGroups);
-    for (const pane of w.panes)
-      if (detachedPanes.has(pane.id) && !ids(savedLayout).includes(pane.id))
-        savedLayout = ids(savedLayout).filter(Boolean).length
-          ? insertAt(savedLayout, ids(savedLayout).filter(Boolean)[0], pane.id, 'right')
-          : { kind: 'pane', id: pane.id };
-    w = {
-      ...w,
-      layout: terminalProjection(
-        savedLayout,
-        w.panes.map((p) => p.id),
-      ) || { kind: 'pane' as const, id: '' },
-    };
-    p.workspaces = p.workspaces.map((x) => (x.id === w.id ? w : x));
-    saved(w.hostId);
-  }
   function resizeSidebar(width: number) {
-    device.sidebarWidth = Math.round(Math.max(180, Math.min(520, window.innerWidth - 360, width)));
+    ui.device.sidebarWidth = Math.round(
+      Math.max(180, Math.min(520, window.innerWidth - 360, width)),
+    );
   }
-  function selectWorkspace(w: Workspace) {
-    if (dictationActive && !w.panes.some((p) => p.id === voiceTarget)) {
-      notice = 'Stop dictation before switching workspaces.';
-      return;
-    }
-    selectedPanes = [];
-    selectionWorkspace = w.id;
-    device.collapsedHosts = { ...device.collapsedHosts, [w.hostId]: false };
-    device.activeWorkspace = w.id;
-    device.activeHost = w.hostId;
-    maximize = '';
-    persistDevice();
-    if (desktop) void call('terminal_workspace_activate', { workspaceId: w.id }).catch(fail);
-    if (w.hostId === HOSTLESS) {
-      const needs = workspaceHosts(w, device.hosts, connections);
-      if (needs.panes.some((pane, index) => pane.hostId !== w.panes[index].hostId))
-        updateWorkspace({ ...w, panes: needs.panes });
-      if (needs.required.length || needs.missing.length) hostlessConnect = w;
-    }
-  }
-  let hostlessConnect = $state<Workspace | null>(null);
-  const hostlessNeeds = $derived(
-    hostlessConnect ? workspaceHosts(hostlessConnect, device.hosts, connections) : null,
-  );
   function newHostlessWorkspace() {
-    const profile = (profiles[HOSTLESS] ||= blankProfile());
-    const workspace: Workspace = {
-      id: uid(),
-      name: 'Hostless workspace',
-      hostId: HOSTLESS,
-      panes: [],
-      layout: { kind: 'pane', id: '' },
-      focused: '',
-    };
-    profile.workspaces.push(workspace);
-    saved(HOSTLESS);
-    selectWorkspace(workspace);
+    const workspace = panes.newHostlessWorkspace();
     workspaceTarget = workspace;
-    renameValue = workspace.name;
-    modal = 'workspace';
-  }
-  const mixedRecovery = new MixedHostRecovery();
-  let recoveryPrompts = $state<HostRecovery[]>([]);
-  let connectionTarget = $state<Host | null>(null);
-  function offerMixedRecovery(owner: string) {
-    recoveryPrompts = [
-      ...recoveryPrompts,
-      ...mixedRecovery.plan(
-        owner,
-        profiles[owner]?.workspaces || [],
-        device.hosts,
-        new Set(
-          device.hosts
-            .filter((h) => ['Connected', 'Connecting'].includes(connections[h.id]))
-            .map((h) => h.id),
-        ),
-      ),
-    ];
-  }
-  async function answerRecovery(prompt: HostRecovery, accept: boolean) {
-    mixedRecovery.answer(prompt.hostId);
-    recoveryPrompts = recoveryPrompts.filter((p) => p.hostId !== prompt.hostId);
-    if (!accept) return;
-    const host = device.hosts.find((h) => h.id === prompt.hostId);
-    if (host && !['Connected', 'Connecting'].includes(connections[host.id])) {
-      for (const w of workspaces)
-        for (const p of w.panes) if (p.hostId === host.id) terminals.get(p.id)?.resume?.();
-      await connect(host);
-    }
-  }
-  function showHostConnection(p: Pane) {
-    connectionTarget = device.hosts.find((h) => h.id === p.hostId) || null;
-    if (connectionTarget) modal = 'terminal-host-connection';
-  }
-  async function disconnectHostTerminals(hostId: string) {
-    mixedRecovery.answer(hostId);
-    recoveryPrompts = recoveryPrompts.filter((p) => p.hostId !== hostId);
-    await disconnectHost(hostId);
-    await Promise.all(
-      workspaces
-        .flatMap((w) => w.panes)
-        .filter((p) => p.hostId === hostId)
-        .map((p) => terminals.get(p.id)?.disconnect?.()),
-    );
-    modal = '';
-  }
-  async function connectAllHosts() {
-    await Promise.allSettled(
-      device.hosts
-        .filter(
-          (host) => connections[host.id] !== 'Connected' && connections[host.id] !== 'Connecting',
-        )
-        .map(async (host) => {
-          mixedRecovery.answer(host.id);
-          recoveryPrompts = recoveryPrompts.filter((p) => p.hostId !== host.id);
-          for (const w of workspaces)
-            for (const p of w.panes) if (p.hostId === host.id) terminals.get(p.id)?.resume?.();
-          await connect(host);
-        }),
-    );
-  }
-  async function connectHostTerminals(host: Host) {
-    for (const w of workspaces)
-      for (const p of w.panes) if (p.hostId === host.id) terminals.get(p.id)?.resume?.();
-    modal = '';
-    if (connections[host.id] !== 'Connected') await connect(host);
-  }
-  function disconnectHost(hostId: string) {
-    return net.disconnect(hostId);
-  }
-  function checkConnections(onlyHost?: string) {
-    return net.check(onlyHost);
-  }
-  function reconnectHost(h: Host) {
-    return net.reconnectHost(h);
-  }
-  function connect(h: Host) {
-    return net.connect(h);
-  }
-  async function refresh(id = device.activeHost) {
-    const attempt = hostAttempts.get(id);
-    const result = await rpc<Inventory>(id, 'inventory');
-    if (attempt !== hostAttempts.get(id) || !reconnectHosts.has(id)) return;
-    inventories[id] = result;
-    // Repository scan notes stay in the picker, not the global title bar.
-    if (profiles[id])
-      profiles[id].discovery = {
-        observedAt: Date.now(),
-        machine: result.machine,
-        user: result.user,
-        agents: result.agents.map((a) => ({
-          id: a.id,
-          path: a.path,
-          version: a.version,
-          models: a.models,
-        })),
-        repos: result.repos.map((r) => ({ path: r.path, branch: r.branch, dirty: r.dirty })),
-      };
-    const joinedHost = device.hosts.find((h) => h.id === id);
-    if (joinedHost) {
-      const changed = refreshHostIdentity(joinedHost, result, Object.values(profiles));
-      for (const [hostId, profile] of Object.entries(profiles))
-        if (changed.has(profile)) saved(hostId);
-    }
-    persistDevice();
-    if (id === device.activeHost) sessions = result.sessions;
-  }
-  function replaceProfile(hostId: string, profile: Profile) {
-    const previous = new Set(profiles[hostId]?.workspaces.map((w) => w.id) || []);
-    const retained = new Set(profile.workspaces.map((w) => w.id));
-    const displaced = viewers.filter(
-      (v) => previous.has(v.workspaceId) && !retained.has(v.workspaceId),
-    );
-    if (displaced.length) {
-      profile = { ...profile, workspaces: [...profile.workspaces] };
-      let destination = profile.workspaces[0];
-      if (!destination) {
-        destination = {
-          id: uid(),
-          hostId,
-          name: 'Open viewers',
-          panes: [],
-          layout: { kind: 'pane', id: '' },
-          focused: '',
-        };
-        profile.workspaces.push(destination);
-      }
-      for (const viewer of displaced) viewer.workspaceId = destination.id;
-      if (previous.has(device.activeWorkspace) && !retained.has(device.activeWorkspace))
-        device.activeWorkspace = destination.id;
-      notice =
-        'The host workspace changed. Your open viewers and edits were kept in ' +
-        destination.name +
-        '.';
-    }
-    profiles[hostId] = profile;
-  }
-  async function joined(id: string, attempt = hostAttempts.get(id)) {
-    const currentAttempt = () => hostAttempts.get(id) === attempt && reconnectHosts.has(id);
-    if (!currentAttempt()) return;
-    try {
-      let profile: Profile;
-      try {
-        profile = rebindOwner(await rpc<Profile>(id, 'profile_load'), id);
-        deviceStore.blocked[id] = false;
-      } catch (e) {
-        deviceStore.blocked[id] = true;
-        profile = profiles[id] || blankProfile();
-        error = `Host configuration unavailable: ${e}. Changes will be saved on this device.`;
-        deviceStore.saveState[id] = 'Saved on this device';
-      }
-      if (!currentAttempt()) return;
-      const recovery = deviceStore.recovery;
-      if (recovery[id]) {
-        if (recovery[id].revision === profile.revision) {
-          replaceProfile(id, recovery[id]);
-          saved(id);
-        } else {
-          replaceProfile(id, recovery[id]);
-          deviceStore.saveState[id] = 'Conflict';
-          error =
-            'This host has newer workspace changes. Your local recovery copy is preserved. Reload the host profile in settings to use the remote version.';
-        }
-      } else replaceProfile(id, profile);
-      connections[id] = 'Connected';
-      for (const w of profiles[id].workspaces) {
-        const focused = device.localFocus?.[w.id];
-        if (focused && w.panes.some((p) => p.id === focused)) w.focused = focused;
-      }
-      await refresh(id);
-      if (!currentAttempt()) return;
-      if (!device.activeWorkspace || !workspaces.some((w) => w.id === device.activeWorkspace))
-        device.activeWorkspace = profile.workspaces[0]?.id || '';
-      persistDevice();
-      offerMixedRecovery(id);
-    } catch (e) {
-      fail(e);
-    }
-  }
-  function showLaunch(axis: 'row' | 'column' | null = null) {
-    launchFromCommand = false;
-    launchChooseRepo = false;
-    launchWorkspaceId = axis ? current?.id || '' : '';
-    launchAxis = axis;
-    const targetHost = axis ? activePane?.hostId || device.activeHost : device.activeHost;
-    form = {
-      hostId: targetHost,
-      name: axis ? '' : 'New workspace',
-      repo: '',
-      identity: '',
-      agent: 'shell',
-      model: '',
-      effort: '',
-      count: 1,
-      brief: true,
-      exactName: false,
-    };
-    modal = 'launch';
-  }
-  function promptValues(p?: Pane): PromptValues {
-    const hostId = p?.hostId || settingsHost || device.activeHost;
-    const h = device.hosts.find((h) => h.id === hostId);
-    return {
-      host: h?.name || 'this host',
-      address: h?.address || 'local',
-      user: h?.user || inventories[hostId]?.user || 'current user',
-      repo: p?.repo || '/path/to/repository',
-      identity: p?.identity || 'the existing host identity',
-      agent: p?.agent || 'codex',
-      model: p?.model || 'agent default',
-      effort: p?.effort || 'agent default',
-      guidance: p ? profiles[hostId]?.preferences.guidance || '' : guidance,
-    };
-  }
-  function promptFor(p: Pane) {
-    return renderPrompt(
-      profiles[p.hostId]?.preferences.promptTemplate ?? defaultPrompt,
-      promptValues(p),
-    );
-  }
-  async function launch() {
-    if (!Number.isSafeInteger(form.count) || form.count < 1)
-      throw new Error('Choose a positive whole number of terminals.');
-    if (!form.name.trim() && !launchAxis) throw new Error('Give this workspace a name.');
-    if (connections[form.hostId] !== 'Connected')
-      throw new Error('Connect to the selected host first.');
-    const destination = launchAxis ? workspaces.find((w) => w.id === launchWorkspaceId) : undefined;
-    if (launchAxis && !destination)
-      throw new Error('The destination workspace was closed. Reopen the command.');
-    const options = $state.snapshot(form);
-    if (launchChooseRepo && !options.repo) throw new Error('Choose a repository before starting.');
-    const managed =
-      device.hosts.find((h) => h.id === options.hostId)?.kind === 'powershell' ||
-      (launchFromCommand && (options.agent !== 'shell' || options.repo || options.exactName));
-    if (
-      managed &&
-      options.agent !== 'shell' &&
-      !inventories[options.hostId]?.agents.find((a) => a.id === options.agent)?.path
-    )
-      throw new Error(`Install ${options.agent} on this host first using Install agents.`);
-    if (managed && options.exactName && !/^[\w-]+$/.test(options.name))
-      throw new Error('Use letters, numbers, underscores and hyphens for session names.');
-    let workspace: Workspace;
-    const panes = Array.from({ length: form.count }, (_, i): Pane => ({
-      id: uid(),
-      hostId: form.hostId,
-      hostKey: device.hosts.find((h) => h.id === form.hostId)?.fingerprint,
-      sessionId: '',
-      shell: !managed,
-      name: `Terminal ${i + 1}`,
-      repo: '',
-      identity: '',
-      agent: 'shell',
-      model: '',
-      effort: '',
-      operation: uid(),
-    }));
-    if (launchAxis && destination) {
-      workspace = {
-        ...$state.snapshot(destination),
-        panes: [...destination.panes, ...panes],
-        layout: layoutFor(destination),
-      };
-      for (const p of panes)
-        workspace.layout = ids(workspace.layout).filter(Boolean).length
-          ? split(
-              workspace.layout,
-              ids(workspace.layout).includes(destination.focused)
-                ? destination.focused
-                : ids(workspace.layout)[0],
-              p.id,
-              launchAxis,
-            )
-          : { kind: 'pane', id: p.id };
-      workspace.focused = panes[0].id;
-      updateWorkspace(workspace);
-    } else {
-      workspace = {
-        id: uid(),
-        hostId: form.hostId,
-        name: form.name.trim() || 'Workspace',
-        panes,
-        layout: balanced(
-          panes.map((p) => p.id),
-          stageWidth,
-        ),
-        focused: panes[0].id,
-      };
-      profiles[form.hostId].workspaces.push(workspace);
-      saved(form.hostId);
-    }
-    selectWorkspace(workspace);
-    modal = '';
-    if (managed) {
-      let started = 0;
-      const failures: string[] = [];
-      for (const pane of panes) {
-        const target = workspaces
-          .find((w) => w.id === workspace.id)
-          ?.panes.find((p) => p.id === pane.id);
-        if (!target) continue;
-        Object.assign(target, {
-          name: options.exactName
-            ? options.name
-            : `${options.agent}-${target.operation.slice(0, 8)}`,
-          repo: options.repo,
-          identity: options.identity,
-          agent: options.agent,
-          model: options.model,
-          effort: options.effort,
-        });
-        try {
-          const session = await rpc<Session>(options.hostId, 'create', {
-            ...target,
-            name: options.exactName
-              ? options.name
-              : `${options.agent}-${target.operation.slice(0, 8)}`,
-            exactName: options.exactName,
-            path: options.repo,
-            install: false,
-            brief:
-              options.repo && options.agent !== 'shell' && options.brief ? promptFor(target) : '',
-          });
-          Object.assign(target, {
-            sessionId: session.id,
-            stamp: session.stamp,
-            name: session.name,
-            error: undefined,
-          });
-          started++;
-        } catch (e) {
-          target.error = String(e);
-          failures.push(String(e));
-        }
-        saved(workspace.hostId);
-      }
-      if (failures.length)
-        throw new Error(
-          `${started} of ${panes.length} sessions started. Failed terminals remain visible for retry. ${failures[0]}`,
-        );
-    }
-  }
-  async function retry(p: Pane) {
-    const s = await rpc<Session>(p.hostId, 'create', {
-      ...p,
-      path: p.repo,
-      brief: p.agent !== 'shell' ? promptFor(p) : '',
-    });
-    const owner = workspaces.find((w) => w.panes.some((pane) => pane.id === p.id));
-    if (owner) {
-      owner.panes = owner.panes.map((x) =>
-        x.id === p.id
-          ? { ...x, sessionId: s.id, stamp: s.stamp, name: s.name, error: undefined }
-          : x,
-      );
-      saved(owner.hostId);
-    }
-  }
-  let pendingClose: (() => void) | null = null;
-  let nativeCloseTargets = $state<{ hostId: string; ids: string[] }[]>([]);
-  let nativeCloseDone: (() => void | Promise<void>) | null = null;
-  function nativePane(p: Pane) {
-    return device.hosts.find((h) => h.id === p.hostId)?.kind === 'powershell';
-  }
-  function offerNativeClose(panes: Pane[], done: () => void | Promise<void>) {
-    const groups = new Map<string, Set<string>>();
-    for (const p of panes)
-      if (nativePane(p) && p.sessionId) {
-        if (!groups.has(p.hostId)) groups.set(p.hostId, new Set());
-        groups.get(p.hostId)!.add(p.sessionId);
-      }
-    if (!groups.size) return false;
-    nativeCloseTargets = [...groups].map(([hostId, ids]) => ({ hostId, ids: [...ids] }));
-    nativeCloseDone = done;
-    modal = 'close-native';
-    return true;
-  }
-  async function finishNativeClose(action: 'end' | 'background' | 'external') {
-    for (const target of nativeCloseTargets) {
-      const host = device.hosts.find((h) => h.id === target.hostId);
-      if (!host) throw new Error('The local host was removed. Cancel and reconnect it first.');
-      if (connections[host.id] !== 'Connected') await connect(host);
-      await rpc(host.id, 'native_close', { ids: target.ids, action });
-    }
-    const done = nativeCloseDone;
-    nativeCloseDone = null;
-    nativeCloseTargets = [];
-    modal = '';
-    await done?.();
-  }
-  function cancelNativeClose() {
-    nativeCloseDone = null;
-    modal = '';
-  }
-  function confirmPendingClose() {
-    const action = pendingClose;
-    pendingClose = null;
-    modal = '';
-    action?.();
+    ui.renameValue = workspace.name;
+    ui.modal = 'workspace';
   }
   async function destroyApp() {
     await deviceStore.saveNow();
@@ -2307,803 +685,24 @@
       fail,
     );
   }
-  let closingApp = $state(false);
-  $effect(() => {
-    if (modal !== 'close-native') closingApp = false;
-  });
   async function closeAnyway() {
     closeFailure = '';
     await deviceStore.saveNow().catch(() => {});
     await call('app_close');
   }
-  function closePane(p: Pane, confirmed = false) {
-    if (dictationActive && p.id === voiceTarget) {
-      notice = 'Stop dictation before closing its terminal.';
-      return;
-    }
-    const owner = workspaces.find((w) => w.panes.some((pane) => pane.id === p.id));
-    if (!owner) return;
-    if (
-      owner.hostId !== HOSTLESS &&
-      !confirmed &&
-      nativePane(p) &&
-      offerNativeClose([p], () => closePane(p, true))
-    )
-      return;
-    if (!p.sessionId && !confirmed) {
-      pendingClose = () => closePane(p, true);
-      modal = 'close-terminal';
-      return;
-    }
-    const layout = remove(retainTabPanes(layoutFor(owner), owner.tabGroups), p.id);
-    if (!layout) {
-      closeWorkspace(owner, confirmed);
-      return;
-    }
-    updateWorkspace({
-      ...owner,
-      layout,
-      panes: owner.panes.filter((x) => x.id !== p.id),
-      focused: owner.panes.find((x) => x.id !== p.id)?.id || '',
-    });
-    maximize = '';
-  }
-  function closeWorkspace(w: Workspace, confirmed = false) {
-    if (viewers.some((v) => v.workspaceId === w.id && v.locked)) {
-      notice = 'Save or discard viewer edits before closing this workspace.';
-      return;
-    }
-    if (dictationActive && w.panes.some((p) => p.id === voiceTarget)) {
-      notice = 'Stop dictation before closing its workspace.';
-      return;
-    }
-    if (
-      w.hostId !== HOSTLESS &&
-      !confirmed &&
-      offerNativeClose(w.panes, () => closeWorkspace(w, true))
-    )
-      return;
-    if (!confirmed && w.panes.some((p) => !p.sessionId)) {
-      pendingClose = () => closeWorkspace(w, true);
-      modal = 'close-terminal';
-      return;
-    }
-    viewers = viewers.filter((v) => v.workspaceId !== w.id);
-    delete viewerLayouts[w.id];
-    profiles[w.hostId].workspaces = profiles[w.hostId].workspaces.filter((x) => x.id !== w.id);
-    saved(w.hostId);
-    if (device.activeWorkspace === w.id) {
-      const next = profiles[w.hostId].workspaces[0] || workspaces[0];
-      device.activeWorkspace = next?.id || '';
-      if (next) device.activeHost = next.hostId;
-      maximize = '';
-    }
-    persistDevice();
-    notice = w.panes.some(nativePane)
-      ? 'Workspace closed.'
-      : 'Workspace deleted. Its tmux sessions are still running.';
-  }
-  async function deleteHost(h: Host, confirmed = false) {
-    if (!confirmed && h.kind === 'powershell') {
-      if (connections[h.id] !== 'Connected') await connect(h);
-      const sessions = await rpc<Session[]>(h.id, 'sessions');
-      if (
-        offerNativeClose(
-          sessions.map((s) => ({ hostId: h.id, sessionId: s.id }) as Pane),
-          () => deleteHost(h, true),
-        )
-      )
-        return;
-    }
-    const owned = new Set(profiles[h.id]?.workspaces.map((w) => w.id) || []);
-    if (viewers.some((v) => v.locked && (owned.has(v.workspaceId) || v.pane.hostId === h.id)))
-      throw new Error('Save or discard viewer edits before removing this host.');
-    viewers = viewers.filter((v) => !owned.has(v.workspaceId) && v.pane.hostId !== h.id);
-    deviceStore.cancel(h.id);
-    if (
-      workspaces.some((w) => w.panes.some((p) => p.id === voiceTarget && p.hostId === h.id)) &&
-      voiceStatus !== 'idle'
-    )
-      await cancelVoice();
-    for (const p of workspaces.flatMap((w) => w.panes).filter((p) => p.hostId === h.id))
-      await call('terminal_close', { id: p.id });
-    await disconnectHost(h.id);
-    await deviceStore.settled(h.id);
-    const removedActive = profiles[h.id]?.workspaces.some((w) => w.id === device.activeWorkspace);
-    delete profiles[h.id];
-    deviceStore.forget(h.id);
-    delete inventories[h.id];
-    delete connections[h.id];
-    delete logs[h.id];
-    device.hosts = device.hosts.filter((x) => x.id !== h.id);
-    if (device.collapsedHosts) delete device.collapsedHosts[h.id];
-    if (removedActive) device.activeWorkspace = workspaces[0]?.id || '';
-    if (device.activeHost === h.id)
-      device.activeHost =
-        workspaces.find((w) => w.id === device.activeWorkspace)?.hostId ||
-        device.hosts[0]?.id ||
-        '';
-    maximize = '';
-    persistDevice();
-    modal = '';
-    deleteHostTarget = null;
-    notice = 'Host removed from this device. Remote workspaces and tmux sessions are unchanged.';
-  }
-  async function refreshSessions(hostId: string) {
-    const result = await rpc<Session[]>(hostId, 'sessions');
-    if (inventories[hostId]) inventories[hostId].sessions = result;
-    sessions = result;
-  }
-  async function showSessions(p: Pane | null = null) {
-    sessionPane = p;
-    sessionHost = p?.hostId || device.activeHost;
-    const h = device.hosts.find((h) => h.id === sessionHost);
-    if (!h) throw new Error('Choose a host first.');
-    if (connections[sessionHost] !== 'Connected') {
-      void connect(h);
-      return;
-    }
-    try {
-      await refreshSessions(sessionHost);
-    } catch (e) {
-      connections[sessionHost] = 'Disconnected';
-      void connect(h);
-      throw new Error(`Connection lost. Reconnecting; reopen Tmux when connected. ${e}`, {
-        cause: e,
-      });
-    }
-    modal = 'sessions';
-  }
-  async function startSession() {
-    await refresh(sessionHost);
-    sessionStep = 0;
-    nameError = '';
-    sessionOperation = uid();
-    form = {
-      hostId: sessionHost,
-      name: '',
-      repo: '',
-      identity: '',
-      agent: 'shell',
-      model: '',
-      effort: '',
-      count: 1,
-      brief: true,
-      exactName: true,
-    };
-    modal = 'new-session';
-  }
-  let acknowledgedRepo = '';
-  async function createSession() {
-    if (
-      form.repo &&
-      form.agent !== 'shell' &&
-      acknowledgedRepo !== form.repo &&
-      workspaces.some(
-        (w) =>
-          w.hostId === sessionHost &&
-          w.panes.some((p) => p.repo === form.repo && p.agent !== 'shell'),
-      )
-    ) {
-      modal = 'repo-collision';
-      return;
-    }
-    acknowledgedRepo = '';
-    const p = { ...form, id: '', sessionId: '', operation: sessionOperation } as Pane;
-    const session = await rpc<Session>(sessionHost, 'create', {
-      ...p,
-      path: form.repo,
-      install: form.agent !== 'shell' && !selectedAgent?.path,
-      brief: form.repo && form.agent !== 'shell' && form.brief ? promptFor(p) : '',
-    });
-    if (inventories[sessionHost])
-      inventories[sessionHost].sessions = [
-        ...inventories[sessionHost].sessions.filter((s) => s.id !== session.id),
-        session,
-      ];
-    await attach(session, {
-      repo: form.repo,
-      identity: form.identity,
-      agent: form.agent,
-      model: form.model,
-      effort: form.effort,
-    });
-  }
-  function useSharedWorkingCopy() {
-    acknowledgedRepo = form.repo;
-    void task(createSession);
-  }
-  async function attach(s: Session, options: Partial<Pane> = {}) {
-    const target = sessionPane;
-    const w = target ? workspaces.find((w) => w.panes.some((p) => p.id === target.id)) : undefined;
-    if (target && !w)
-      throw new Error('The selected terminal has been closed. Reopen the session picker.');
-    const p: Pane = {
-      id: uid(),
-      hostId: sessionHost,
-      hostKey: device.hosts.find((h) => h.id === sessionHost)?.fingerprint,
-      sessionId: s.id,
-      stamp: s.stamp,
-      name: s.name,
-      colors: target?.colors,
-      repo: '',
-      identity: '',
-      agent: s.agent || 'shell',
-      model: '',
-      effort: '',
-      operation: uid(),
-      ...options,
-    };
-    if (target && w) {
-      await call('terminal_close', { id: target.id });
-      updateWorkspace({
-        ...w,
-        panes: w.panes.map((x) => (x.id === target.id ? p : x)),
-        layout: swap(layoutFor(w), target.id, p.id),
-        focused: p.id,
-      });
-      if (maximize === target.id) maximize = p.id;
-    } else {
-      const workspace: Workspace = {
-        id: uid(),
-        name: s.name,
-        hostId: sessionHost,
-        panes: [p],
-        layout: tile([p.id]),
-        focused: p.id,
-      };
-      profiles[sessionHost].workspaces.push(workspace);
-      selectWorkspace(workspace);
-      saved(sessionHost);
-    }
-    modal = '';
-    sessionPane = null;
-  }
-  async function renameSession() {
-    if (!renameTarget) return;
-    await rpc(renameTarget.hostId, 'rename', {
-      id: renameTarget.sessionId,
-      stamp: renameTarget.stamp,
-      name: renameValue,
-    });
-    for (const w of workspaces) {
-      let changed = false;
-      for (const p of w.panes)
-        if (p.hostId === renameTarget.hostId && p.sessionId === renameTarget.sessionId) {
-          p.name = renameValue;
-          changed = true;
-        }
-      if (changed) saved(w.hostId);
-    }
-    modal = '';
-    await refresh(renameTarget.hostId);
-  }
-  async function destroySession() {
-    if (!destroyTarget) return;
-    const targetHost = destroyTarget.hostId || device.activeHost;
-    await rpc(targetHost, 'destroy', { id: destroyTarget.id, stamp: destroyTarget.stamp });
-    sessionHost = targetHost;
-    await refreshSessions(targetHost);
-    modal = 'sessions';
-    notice = 'Session deleted. Its running processes have stopped.';
-  }
-  let broadcastText = $state(''),
-    broadcastAllHosts = $state(true),
-    broadcastAllWorkspaces = $state(true);
-  let broadcastHost = $state(''),
-    broadcastWorkspace = $state(''),
-    broadcastHostName = $state(''),
-    broadcastWorkspaceName = $state('');
-  let broadcastSnapshot = $state<BroadcastSnapshot | null>(null),
-    broadcastBusy = $state(false),
-    broadcastResult = $state('');
-  $effect(() => {
-    broadcastText;
-    broadcastAllHosts;
-    broadcastAllWorkspaces;
-    broadcastSnapshot = null;
-  });
-  $effect(() => {
-    if (voiceMode === 'broadcast' && voiceStatus !== 'idle' && modal !== 'broadcast')
-      void task(cancelVoice);
-  });
-  function focusBroadcastInput() {
-    if (modal === 'broadcast' && appHasFocus())
-      document.querySelector<HTMLTextAreaElement>('[data-modal="broadcast"] textarea')?.focus();
-  }
-  function openBroadcast() {
-    if (voiceStatus !== 'idle') return;
-    broadcastText = '';
-    broadcastAllHosts = true;
-    broadcastAllWorkspaces = true;
-    broadcastHost = device.activeHost;
-    broadcastWorkspace = current?.id || '';
-    broadcastHostName = device.hosts.find((h) => h.id === broadcastHost)?.name || 'current host';
-    broadcastWorkspaceName = current?.name || 'current workspace';
-    broadcastSnapshot = null;
-    broadcastResult = '';
-    modal = 'broadcast';
-    void tick().then(focusBroadcastInput);
-  }
-  async function collectBroadcast() {
-    const inputs = workspaces
-      .filter((w) => broadcastAllWorkspaces || w.id === broadcastWorkspace)
-      .flatMap((w) =>
-        w.panes
-          .filter((p) => broadcastAllHosts || p.hostId === broadcastHost)
-          .map((p) => {
-            const host = device.hosts.find((h) => h.id === p.hostId),
-              inventory = inventories[p.hostId];
-            return {
-              id: p.id,
-              hostId: p.hostId,
-              sourceHost: inventory?.machine
-                ? JSON.stringify([inventory.machine, inventory.user, host?.distro, host?.socket])
-                : p.hostId,
-              label: `${host?.name || p.hostId} / ${w.name} / ${p.name}`,
-              connected: !!terminals.get(p.id)?.context(),
-            };
-          }),
-      );
-    return snapshotBroadcast(inputs, terminals, (input, terminal) =>
-      connections[input.hostId] === 'Connected'
-        ? rpc<PaneStatus>(input.hostId, 'terminal_status', { pid: terminal.processId() })
-        : Promise.resolve(unknownStatus),
-    );
-  }
-  async function reviewBroadcast() {
-    if (broadcastBusy || voiceStatus !== 'idle' || broadcastResult) return;
-    broadcastBusy = true;
-    try {
-      broadcastSnapshot = await collectBroadcast();
-    } finally {
-      broadcastBusy = false;
-    }
-  }
-  async function sendBroadcast() {
-    if (broadcastBusy || voiceStatus !== 'idle' || broadcastResult || !broadcastSnapshot) return;
-    broadcastBusy = true;
-    const reviewed = broadcastSnapshot,
-      message = broadcastText;
-    try {
-      const snapshot = await collectBroadcast();
-      broadcastSnapshot = snapshot;
-      if (broadcastRevision(snapshot) !== broadcastRevision(reviewed)) {
-        notice = 'Broadcast recipients changed. Review the updated list and confirm again.';
-        return;
-      }
-      const result = await createBroadcastDelivery(snapshot, message)(terminals);
-      broadcastResult = `Sent to ${result.delivered.length} terminal sessions. ${snapshot.skipped.length} panes skipped; ${snapshot.mirrors} mirrors deduplicated. No delivery will be retried.`;
-      if (result.failed.length)
-        broadcastResult += `\nDelivery failed or is uncertain for ${result.failed.length} sessions. Some text may already have arrived:\n${result.failed.join('\n')}`;
-    } finally {
-      broadcastBusy = false;
-    }
-  }
-  let recentDictation = $state<{
-    text: string;
-    raw: string;
-    target: string;
-    submitContext?: string;
-  } | null>(null);
-  let recoveryTimer: ReturnType<typeof setTimeout>;
-  async function submitText() {
-    if (!dictation.trim()) return;
-    if (voiceMode === 'command') {
-      commandText = applyFinalDictionary(raw, dictation, $dictionaryState.dictionary);
-      modal = 'command';
-      return;
-    }
-    const pane = workspaces.flatMap((w) => w.panes).find((p) => p.id === voiceTarget);
-    if (!pane)
-      throw new Error(
-        'The recording destination was closed. Use Copy dictation to recover the text.',
-      );
-    const terminal = terminals.get(pane.id);
-    if (!terminal) throw new Error('Terminal is unavailable. Your dictation is preserved.');
-    // PTY delivery does not require OS/window focus. A focus failure is advisory.
-    await focusDictationTarget(pane.id).catch(() => {});
-    await deliverDictation(terminal, dictation, device.voice.automatic && !finishWithoutSubmit);
-    recentDictation = {
-      text: dictation,
-      raw,
-      target: pane.id,
-      submitContext:
-        device.voice.automatic && !finishWithoutSubmit ? undefined : terminal.context(),
-    };
-    if (recentDictation.submitContext && device.inputMode !== 'hold')
-      notice = `Review the text in ${pane.name}. Double-tap ${bindingFor('dictation').label} to send.`;
-    clearTimeout(recoveryTimer);
-    recoveryTimer = setTimeout(() => {
-      recentDictation = null;
-    }, 120_000);
-    dictation = '';
-    raw = '';
-  }
-  function holdDictation(e: unknown) {
-    const message = e instanceof Error ? e.message : String(e);
-    if (dictation.trim())
-      heldDictation = {
-        text: dictation,
-        raw: raw || dictation,
-        target: voiceTarget,
-        error: message,
-      };
-    else error = message;
-    dictation = '';
-    raw = '';
-  }
-  async function sendHeldDictation() {
-    const held = heldDictation;
-    if (!held || voiceStatus !== 'idle') return;
-    heldDictation = null;
-    voiceMode = 'dictation';
-    voiceTarget = held.target;
-    finishWithoutSubmit = false;
-    dictation = held.text;
-    raw = held.raw;
-    try {
-      await submitText();
-    } catch (e) {
-      holdDictation(e);
-    }
-  }
-  function copyHeldDictation() {
-    if (heldDictation) void navigator.clipboard.writeText(heldDictation.text).catch(fail);
-  }
-  async function record(mode: CaptureMode, target = activePane?.id || '') {
-    if (!appHasFocus()) return;
-    reviewHotkey.cancel();
-    if (mode === 'dictation' && voiceStatus === 'idle' && !device.listenOnboarded) {
-      listenIntroTarget = target;
-      modal = 'listen-intro';
-      if (desktop && detached.focus) {
-        await getCurrentWindow().show();
-        await getCurrentWindow().unminimize();
-        await getCurrentWindow().setFocus();
-      }
-      return;
-    }
-    if (voiceStatus !== 'idle' && voiceMode !== mode) return;
-    if (voiceStatus === 'listening') {
-      const finishingRecording = recordingId;
-      const finishingCapture = capture;
-      voiceStatus = 'finishing-recording';
-      if (!(await recordingTail.wait()) || recordingId !== finishingRecording) return;
-      voiceStatus = 'transcribing';
-      // Flush the final partial PCM frame and await every queued IPC write before ASR finalization.
-      await finishingCapture?.stop();
-      if (recordingId !== finishingRecording) return;
-      await call('voice_stop');
-      return;
-    }
-    if (voiceStatus !== 'idle' || voiceModels.switching || filesLocked) return;
-    if (mode === 'dictation' && !target) throw new Error('Select a terminal first.');
-    voiceMode = mode;
-    finishWithoutSubmit = false;
-    voiceTarget = mode === 'dictation' ? target : '';
-    if (mode === 'broadcast') {
-      broadcastText = '';
-      broadcastSnapshot = null;
-      modal = 'broadcast';
-    }
-    if (mode === 'command') {
-      commandText = '';
-      commandReview = null;
-      commandError = '';
-      modal = 'command';
-    }
-    dictation = '';
-    raw = '';
-    voiceStatus = 'loading';
-    voicePreparing = 'Preparing…';
-    recordingId = uid();
-    const startedRecording = recordingId;
-    const startedAt = performance.now();
-    const mark = (event: string) =>
-      diagnostic(
-        `voice.start.${event}`,
-        startedRecording,
-        Math.round(performance.now() - startedAt),
-      );
-    mark('requested');
-    void tick().then(() =>
-      requestAnimationFrame(() => {
-        if (recordingId === startedRecording) mark('preparing-render-frame');
-      }),
-    );
-    let startedCapture: Capture | undefined;
-    try {
-      // A hotkey during startup warmup waits for it instead of being discarded.
-      if (voiceModels.cacheTask) voicePreparing = 'Waiting for voice models…';
-      await voiceModels.cacheTask?.catch(() => {});
-      if (recordingId !== startedRecording || !appHasFocus()) return;
-      mark('preload-wait-complete');
-      if (mode === 'dictation') {
-        voicePreparing = 'Focusing terminal…';
-        await focusDictationTarget(target);
-      }
-      if (recordingId !== startedRecording) return;
-      mark('focus-complete');
-      voicePreparing = 'Preparing speech model…';
-      await call('voice_start', {
-        recording: recordingId,
-        model: device.voice.model,
-        backend: device.voice.backend,
-        cleanup: device.voice.cleanup && mode !== 'command',
-      });
-      if (recordingId !== startedRecording) return;
-      mark('model-ready');
-      voicePreparing = 'Starting microphone…';
-      startedCapture = new Capture();
-      capture = startedCapture;
-      await startedCapture.start(
-        device.voice.microphone,
-        (e) => {
-          fail(e);
-          // Drain accepted audio on backpressure; do not discard the dictation.
-          if (voiceStatus === 'listening') void task(() => record(mode));
-        },
-        startedRecording,
-      );
-      mark('capture-start-returned');
-      if (recordingId !== startedRecording) {
-        await startedCapture.stop();
-        return;
-      }
-      voiceStatus = 'listening';
-      mark('listening-state');
-      void tick().then(() =>
-        requestAnimationFrame(() => {
-          if (recordingId === startedRecording) mark('listening-render-frame');
-        }),
-      );
-    } catch (e) {
-      await startedCapture?.stop().catch(() => {});
-      if (recordingId !== startedRecording) return;
-      await call('voice_cancel').catch(() => {});
-      recordingId = '';
-      voiceStatus = 'idle';
-      throw e;
-    }
-  }
-  async function cancelVoice() {
-    recordingId = '';
-    recordingTail.cancel();
-    await capture?.stop();
-    await call('voice_cancel');
-    dictation = '';
-    raw = '';
-    voiceStatus = 'idle';
-  }
-  function focusCommandInput() {
-    if (modal !== 'command' || !appHasFocus()) return;
-    const input = document.querySelector<HTMLTextAreaElement>('[data-modal="command"] textarea');
-    if (!input || document.activeElement === input) return;
-    // Preserve an explicit edit elsewhere; recover focus lost when the Stop button disappears.
-    const active = document.activeElement;
-    if (
-      active?.matches('input, textarea, [contenteditable="true"]') &&
-      input.closest('[role="dialog"]')?.contains(active)
-    )
-      return;
-    input.focus();
-  }
-  $effect(() => {
-    if (modal === 'command') void tick().then(focusCommandInput);
-  });
-  function commandContext() {
-    return {
-      hostId: device.activeHost,
-      hostName: host?.name || 'selected host',
-      workspaceId: current?.id || '',
-      workspaceName: current?.name || '',
-      paneId: activePane?.id || '',
-      paneName: activePane?.name || '',
-      paneContext: activePane
-        ? `${activePane.hostId}:${activePane.sessionId}:${activePane.stamp || ''}`
-        : '',
-    };
-  }
-  function interpretCommand() {
-    commandReview = null;
-    commandError = '';
-    try {
-      const action = parseCommand(
-        commandText,
-        device.hosts,
-        device.activeHost,
-        inventories[device.activeHost],
-        inventories,
-      );
-      commandReview = reviewCommand(
-        commandText,
-        action,
-        commandContext(),
-        action.kind === 'new'
-          ? device.hosts.find((h) => h.id === action.hostId)?.name || 'selected host'
-          : undefined,
-      );
-    } catch (e) {
-      commandError = String(e);
-    }
-  }
-  function commandSubmit() {
-    if (voiceStatus === 'listening' && voiceMode === 'command') void task(() => record('command'));
-    else if (voiceStatus === 'idle' && !commandReview) interpretCommand();
-  }
-  async function implementCommand() {
-    if (!commandReview || busy || voiceStatus !== 'idle') return;
-    try {
-      const action = consumeReview(commandReview, commandText, commandContext());
-      commandReview = null;
-      await executeCommand(action);
-    } catch (e) {
-      commandError = String(e);
-      commandReview = null;
-    }
-  }
-  async function executeCommand(a: Action) {
-    if (a.kind === 'sessions') {
-      await showSessions(activePane || null);
-    } else if (a.kind === 'split') {
-      addTerminal(a.axis === 'row' ? 'right' : 'bottom');
-    } else if (a.kind === 'new') {
-      if (a.destination === 'current' && !current)
-        throw new Error('Open a workspace first, or say “open a new workspace”.');
-      showLaunch(a.destination === 'current' ? 'row' : null);
-      launchFromCommand = true;
-      launchChooseRepo = a.chooseRepo;
-      form = { ...form, ...a, brief: true };
-      modal = 'launch';
-    } else if (a.kind === 'switch') {
-      const w = workspaces.find((w) => w.name.toLowerCase() === a.name.toLowerCase());
-      if (!w) throw new Error('Workspace not found');
-      selectWorkspace(w);
-      modal = '';
-    } else if (a.kind === 'rename' && activePane) {
-      if (!activePane.sessionId) throw new Error('Join or create a tmux session first.');
-      renameTarget = activePane;
-      renameValue = a.name;
-      modal = 'rename';
-    } else if (a.kind === 'destroy' && activePane) {
-      if (!activePane.sessionId) throw new Error('Join or create a tmux session first.');
-      sessionPane = activePane;
-      sessionHost = activePane.hostId;
-      await refreshSessions(sessionHost);
-      destroyTarget = {
-        id: activePane.sessionId,
-        hostId: activePane.hostId,
-        stamp: activePane.stamp,
-        name: activePane.name,
-        windows: 1,
-        attached: 1,
-      };
-      modal = 'destroy';
-    } else if (a.kind === 'worktree') {
-      branch = a.branch;
-      worktreeQuestion = null;
-      modal = 'worktree';
-    }
-  }
-  // The host asks before running a repository's own worktree script.
-  let worktreeRequest: { hostId: string; args: Record<string, unknown> } | null = null;
-  let worktreeQuestion = $state<{ script: string } | null>(null);
-  async function sendWorktree(runScript?: boolean) {
-    const request = worktreeRequest;
-    if (!request) throw new Error('Start the worktree again.');
-    const result = await rpc<{ needsConfirmation?: boolean; script?: string } | null>(
-      request.hostId,
-      'worktree',
-      runScript === undefined ? request.args : { ...request.args, runScript },
-    );
-    if (result?.needsConfirmation && runScript === undefined) {
-      worktreeQuestion = { script: result.script || 'scripts/new-worktree.sh' };
-      return;
-    }
-    worktreeQuestion = null;
-    worktreeRequest = null;
-    await refresh();
-    modal = 'repos';
-  }
-  async function createWorktree() {
-    if (!activePane?.repo) throw new Error('Select a repository terminal first.');
-    worktreeRequest = {
-      hostId: activePane.hostId,
-      args: {
-        path: activePane.repo,
-        branch,
-        destination,
-        identity: activePane.identity,
-      },
-    };
-    await sendWorktree();
-  }
-  async function loadGithubRepos() {
-    githubRepos = (
-      await rpc<{ full_name: string; description: string }[][]>(device.activeHost, 'github_repos', {
-        identity: form.identity,
-      })
-    ).flat();
-  }
-  async function cloneRepo(repo: string) {
-    const root = profiles[device.activeHost].preferences.roots[0];
-    if (!root) throw new Error('Set a repository root in host settings.');
-    await rpc(device.activeHost, 'clone', {
-      repo,
-      root,
-      identity: form.identity,
-    });
-    await refresh();
-  }
   async function openSettings() {
-    modal = 'settings';
+    ui.modal = 'settings';
     void checkUpdates(false, true);
-    roots = (profiles[device.activeHost]?.preferences.roots || []).join('\n');
-    settingsHost = device.activeHost;
-    guidance = profiles[settingsHost]?.preferences.guidance || '';
-    promptTemplate = profiles[settingsHost]?.preferences.promptTemplate ?? defaultPrompt;
+    profiles.openSettings();
     await loadModels();
     voiceModels.detectHardware();
     void refreshMicrophones();
   }
-  function saveHostPreferences() {
-    profiles[settingsHost].preferences.roots = roots
-      .split('\n')
-      .map((x) => x.trim())
-      .filter(Boolean);
-    profiles[settingsHost].preferences.guidance = guidance;
-    profiles[settingsHost].preferences.promptTemplate = promptTemplate;
-    saved(settingsHost);
-    notice = 'Host preferences queued for saving.';
-  }
-  async function reloadHostProfile() {
-    const recovery = deviceStore.recovery;
-    const local = $state.snapshot(profiles[settingsHost] || recovery[settingsHost]);
-    if (local) {
-      (device.profileBackups ||= {})[settingsHost] = [
-        local,
-        ...(device.profileBackups?.[settingsHost] || []),
-      ].slice(0, 3);
-      await call('device_save', { value: deviceStore.value() });
-    }
-    const backup = JSON.stringify(local, null, 2);
-    const url = URL.createObjectURL(new Blob([backup], { type: 'application/json' }));
-    const a = document.createElement('a');
-    a.href = url;
-    a.download = 'dazedev-workspace-recovery.json';
-    a.click();
-    setTimeout(() => URL.revokeObjectURL(url), 1000);
-    replaceProfile(
-      settingsHost,
-      rebindOwner(await rpc<Profile>(settingsHost, 'profile_load'), settingsHost),
-    );
-    deviceStore.blocked[settingsHost] = false;
-    delete recovery[settingsHost];
-    deviceStore.saveState[settingsHost] = 'Restored';
-    persistDevice();
-  }
   let systemReducedMotion = $state(false);
   const highlightMotionAllowed = $derived(
-    device.highlightMotion !== 'static' &&
-      (device.highlightMotion === 'animate' || !systemReducedMotion),
+    ui.device.highlightMotion !== 'static' &&
+      (ui.device.highlightMotion === 'animate' || !systemReducedMotion),
   );
-  const voiceStatusText = $derived(
-    voiceStatus === 'loading'
-      ? voicePreparing
-      : voiceStatus === 'finishing-recording'
-        ? 'Finishing recording…'
-        : voiceStatus === 'listening'
-          ? 'Listening'
-          : voiceStatus === 'transcribing'
-            ? 'Finishing transcription…'
-            : voiceStatus === 'cleanup-loading'
-              ? 'Loading tidy-up model…'
-              : voiceStatus === 'cleanup'
-                ? `Tidy-up pass · S1-mini${cleanupTotal > 1 ? ` · ${cleanupPart}/${cleanupTotal}` : ''}${cleanupWords ? ` · ${cleanupWords} words` : ''}`
-                : 'Pasting…',
-  );
-  const voiceListening = $derived(dictationActive && voiceStatus === 'listening');
   onMount(startDictionarySync);
   onMount(() => {
     const motionQuery = window.matchMedia('(prefers-reduced-motion: reduce)');
@@ -3114,8 +713,71 @@
     motionQuery.addEventListener('change', updateMotion);
     return () => motionQuery.removeEventListener('change', updateMotion);
   });
+  // Asks before closing while PowerShell sessions still run on a local host.
+  async function closeRequested(event: { preventDefault(): void }) {
+    if (panes.filesLocked || panes.viewerLocked) {
+      event.preventDefault();
+      ui.notice = 'Save or discard edits, or finish the upload before closing.';
+      return;
+    }
+    event.preventDefault();
+    if (dictation.status !== 'idle' || dictation.text.trim()) {
+      ui.notice = 'Finish dictation and copy or discard retained text before closing.';
+      return;
+    }
+    closeFailure = '';
+    try {
+      const native: Pane[] = [];
+      for (const host of ui.device.hosts.filter((h) => h.kind === 'powershell')) {
+        if (connections[host.id] !== 'Connected') await net.connect(host);
+        const running = await rpc<(Session & { running: boolean })[]>(host.id, 'sessions');
+        for (const session of running.filter((s) => s.running))
+          native.push({ hostId: host.id, sessionId: session.id } as Pane);
+      }
+      if (offerNativeClose(native, destroyApp)) {
+        panes.closingApp = true;
+        return;
+      }
+      await destroyApp();
+    } catch (e) {
+      // A failed check must never trap the user in the app.
+      closeFailure = String(e);
+    }
+  }
+  // ?preview in a plain browser shows sample workspaces.
+  function showPreview() {
+    const h = { ...hostDefaults(), id: 'preview', name: 'Development', address: 'dev-box' };
+    ui.device.hosts = [h];
+    ui.device.activeHost = h.id;
+    const previewPanes = Array.from({ length: 4 }, (_, i): Pane => ({
+      id: uid(),
+      hostId: h.id,
+      sessionId: '',
+      name: `dazedev-${i + 1}`,
+      repo: '~/dev/DazeDev',
+      identity: 'example-user',
+      agent: 'codex',
+      model: '',
+      effort: '',
+      operation: uid(),
+    }));
+    const w = {
+      id: uid(),
+      name: 'DazeDev',
+      hostId: h.id,
+      panes: previewPanes,
+      layout: balanced(
+        previewPanes.map((p) => p.id),
+        panes.stageWidth,
+      ),
+      focused: previewPanes[0].id,
+    };
+    ui.profiles[h.id] = { ...blankProfile(), workspaces: [w] };
+    ui.device.collapsedHosts = { ...ui.device.collapsedHosts, [w.hostId]: false };
+    ui.device.activeWorkspace = w.id;
+  }
   onMount(() => {
-    mounted = true;
+    ui.mounted = true;
     const unsub: (() => void)[] = [];
     for (const subscription of [
       on<{ paneId: string; requestId: string; action: string; args: Record<string, unknown> }>(
@@ -3146,42 +808,19 @@
       on<{ paneId: string }>('terminal-window-closed', (event) => detached.closed(event.paneId)),
     ])
       void subscription.then((stop) => {
-        if (mounted) unsub.push(stop);
+        if (ui.mounted) unsub.push(stop);
         else stop();
       });
     void (async () => {
       try {
         const data = desktop
-          ? await call<Device & { recoveryNotice?: string; recovery?: Record<string, Profile> }>(
-              'device_load',
-            ).catch((e) => {
+          ? await call<DeviceFile>('device_load').catch((e) => {
               fail(e);
               return null;
             })
           : null;
         if (desktop) aliases = await call<string[]>('ssh_aliases').catch(() => []);
-        if (data) {
-          if (data.recoveryNotice) notice = data.recoveryNotice;
-          device = migrateClipboardPolicy({
-            ...defaults(),
-            ...data,
-            voice: { ...defaults().voice, ...data.voice },
-            highlightMotion:
-              data.highlightMotion === 'static'
-                ? 'static'
-                : data.motionPreferenceVersion
-                  ? data.highlightMotion
-                  : 'animate',
-            motionPreferenceVersion: 1,
-            inputMode: data.inputMode || 'toggle',
-            terminal: { ...terminalDefaults, ...data.terminal },
-          });
-          deviceStore.recovery = data.recovery || {};
-          profiles = {
-            ...deviceStore.recovery,
-            [HOSTLESS]: device.localWorkspaces || blankProfile(),
-          };
-        }
+        if (data) profiles.load(data);
         const listeners = await Promise.all([
           on<{ done: number; total: number }>(
             'update-progress',
@@ -3203,186 +842,54 @@
                   ? `${Math.min(100, Math.round((v.done / v.total) * 100))}%`
                   : 'Downloading'),
           ),
-          on<{ recording: string; phase: string; part?: number; total?: number; words?: number }>(
-            'voice-phase',
-            (v) => {
-              if (v.recording !== recordingId) return;
-              if (voiceStatus !== 'finishing-recording') voiceStatus = v.phase;
-              cleanupPart = v.part || 0;
-              cleanupTotal = v.total || 0;
-              cleanupWords = v.words || 0;
-            },
-          ),
-          on<{
-            recording: string;
-            text: string;
-            raw?: string;
-            final: boolean;
-            error?: string;
-            backend?: string;
-          }>('voice-text', (v) => {
-            if (v.recording !== recordingId) return;
-            if (v.backend) voiceBackend = v.backend;
-            dictation = v.text;
-            raw = v.raw || v.text;
-            if (voiceMode === 'broadcast') broadcastText = v.text;
-            if (voiceMode === 'command') {
-              commandText = v.text;
-              commandReview = null;
-              if (v.error) commandError = v.error;
-            }
-            if (v.final) {
-              if (v.error) {
-                recordingTail.cancel();
-                recordingId = '';
-                voiceStatus = 'idle';
-                if (voiceMode === 'dictation') holdDictation(v.error);
-                else {
-                  error = v.error;
-                  dictation = '';
-                  raw = '';
-                }
-                void capture?.stop();
-                void call('voice_cancel');
-              } else {
-                if (voiceMode === 'broadcast') {
-                  voiceStatus = 'idle';
-                  broadcastText = applyFinalDictionary(raw, dictation, $dictionaryState.dictionary);
-                  dictation = '';
-                  raw = '';
-                  void tick().then(focusBroadcastInput);
-                } else if (voiceMode === 'command') {
-                  voiceStatus = 'idle';
-                  commandText = applyFinalDictionary(raw, dictation, $dictionaryState.dictionary);
-                  dictation = '';
-                  modal = 'command';
-                  void tick().then(focusCommandInput);
-                } else {
-                  dictation = applyFinalDictionary(raw, dictation, $dictionaryState.dictionary);
-                  voiceStatus = 'pasting';
-                  void task(async () => {
-                    try {
-                      await submitText();
-                    } catch (e) {
-                      holdDictation(e);
-                    } finally {
-                      if (recordingId === v.recording) voiceStatus = 'idle';
-                    }
-                  });
-                }
-              }
-            }
-          }),
+          on('voice-phase', dictation.onPhase),
+          on('voice-text', dictation.onText),
         ]);
         unsub.push(...listeners);
         if (desktop) {
           clientInfo = await call('client_info');
           await configureShortcut();
-          if (clientInfo.updateSupported && device.checkUpdates !== false) void checkUpdates();
+          if (clientInfo.updateSupported && ui.device.checkUpdates !== false) void checkUpdates();
           await loadModels();
-          if (!device.voiceSetupDismissed && !voiceStackReady(device.voice, voiceModels.models))
-            modal = 'voice-setup';
           if (
-            needsChangelog(clientInfo.version, device.lastChangelogVersion, !!data?.hosts?.length)
+            !ui.device.voiceSetupDismissed &&
+            !voiceStackReady(ui.device.voice, voiceModels.models)
+          )
+            ui.modal = 'voice-setup';
+          if (
+            needsChangelog(
+              clientInfo.version,
+              ui.device.lastChangelogVersion,
+              !!data?.hosts?.length,
+            )
           ) {
             pendingChangelog = clientInfo.version;
-          } else if (device.lastChangelogVersion !== clientInfo.version) {
-            device.lastChangelogVersion = clientInfo.version;
+          } else if (ui.device.lastChangelogVersion !== clientInfo.version) {
+            ui.device.lastChangelogVersion = clientInfo.version;
             persistDevice();
           }
         }
-        if (desktop)
-          unsub.push(
-            await getCurrentWindow().onCloseRequested(async (event) => {
-              if (filesLocked || viewerLocked) {
-                event.preventDefault();
-                notice = 'Save or discard edits, or finish the upload before closing.';
-                return;
-              }
-              event.preventDefault();
-              if (voiceStatus !== 'idle' || dictation.trim()) {
-                notice = 'Finish dictation and copy or discard retained text before closing.';
-                return;
-              }
-              closeFailure = '';
-              try {
-                const native: Pane[] = [];
-                for (const host of device.hosts.filter((h) => h.kind === 'powershell')) {
-                  if (connections[host.id] !== 'Connected') await connect(host);
-                  const sessions = await rpc<(Session & { running: boolean })[]>(
-                    host.id,
-                    'sessions',
-                  );
-                  for (const session of sessions.filter((s) => s.running))
-                    native.push({ hostId: host.id, sessionId: session.id } as Pane);
-                }
-                if (offerNativeClose(native, destroyApp)) {
-                  closingApp = true;
-                  return;
-                }
-                await destroyApp();
-              } catch (e) {
-                // A failed check must never trap the user in the app.
-                closeFailure = String(e);
-              }
-            }),
-          );
-        if (!desktop && new URLSearchParams(location.search).has('preview')) {
-          const h = {
-            ...hostDefaults(),
-            id: 'preview',
-            name: 'Development',
-            kind: 'ssh' as const,
-            address: 'dev-box',
-          };
-          device.hosts = [h];
-          device.activeHost = h.id;
-          const panes = Array.from({ length: 4 }, (_, i): Pane => ({
-            id: uid(),
-            hostId: h.id,
-            sessionId: '',
-            name: `dazedev-${i + 1}`,
-            repo: '~/dev/DazeDev',
-            identity: 'example-user',
-            agent: 'codex',
-            model: '',
-            effort: '',
-            operation: uid(),
-          }));
-          const w = {
-            id: uid(),
-            name: 'DazeDev',
-            hostId: h.id,
-            panes,
-            layout: balanced(
-              panes.map((p) => p.id),
-              stageWidth,
-            ),
-            focused: panes[0].id,
-          };
-          profiles[h.id] = { ...blankProfile(), workspaces: [w] };
-          device.collapsedHosts = { ...device.collapsedHosts, [w.hostId]: false };
-          device.activeWorkspace = w.id;
-        }
+        if (desktop) unsub.push(await getCurrentWindow().onCloseRequested(closeRequested));
+        if (!desktop && new URLSearchParams(location.search).has('preview')) showPreview();
       } catch (e) {
         fail(e);
       }
     })();
     const captureKeys = new VoiceCaptureKeys();
     const key = (e: KeyboardEvent) => {
-      if (!capturingShortcut) {
-        const control = captureKeys.down(e, voiceStatus, appHasFocus());
+      if (!dictation.capturingShortcut) {
+        const control = captureKeys.down(e, dictation.status, appHasFocus());
         if (control.consume) {
           e.preventDefault();
           e.stopImmediatePropagation();
           if (control.action) {
             // Retire hold-to-talk ownership so its eventual release cannot stop twice.
-            shortcutHeld = null;
-            releasePending = true;
+            dictation.shortcutHeld = null;
+            dictation.releasePending = true;
             if (control.action === 'cancel') void task(cancelVoice);
             else {
-              finishWithoutSubmit = true;
-              void task(() => record(voiceMode));
+              dictation.finishWithoutSubmit = true;
+              void task(() => record(dictation.mode));
             }
           }
           return;
@@ -3410,9 +917,9 @@
       // Ctrl+letter inside a terminal is a control key for the shell or editor.
       const inTerminal = !!(e.target as HTMLElement)?.closest?.('.xterm');
       const appAction =
-        capturingShortcut || (inTerminal && terminalOwnsKey(e))
+        dictation.capturingShortcut || (inTerminal && terminalOwnsKey(e))
           ? undefined
-          : appActionFor(e, device.appShortcuts, mac);
+          : appActionFor(e, ui.device.appShortcuts, mac);
       if (appAction === 'fullscreen' && desktop) {
         e.preventDefault();
         e.stopImmediatePropagation();
@@ -3422,11 +929,11 @@
         });
         return;
       }
-      if (capturingShortcut) {
+      if (dictation.capturingShortcut) {
         e.preventDefault();
         e.stopImmediatePropagation();
         if (e.key === 'Escape') {
-          capturingShortcut = null;
+          dictation.capturingShortcut = null;
           void task(() => configureShortcut());
           return;
         }
@@ -3443,7 +950,7 @@
       }
       if (
         appAction === 'search' &&
-        !modal &&
+        !ui.modal &&
         !(e.target as HTMLElement)?.closest?.('.source-viewer')
       ) {
         e.preventDefault();
@@ -3457,13 +964,13 @@
       // Let the native actions popup consume Escape before app-level actions.
       if (e.key === 'Escape' && document.querySelector('.pane-buttons:popover-open')) return;
       if (e.key === 'Escape' && (e.target as HTMLElement)?.closest?.('.pin-settings form')) return;
-      if (e.key === 'Escape' && dictionarySelection !== null) {
-        dictionarySelection = null;
+      if (e.key === 'Escape' && ui.dictionarySelection !== null) {
+        ui.dictionarySelection = null;
         e.preventDefault();
         return;
       }
-      if (e.key === 'Escape' && paneMenu) {
-        paneMenu = null;
+      if (e.key === 'Escape' && ui.paneMenu) {
+        ui.paneMenu = null;
         return;
       }
 
@@ -3476,23 +983,23 @@
         !e.shiftKey &&
         !e.metaKey
       ) {
-        if (updates.prompt && !modal && !updates.busy) {
+        if (updates.prompt && !ui.modal && !updates.busy) {
           closeUpdates();
           return;
         }
-        if (!busy && !filesLocked && !broadcastBusy)
-          modal = modal === 'changelog' ? changelogReturn : '';
+        if (!ui.busy && !panes.filesLocked && !broadcast.busy)
+          ui.modal = ui.modal === 'changelog' ? changelogReturn : '';
       }
-      if (appAction === 'command' && !filesLocked && !broadcastBusy) {
+      if (appAction === 'command' && !panes.filesLocked && !broadcast.busy) {
         e.preventDefault();
-        modal = 'command';
+        ui.modal = 'command';
       }
     };
     const mouseMode = (e: MouseEvent) =>
       (['dictation', 'command'] as const).find((mode) => mouseMatches(e, bindingFor(mode)));
     const pointer = (e: PointerEvent) => {
       const mode = mouseMode(e);
-      if (capturingShortcut || !mode || !appHasFocus()) return;
+      if (dictation.capturingShortcut || !mode || !appHasFocus()) return;
       e.preventDefault();
       e.stopImmediatePropagation();
       void inputEdge(true, mode).catch(fail);
@@ -3503,34 +1010,35 @@
         e.stopImmediatePropagation();
         return;
       }
-
+      const held = dictation.shortcutHeld;
       if (
-        shortcutHeld &&
-        (keyboardShortcut(e)?.key === bindingFor(shortcutHeld).key ||
+        held &&
+        (keyboardShortcut(e)?.key === bindingFor(held).key ||
           ['Control', 'Alt', 'Shift', 'Meta'].includes(e.key))
       )
-        void inputEdge(false, shortcutHeld).catch(fail);
+        void inputEdge(false, held).catch(fail);
     };
     const releasePointer = (e: PointerEvent) => {
-      if (shortcutHeld && [1, 4, 2, 5, 6][e.button] === bindingFor(shortcutHeld).key)
-        void inputEdge(false, shortcutHeld).catch(fail);
+      const held = dictation.shortcutHeld;
+      if (held && [1, 4, 2, 5, 6][e.button] === bindingFor(held).key)
+        void inputEdge(false, held).catch(fail);
     };
     let blurTimer: ReturnType<typeof setTimeout>;
     const blur = () => {
       clearTimeout(blurTimer);
       blurTimer = setTimeout(() => {
         if (appHasFocus()) return;
-        reviewHotkey.cancel();
+        dictation.reviewHotkey.cancel();
         captureKeys.reset();
-        shortcutHeld = null;
-        releasePending = true;
-        capturingShortcut = null;
+        dictation.shortcutHeld = null;
+        dictation.releasePending = true;
+        dictation.capturingShortcut = null;
         if (
-          voiceStatus === 'loading' ||
-          voiceStatus === 'listening' ||
-          voiceStatus === 'finishing-recording'
+          dictation.status === 'loading' ||
+          dictation.status === 'listening' ||
+          dictation.status === 'finishing-recording'
         ) {
-          notice = 'Voice capture cancelled because DazeDev lost focus.';
+          ui.notice = 'Voice capture cancelled because DazeDev lost focus.';
           void cancelVoice().catch(fail);
         }
       }, 100);
@@ -3550,21 +1058,20 @@
     const healthTimer = window.setInterval(recoverConnections, 15000);
     const stopUpdatePolling = pollUpdates(
       () => checkUpdates(),
-      () => desktop && clientInfo.updateSupported && device.checkUpdates !== false,
+      () => desktop && clientInfo.updateSupported && ui.device.checkUpdates !== false,
     );
     window.addEventListener('online', recoverConnections);
     window.addEventListener('focus', recoverConnections);
     return () => {
-      cancelPaneDrag?.();
-      reviewHotkey.cancel();
+      panes.cancelPaneDrag?.();
+      dictation.destroy();
       clearInterval(healthTimer);
       stopUpdatePolling();
-      clearTimeout(recoveryTimer);
       window.removeEventListener('online', recoverConnections);
       window.removeEventListener('focus', recoverConnections);
-      reconnectHosts.clear();
+      net.reconnect.clear();
       void alertAudio?.close();
-      mounted = false;
+      ui.mounted = false;
       unsub.forEach((f) => f());
       window.removeEventListener('keydown', key, true);
       window.removeEventListener('keyup', releaseKey, true);
@@ -3580,7 +1087,7 @@
 
 <svelte:head><title>DazeDev - agent workspace</title></svelte:head>
 <div class="app">
-  {#if voiceListening}<div
+  {#if dictation.listening}<div
       class="voice-focus-dimmer"
       aria-hidden="true"
       transition:fade={{ duration: highlightMotionAllowed ? 200 : 0 }}
@@ -3599,16 +1106,16 @@
       title="Toggle sidebar"
       aria-label="Toggle sidebar"
       onclick={() => {
-        device.sidebar = !device.sidebar;
+        ui.device.sidebar = !ui.device.sidebar;
         persistDevice();
       }}
-      >{#if device.sidebar}<PanelLeftClose size={17} />{:else}<PanelLeftOpen
+      >{#if ui.device.sidebar}<PanelLeftClose size={17} />{:else}<PanelLeftOpen
           size={17}
         />{/if}</button
     >
     <Brand />
     <div class="layout-actions">
-      {#if current}<button
+      {#if panes.current}<button
           class="icon"
           aria-label="Split right"
           title="Split right"
@@ -3624,26 +1131,28 @@
           title="Balance layout"
           onclick={() =>
             updateWorkspace({
-              ...current,
-              layout: balanced(ids(layoutFor(current)), stageWidth),
+              ...panes.current!,
+              layout: balanced(ids(layoutFor(panes.current!)), panes.stageWidth),
             })}><LayoutGrid size={17} /></button
         ><button
           class="icon"
           aria-label="Arrange in columns"
           title="Arrange in columns"
-          onclick={() => updateWorkspace({ ...current, layout: columns(ids(layoutFor(current))) })}
+          onclick={() =>
+            updateWorkspace({ ...panes.current!, layout: columns(ids(layoutFor(panes.current!))) })}
           ><Columns2 size={17} /></button
         >{/if}
     </div>
-    <div class="title-notification" class:error={!!error}>
-      {#if error || notice}<span role={error ? 'alert' : 'status'} title={error || notice}
-          >{error || notice}</span
+    <div class="title-notification" class:error={!!ui.error}>
+      {#if ui.error || ui.notice}<span
+          role={ui.error ? 'alert' : 'status'}
+          title={ui.error || ui.notice}>{ui.error || ui.notice}</span
         ><button
           class="icon"
-          aria-label={error ? 'Dismiss error' : 'Dismiss notification'}
+          aria-label={ui.error ? 'Dismiss error' : 'Dismiss notification'}
           onclick={() => {
-            if (error) error = '';
-            else notice = '';
+            if (ui.error) ui.error = '';
+            else ui.notice = '';
           }}><X size={14} /></button
         >{/if}
     </div>
@@ -3651,23 +1160,23 @@
       <button
         class="icon"
         aria-label="Search terminals"
-        title={`Search terminals (${appShortcut(device.appShortcuts, 'search').label})`}
+        title={`Search terminals (${appShortcut(ui.device.appShortcuts, 'search').label})`}
         onclick={() => openTerminalSearch()}><Search size={17} /></button
       >
       {#if voiceModels.modelsLoaded && !voiceModels.ready}<button
           class="voice-setup-alert"
-          onclick={() => (modal = 'voice-setup')}
+          onclick={() => (ui.modal = 'voice-setup')}
           ><Download size={14} />Voice stack not set up, click here to install</button
         >{/if}
-      <button class="quiet" onclick={() => (modal = 'command')}
+      <button class="quiet" onclick={() => (ui.modal = 'command')}
         ><Command size={14} /> Commands <kbd>⌘ / Ctrl K</kbd></button
       ><button
         class="icon"
         aria-label="Cycle theme"
-        title={`Theme: ${device.theme || 'blue'}`}
+        title={`Theme: ${ui.device.theme || 'blue'}`}
         onclick={() => {
           const themes = ['blue', 'charcoal', 'green'] as const;
-          device.theme = themes[(themes.indexOf(device.theme || 'blue') + 1) % themes.length];
+          ui.device.theme = themes[(themes.indexOf(ui.device.theme || 'blue') + 1) % themes.length];
           persistDevice();
         }}><Palette size={17} /></button
       ><button class="icon" aria-label="Settings" onclick={() => void task(openSettings)}
@@ -3675,29 +1184,32 @@
       >
     </div>
   </header>
-  {#if heldDictation}
+  {#if dictation.held}
     <section class="held-dictation" role="alert" aria-label="Dictation not sent">
       <p>
         <strong>Dictation not sent.</strong>
-        {heldDictation.error}
-        <span class="held-preview">“{heldDictation.text}”</span>
+        {dictation.held.error}
+        <span class="held-preview">“{dictation.held.text}”</span>
       </p>
       <div class="held-actions">
         <button
           class="held-send"
-          disabled={voiceStatus !== 'idle'}
+          disabled={dictation.status !== 'idle'}
           onclick={() => void task(sendHeldDictation)}>Send anyway</button
         ><button onclick={copyHeldDictation}>Copy</button><button
-          onclick={() => (heldDictation = null)}>Discard</button
+          onclick={() => (dictation.held = null)}>Discard</button
         >
       </div>
     </section>
   {/if}
   <div class="body">
-    {#if device.sidebar}<aside class="sidebar" style:width={`${device.sidebarWidth || 238}px`}>
+    {#if ui.device.sidebar}<aside
+        class="sidebar"
+        style:width={`${ui.device.sidebarWidth || 238}px`}
+      >
         <button
           class="new-workspace new-host"
-          disabled={!device.hosts.length}
+          disabled={!ui.device.hosts.length}
           onclick={() => void connectAllHosts()}
           ><ArrowUpRight size={16} /> Connect all hosts</button
         >
@@ -3707,11 +1219,11 @@
           <button class="new-workspace new-host" onclick={newHostlessWorkspace}
             ><Plus size={16} /> Hostless workspace</button
           >
-          {#each profiles[HOSTLESS]?.workspaces || [] as w (w.id)}
+          {#each ui.profiles[HOSTLESS]?.workspaces || [] as w (w.id)}
             <div
               class="local-workspace-row"
-              class:active={device.activeWorkspace === w.id}
-              class:drop-empty={dragHover === w.id}
+              class:active={ui.device.activeWorkspace === w.id}
+              class:drop-empty={panes.dragHover === w.id}
             >
               <button
                 data-workspace-tab={w.id}
@@ -3722,90 +1234,90 @@
                 aria-label={`${w.name} options`}
                 onclick={() => {
                   workspaceTarget = w;
-                  renameValue = w.name;
-                  modal = 'workspace';
+                  ui.renameValue = w.name;
+                  ui.modal = 'workspace';
                 }}>⋯</button
               >
             </div>
           {/each}
         </section>
         <HostTree
-          hosts={device.hosts}
-          {profiles}
+          hosts={ui.device.hosts}
+          profiles={ui.profiles}
           {connections}
           {logs}
-          attempts={hostAttempts}
+          attempts={net.attempts}
           onauth={respond}
           oncancel={(h) => disconnectHost(h.id)}
-          highlight={recordingHighlight(device.recordingHighlight)}
-          highlightColor={device.recordingHighlightColor || '#39bdd7'}
-          activeHost={device.activeHost}
-          activeWorkspace={device.activeWorkspace}
-          {dragHover}
-          collapsed={device.collapsedHosts || {}}
+          highlight={recordingHighlight(ui.device.recordingHighlight)}
+          highlightColor={ui.device.recordingHighlightColor || '#39bdd7'}
+          activeHost={ui.device.activeHost}
+          activeWorkspace={ui.device.activeWorkspace}
+          dragHover={panes.dragHover}
+          collapsed={ui.device.collapsedHosts || {}}
           ontoggle={(h) => {
-            device.collapsedHosts = {
-              ...device.collapsedHosts,
-              [h.id]: !device.collapsedHosts?.[h.id],
+            ui.device.collapsedHosts = {
+              ...ui.device.collapsedHosts,
+              [h.id]: !ui.device.collapsedHosts?.[h.id],
             };
             persistDevice();
           }}
           onhost={(h) => {
-            device.activeHost = h.id;
+            ui.device.activeHost = h.id;
             persistDevice();
           }}
           onhostreorder={(source, target, after) => {
-            const list = device.hosts.filter((h) => h.id !== source.id);
+            const list = ui.device.hosts.filter((h) => h.id !== source.id);
             const index = list.findIndex((h) => h.id === target.id);
             if (index < 0 || source.id === target.id) return;
             list.splice(index + (after ? 1 : 0), 0, source);
-            device.hosts = list;
+            ui.device.hosts = list;
             persistDevice();
           }}
           onreconnect={(h) => void reconnectHost(h)}
           oncolors={(h) => {
             colorHost = h;
-            modal = 'host-colors';
+            ui.modal = 'host-colors';
           }}
           ontmux={(h) => {
             tmuxHost = h;
-            modal = 'tmux-settings';
+            ui.modal = 'tmux-settings';
           }}
           ondocuments={(h) => openFiles({ id: '', hostId: h.id, repo: '' }, 'documents')}
           onedit={(h) => {
             newHost = { ...h, nativeShell: h.nativeShell || 'powershell' };
-            modal = 'host';
+            ui.modal = 'host';
           }}
           onnew={(h) => {
-            device.activeHost = h.id;
+            ui.device.activeHost = h.id;
             showLaunch();
           }}
           onreorder={(source, target, after) => {
-            const profile = profiles[source.hostId];
-            if (!profile || dictationActive) return;
+            const profile = ui.profiles[source.hostId];
+            if (!profile || dictation.active) return;
             const reordered = reorderWorkspaces(profile.workspaces, source.id, target.id, after);
             if (reordered !== profile.workspaces) {
               profile.workspaces = reordered;
               saved(source.hostId);
             }
           }}
-          reorderDisabled={dictationActive || !!draggingPane}
+          reorderDisabled={dictation.active || !!panes.draggingPane}
           onselect={selectWorkspace}
           onoptions={(w) => {
             workspaceTarget = w;
-            renameValue = w.name;
-            modal = 'workspace';
+            ui.renameValue = w.name;
+            ui.modal = 'workspace';
           }}
           ondeletehost={(h) => {
-            deleteHostTarget = h;
-            modal = 'delete-host';
+            profiles.deleteHostTarget = h;
+            ui.modal = 'delete-host';
           }}
           ondelete={closeWorkspace}
         />
-        {#each recoveryPrompts.filter((p) => !['Connected', 'Connecting'].includes(connections[p.hostId])) as prompt (prompt.hostId)}
+        {#each profiles.recoveryPrompts.filter((p) => !['Connected', 'Connecting'].includes(connections[p.hostId])) as prompt (prompt.hostId)}
           <section class="mixed-host-recovery" aria-label="Workspace host recovery">
             <p>
-              Workspace {prompt.workspaces.join(', ')} has a terminal on {device.hosts.find(
+              Workspace {prompt.workspaces.join(', ')} has a terminal on {ui.device.hosts.find(
                 (h) => h.id === prompt.hostId,
               )?.name}. Connect to that host as well?
             </p>
@@ -3817,42 +1329,44 @@
           <button
             onclick={() =>
               void task(async () => {
-                await showSessions(activePane || null);
+                await showSessions(panes.activePane || null);
               })}
             ><TerminalIcon size={16} />
-            {device.hosts.find((h) => h.id === device.activeHost)?.kind === 'powershell'
+            {ui.device.hosts.find((h) => h.id === ui.device.activeHost)?.kind === 'powershell'
               ? 'PowerShell sessions'
               : 'tmux sessions'}
-            <span>{inventories[device.activeHost]?.sessions.length ?? '—'}</span></button
+            <span>{ui.inventories[ui.device.activeHost]?.sessions.length ?? '—'}</span></button
           ><button
             onclick={() => {
-              modal = 'repos';
+              ui.modal = 'repos';
             }}><FolderGit2 size={16} /> Repositories</button
           ><button onclick={() => void task(() => agentPicker())}
             ><Radio size={16} /> Install agents</button
           ><button
             onclick={() => {
-              if (voiceStatus === 'idle') modal = 'command';
+              if (dictation.status === 'idle') ui.modal = 'command';
             }}><Mic size={16} /> Voice command</button
           >
-          <button disabled={voiceStatus !== 'idle'} onclick={openBroadcast}
+          <button disabled={dictation.status !== 'idle'} onclick={openBroadcast}
             ><Radio size={16} /> Broadcast</button
           >
           <button onclick={() => void task(openSettings)}><Settings size={16} /> Settings</button>
           <button
             class="update-sidebar"
-            class:recording-highlight={device.supportGlow !== false}
-            data-highlight={recordingHighlight(device.recordingHighlight)}
-            style:--voice-highlight-color={device.recordingHighlightColor || '#39bdd7'}
-            disabled={filesLocked || voiceStatus !== 'idle' || updates.state === 'installing'}
+            class:recording-highlight={ui.device.supportGlow !== false}
+            data-highlight={recordingHighlight(ui.device.recordingHighlight)}
+            style:--voice-highlight-color={ui.device.recordingHighlightColor || '#39bdd7'}
+            disabled={panes.filesLocked ||
+              dictation.status !== 'idle' ||
+              updates.state === 'installing'}
             onclick={() => {
-              modal = 'support';
+              ui.modal = 'support';
               void checkUpdates();
             }}
             aria-label={`Feedback, support and about DazeDev ${releaseVersion(clientInfo.version)}: ${updates.label}`}
           >
-            {#if device.supportGlow !== false && recordingHighlight(device.recordingHighlight) !== 'static'}
-              <HighlightEffect kind={recordingHighlight(device.recordingHighlight)} />
+            {#if ui.device.supportGlow !== false && recordingHighlight(ui.device.recordingHighlight) !== 'static'}
+              <HighlightEffect kind={recordingHighlight(ui.device.recordingHighlight)} />
             {/if}
             <strong>FEEDBACK / SUPPORT</strong>
             <span class="support-sidebar-version">DazeDev {releaseVersion(clientInfo.version)}</span
@@ -3874,7 +1388,7 @@
         aria-orientation="vertical"
         aria-valuemin={180}
         aria-valuemax={520}
-        aria-valuenow={device.sidebarWidth || 238}
+        aria-valuenow={ui.device.sidebarWidth || 238}
         tabindex="0"
         onpointerdown={(e) => {
           e.preventDefault();
@@ -3889,13 +1403,13 @@
         }}
         onlostpointercapture={persistDevice}
         ondblclick={() => {
-          device.sidebarWidth = 238;
+          ui.device.sidebarWidth = 238;
           persistDevice();
         }}
         onkeydown={(e) => {
           if (e.key === 'ArrowLeft' || e.key === 'ArrowRight') {
             e.preventDefault();
-            resizeSidebar((device.sidebarWidth || 238) + (e.key === 'ArrowLeft' ? -16 : 16));
+            resizeSidebar((ui.device.sidebarWidth || 238) + (e.key === 'ArrowLeft' ? -16 : 16));
             persistDevice();
           }
         }}
@@ -3904,13 +1418,13 @@
       {#if !desktop}<div class="preview-banner">
           UI preview · open the desktop build for SSH, terminals and offline voice.
         </div>{/if}
-      <div class="workspace-stage" bind:clientWidth={stageWidth}>
-        {#if current && current.panes.some((p) => detachedPanes.has(p.id))}
+      <div class="workspace-stage" bind:clientWidth={panes.stageWidth}>
+        {#if panes.current && panes.current.panes.some((p) => detachedPanes.has(p.id))}
           <div class="detached-terminal-bar" aria-label="Terminals on other screens">
-            {#each current.panes.filter((p) => detachedPanes.has(p.id)) as pane}
+            {#each panes.current.panes.filter((p) => detachedPanes.has(p.id)) as pane}
               <button
                 onclick={() => void call('terminal_window_focus', { paneId: pane.id }).catch(fail)}
-                >Show {terminalPresentation(pane, paneStatus[pane.id]).name}</button
+                >Show {terminalPresentation(pane, ui.paneStatus[pane.id]).name}</button
               >
               <button
                 onclick={() => void detached.dock(pane.id).catch(fail)}
@@ -3920,8 +1434,8 @@
           </div>
         {/if}
         <div class="workspace-canvas">
-          {#each workspaces as w (w.id)}
-            <div class="layout-handles" class:hidden={current?.id !== w.id || !!maximize}>
+          {#each panes.workspaces as w (w.id)}
+            <div class="layout-handles" class:hidden={panes.current?.id !== w.id || !!ui.maximize}>
               <LayoutView
                 node={layoutFor(w)}
                 onresize={(id, ratio) =>
@@ -3929,11 +1443,11 @@
                 >{#snippet pane(_id)}{/snippet}</LayoutView
               >
             </div>
-            {#if !ids(layoutFor(w)).filter(Boolean).length && current?.id === w.id}
+            {#if !ids(layoutFor(w)).filter(Boolean).length && panes.current?.id === w.id}
               <div
                 class="empty-workspace"
                 data-empty-workspace={w.id}
-                class:drop-empty={!!draggingPane && dropTarget?.id === ''}
+                class:drop-empty={!!panes.draggingPane && panes.dropTarget?.id === ''}
               >
                 {#if w.hostId === HOSTLESS}
                   <strong>This is a hostless workspace.</strong>
@@ -3951,15 +1465,15 @@
               </div>
             {/if}
           {/each}
-          {#each workspaces.flatMap((w) => w.panes.map((p) => ({ w, p }))) as { w, p } (p.id)}
-            {@const boxes = workspaceBoxes[w.id]}
-            {@const presentation = terminalPresentation(p, paneStatus[p.id])}
+          {#each panes.workspaces.flatMap((w) => w.panes.map((p) => ({ w, p }))) as { w, p } (p.id)}
+            {@const boxes = panes.workspaceBoxes[w.id]}
+            {@const presentation = terminalPresentation(p, ui.paneStatus[p.id])}
 
             {@const id = p.id}
             {@const tabs = terminalTabs(w, p.id)}
             {@const activeTab = tabs?.panes.find((id) => !!boxes[id])}
             {@const box =
-              detachedPanes.has(p.id) || maximize === p.id
+              detachedPanes.has(p.id) || ui.maximize === p.id
                 ? { x: 0, y: 0, width: 100, height: 100 }
                 : boxes[p.id] || (activeTab ? boxes[activeTab] : undefined)}
             {#if box}<section
@@ -3968,8 +1482,8 @@
                 data-pane-id={p.id}
                 class:hidden={detachedPanes.has(p.id) ||
                   (!!tabs && activeTab !== p.id) ||
-                  current?.id !== w.id ||
-                  (!!maximize && maximize !== p.id)}
+                  panes.current?.id !== w.id ||
+                  (!!ui.maximize && ui.maximize !== p.id)}
                 style={`position:absolute;left:calc(${box.x}% + 4px);top:calc(${box.y}% + 2px);width:calc(${box.width}% - 8px);height:calc(${box.height}% - 4px)`}
                 onpointerdowncapture={(e) => {
                   if (
@@ -3983,8 +1497,8 @@
                 use:captureTerminalSelection={p}
                 class="pane"
                 class:focused={w.focused === id}
-                class:drag-selected={selectedPanes.includes(id)}
-                class:voice-listening={voiceTarget === p.id && voiceListening}
+                class:drag-selected={panes.selectedPanes.includes(id)}
+                class:voice-listening={dictation.target === p.id && dictation.listening}
                 style:transform-origin={`${box.x === 0 ? 'left' : box.x + box.width >= 99.9 ? 'right' : 'center'} ${box.y === 0 ? 'top' : box.y + box.height >= 99.9 ? 'bottom' : 'center'}`}
                 style:--voice-pop-scale={box.width === 100 && box.height === 100 ? 1 : 1.012}
                 onfocusin={() => {
@@ -3992,16 +1506,16 @@
                   setLocalFocus(w.id, id);
                 }}
               >
-                {#if voiceTarget === p.id && voiceListening}
+                {#if dictation.target === p.id && dictation.listening}
                   <div
                     class="voice-pane-border recording-highlight"
-                    data-highlight={recordingHighlight(device.recordingHighlight)}
-                    style:--voice-highlight-color={device.recordingHighlightColor || '#39bdd7'}
+                    data-highlight={recordingHighlight(ui.device.recordingHighlight)}
+                    style:--voice-highlight-color={ui.device.recordingHighlightColor || '#39bdd7'}
                     aria-hidden="true"
                     transition:fade={{ duration: highlightMotionAllowed ? 200 : 0 }}
                   >
-                    {#if recordingHighlight(device.recordingHighlight) !== 'static'}<HighlightEffect
-                        kind={recordingHighlight(device.recordingHighlight)}
+                    {#if recordingHighlight(ui.device.recordingHighlight) !== 'static'}<HighlightEffect
+                        kind={recordingHighlight(ui.device.recordingHighlight)}
                       />{/if}
                   </div>
                 {/if}
@@ -4010,27 +1524,27 @@
                   style:background-color={tabColors(
                     p.colors,
                     w.colors,
-                    device.hosts.find((h) => h.id === p.hostId)?.colors,
+                    ui.device.hosts.find((h) => h.id === p.hostId)?.colors,
                   )?.background}
                   style:color={tabColors(
                     p.colors,
                     w.colors,
-                    device.hosts.find((h) => h.id === p.hostId)?.colors,
+                    ui.device.hosts.find((h) => h.id === p.hostId)?.colors,
                   )?.foreground}
                   role="toolbar"
                   tabindex="0"
-                  aria-label={`Terminal controls for ${p.name}${selectedPanes.includes(p.id) ? ', selected for dragging' : ''}`}
+                  aria-label={`Terminal controls for ${p.name}${panes.selectedPanes.includes(p.id) ? ', selected for dragging' : ''}`}
                   title="Drag to move. Shift-click terminal headers to select several."
                   onkeydown={(e) => {
                     if ((e.key === ' ' || e.key === 'Enter') && e.target === e.currentTarget) {
                       e.preventDefault();
                       selectPane(p.id, w, e.shiftKey);
                     } else if (e.key === 'Escape' && e.target === e.currentTarget) {
-                      selectedPanes = [];
+                      panes.selectedPanes = [];
                     } else if (e.key === 'ContextMenu' || (e.shiftKey && e.key === 'F10')) {
                       e.preventDefault();
                       const box = e.currentTarget.getBoundingClientRect();
-                      paneMenu = {
+                      ui.paneMenu = {
                         pane: p,
                         selection: terminals.get(p.id)?.selection?.()?.trim().slice(0, 160) || '',
                         x: box.left + 8,
@@ -4041,7 +1555,7 @@
                   onpointerdown={(e) => startPaneDrag(e, p, w)}
                   ondblclick={(e) => {
                     if (!(e.target as HTMLElement).closest('button, .pane-actions'))
-                      maximize = maximize === p.id ? '' : p.id;
+                      ui.maximize = ui.maximize === p.id ? '' : p.id;
                   }}
                 >
                   <div class="pane-title">
@@ -4055,29 +1569,29 @@
                   {#if p.hostId !== w.hostId}
                     <button
                       onclick={() => showHostConnection(p)}
-                      aria-label={`Connection options for ${device.hosts.find((h) => h.id === p.hostId)?.name || 'Unavailable host'}`}
+                      aria-label={`Connection options for ${ui.device.hosts.find((h) => h.id === p.hostId)?.name || 'Unavailable host'}`}
                       class="cross-host-note recording-highlight"
                       style:background-color={tabColors(
-                        device.hosts.find((h) => h.id === p.hostId)?.colors,
+                        ui.device.hosts.find((h) => h.id === p.hostId)?.colors,
                       )?.background}
-                      style:color={tabColors(device.hosts.find((h) => h.id === p.hostId)?.colors)
+                      style:color={tabColors(ui.device.hosts.find((h) => h.id === p.hostId)?.colors)
                         ?.foreground}
-                      data-highlight={recordingHighlight(device.recordingHighlight)}
-                      style:--voice-highlight-color={device.recordingHighlightColor || '#39bdd7'}
-                      title={`Connection options for ${device.hosts.find((h) => h.id === p.hostId)?.name || 'Unavailable'}; workspace host: ${device.hosts.find((h) => h.id === w.hostId)?.name || 'Unavailable'}`}
+                      data-highlight={recordingHighlight(ui.device.recordingHighlight)}
+                      style:--voice-highlight-color={ui.device.recordingHighlightColor || '#39bdd7'}
+                      title={`Connection options for ${ui.device.hosts.find((h) => h.id === p.hostId)?.name || 'Unavailable'}; workspace host: ${ui.device.hosts.find((h) => h.id === w.hostId)?.name || 'Unavailable'}`}
                     >
-                      {#if recordingHighlight(device.recordingHighlight) !== 'static'}
-                        <HighlightEffect kind={recordingHighlight(device.recordingHighlight)} />
+                      {#if recordingHighlight(ui.device.recordingHighlight) !== 'static'}
+                        <HighlightEffect kind={recordingHighlight(ui.device.recordingHighlight)} />
                       {/if}
                       <Server size={12} /><span
-                        >Host: {device.hosts.find((h) => h.id === p.hostId)?.name ||
+                        >Host: {ui.device.hosts.find((h) => h.id === p.hostId)?.name ||
                           'Unavailable'}</span
                       >
                     </button>
                   {/if}
                   <PaneActions
                     name={p.name}
-                    visible={current?.id === w.id && (!maximize || maximize === p.id)}
+                    visible={panes.current?.id === w.id && (!ui.maximize || ui.maximize === p.id)}
                   >
                     {#snippet repo()}
                       <button
@@ -4099,13 +1613,13 @@
                       >
                     {/snippet}
                     <button
-                      disabled={!desktop || dictationActive}
+                      disabled={!desktop || dictation.active}
                       title="Open this terminal in a window you can drag to another screen"
                       onclick={() => void detached.detach(p).catch(fail)}
                       ><ArrowUpRight size={14} /> Other screen</button
                     >
                     <button
-                      title={`Change connected host: ${device.hosts.find((h) => h.id === p.hostId)?.name || 'Unavailable'}`}
+                      title={`Change connected host: ${ui.device.hosts.find((h) => h.id === p.hostId)?.name || 'Unavailable'}`}
                       aria-label={`Change host for ${p.name}`}
                       onclick={() => choosePaneHost(p)}><Server size={14} /> Host</button
                     >
@@ -4115,29 +1629,29 @@
                       onclick={() => openFiles(p, 'upload')}><Upload size={14} /> Upload</button
                     >
 
-                    {#if terminalProgress[p.id]?.state}<progress
+                    {#if ui.terminalProgress[p.id]?.state}<progress
                         class="pane-progress"
                         aria-label="Terminal task progress"
                         max="100"
-                        value={terminalProgress[p.id].state === 3
+                        value={ui.terminalProgress[p.id].state === 3
                           ? undefined
-                          : terminalProgress[p.id].value}
+                          : ui.terminalProgress[p.id].value}
                       ></progress>{/if}
                     <button
                       title="Dictate to this terminal"
                       aria-label={`Dictate to ${p.name}`}
-                      class:active={voiceTarget === p.id && voiceStatus === 'listening'}
+                      class:active={dictation.target === p.id && dictation.status === 'listening'}
                       onclick={() => void task(() => record('dictation', p.id))}
                       ><Mic size={14} /> Listen</button
                     ><button
                       class="icon"
-                      title={maximize === p.id ? 'Restore pane' : 'Maximize pane'}
-                      aria-label={`${maximize === p.id ? 'Restore' : 'Maximize'} ${p.name}`}
-                      onclick={() => (maximize = maximize === p.id ? '' : p.id)}
-                      >{#if maximize === p.id}<Minimize2 size={14} />{:else}<Maximize2
+                      title={ui.maximize === p.id ? 'Restore pane' : 'Maximize pane'}
+                      aria-label={`${ui.maximize === p.id ? 'Restore' : 'Maximize'} ${p.name}`}
+                      onclick={() => (ui.maximize = ui.maximize === p.id ? '' : p.id)}
+                      >{#if ui.maximize === p.id}<Minimize2 size={14} />{:else}<Maximize2
                           size={14}
                         />{/if}<span class="overflow-label"
-                        >{maximize === p.id ? 'Restore' : 'Maximize'}</span
+                        >{ui.maximize === p.id ? 'Restore' : 'Maximize'}</span
                       ></button
                     ><button
                       class="icon"
@@ -4158,7 +1672,7 @@
                           tabindex={p.id === tab.id ? 0 : -1}
                           onclick={() => {
                             selectPane(tab.id, w);
-                            maximize = '';
+                            ui.maximize = '';
                             void tick().then(() => terminals.get(tab.id)?.focus?.());
                           }}
                           onkeydown={(event) => {
@@ -4176,7 +1690,7 @@
                                       tabs.panes.length) %
                                     tabs.panes.length;
                             selectPane(tabs.panes[next], w);
-                            maximize = '';
+                            ui.maximize = '';
                             const nextId = CSS.escape(tabs.panes[next]);
                             void tick().then(() =>
                               document
@@ -4185,7 +1699,7 @@
                                 )
                                 ?.focus(),
                             );
-                          }}>{terminalPresentation(tab, paneStatus[tab.id]).name}</button
+                          }}>{terminalPresentation(tab, ui.paneStatus[tab.id]).name}</button
                         >{/if}
                     {/each}
                     {#if w.hostId !== HOSTLESS}<button
@@ -4193,8 +1707,8 @@
                         onclick={() => addTerminal('right', p, true)}>+</button
                       >{/if}
                   </div>{/if}
-                {#if !p.hideStatus || (voiceTarget === p.id && dictationActive)}{@const status =
-                    paneStatus[p.id] || unknownStatus}
+                {#if !p.hideStatus || (dictation.target === p.id && dictation.active)}{@const status =
+                    ui.paneStatus[p.id] || unknownStatus}
                   <div class="pane-context">
                     <span
                       class="attachment-status"
@@ -4212,19 +1726,20 @@
                             ? 'Plain shell'
                             : 'Unknown'}</span
                     >
-                    {#if voiceTarget === p.id && dictationActive}
+                    {#if dictation.target === p.id && dictation.active}
                       <div
                         class="voice-status-alert recording-highlight"
-                        title={`${voiceStatusText}. Enter finishes without submitting; Escape abandons capture.`}
-                        data-highlight={recordingHighlight(device.recordingHighlight)}
-                        style:--voice-highlight-color={device.recordingHighlightColor || '#39bdd7'}
+                        title={`${dictation.statusText}. Enter finishes without submitting; Escape abandons capture.`}
+                        data-highlight={recordingHighlight(ui.device.recordingHighlight)}
+                        style:--voice-highlight-color={ui.device.recordingHighlightColor ||
+                          '#39bdd7'}
                         role="status"
                         aria-live="polite"
                       >
-                        {#if recordingHighlight(device.recordingHighlight) !== 'static'}<HighlightEffect
-                            kind={recordingHighlight(device.recordingHighlight)}
+                        {#if recordingHighlight(ui.device.recordingHighlight) !== 'static'}<HighlightEffect
+                            kind={recordingHighlight(ui.device.recordingHighlight)}
                           />{/if}
-                        <span> {voiceStatusText} </span>
+                        <span> {dictation.statusText} </span>
                       </div>
                     {/if}
                     <span
@@ -4236,11 +1751,11 @@
                             : 'tmux session')}</span
                     ><span
                       title={hostLabel(
-                        device.hosts.find((h) => h.id === p.hostId)?.name || 'Unavailable',
+                        ui.device.hosts.find((h) => h.id === p.hostId)?.name || 'Unavailable',
                         status,
                       )}
                       >{hostLabel(
-                        device.hosts.find((h) => h.id === p.hostId)?.name || 'Unavailable',
+                        ui.device.hosts.find((h) => h.id === p.hostId)?.name || 'Unavailable',
                         status,
                       )}</span
                     >
@@ -4250,14 +1765,14 @@
                     <button onclick={() => void task(() => retry(p))}>Retry launch</button>
                   </div>{:else if p.sessionId || p.shell}<TerminalView
                     settings={{
-                      ...(device.terminal || terminalDefaults),
+                      ...(ui.device.terminal || terminalDefaults),
                       clipboard:
-                        device.clipboardByHost?.[p.hostId] ||
-                        device.terminal?.clipboard ||
+                        ui.device.clipboardByHost?.[p.hostId] ||
+                        ui.device.terminal?.clipboard ||
                         'notify',
                     }}
                     onclipboard={(characters) =>
-                      (notice = `${p.name}: a program on the host copied ${characters} characters to your clipboard.`)}
+                      (ui.notice = `${p.name}: a program on the host copied ${characters} characters to your clipboard.`)}
                     onpastesetting={setPasteConfirmation}
                     watching={() =>
                       detachedPanes.has(p.id) ? detached.focus === p.id : document.hasFocus()}
@@ -4267,21 +1782,23 @@
                       void call('terminal_window_focus', { paneId: p.id }).catch(fail);
                       return true;
                     }}
-                    transcript={voiceTarget === p.id && voiceStatus !== 'idle' ? dictation : ''}
-                    onprogress={(value) => (terminalProgress[p.id] = value)}
-                    theme={device.theme || 'blue'}
+                    transcript={dictation.target === p.id && dictation.status !== 'idle'
+                      ? dictation.text
+                      : ''}
+                    onprogress={(value) => (ui.terminalProgress[p.id] = value)}
+                    theme={ui.device.theme || 'blue'}
                     pane={p}
-                    host={device.hosts.find((h) => h.id === p.hostId)}
+                    host={ui.device.hosts.find((h) => h.id === p.hostId)}
                     active={w.focused === p.id}
                     visible={!detachedPanes.has(p.id) &&
                       (!tabs || activeTab === p.id) &&
-                      current?.id === w.id &&
-                      (!maximize || maximize === p.id)}
+                      panes.current?.id === w.id &&
+                      (!ui.maximize || ui.maximize === p.id)}
                     connected={connections[p.hostId] === 'Connected'}
                     ondisconnect={() => void checkConnections(p.hostId)}
                     oncloseview={() => closePane(p)}
                     onreconnect={async () => {
-                      const host = device.hosts.find((h) => h.id === p.hostId);
+                      const host = ui.device.hosts.find((h) => h.id === p.hostId);
                       if (host) await reconnectHost(host);
                     }}
                     onfocus={() => {
@@ -4302,18 +1819,18 @@
                     onsearch={() => openTerminalSearch(p.id)}
                     onfile={(path) => openFiles(p, 'documents', w.id, path)}
                     onalert={(message) => terminalAlert(p, message)}
-                    onmetadata={(value) => (paneStatus[p.id] = value)}
-                    onstate={(s) => (terminalState[p.id] = s)}
+                    onmetadata={(value) => (ui.paneStatus[p.id] = value)}
+                    onstate={(s) => (ui.terminalState[p.id] = s)}
                   />{:else}<div class="pane-message">
                     <TerminalIcon size={24} />
                     <p>{desktop ? 'Creating session…' : 'Terminal preview'}</p>
                     {#if !desktop}<code>Connect a host to begin.</code>{/if}
                   </div>{/if}
                 <div class="pane-footer">
-                  <span title={terminalState[p.id]}
-                    >{terminalState[p.id] === 'Attached' || terminalState[p.id] === 'Shell'
+                  <span title={ui.terminalState[p.id]}
+                    >{ui.terminalState[p.id] === 'Attached' || ui.terminalState[p.id] === 'Shell'
                       ? ''
-                      : terminalState[p.id]}</span
+                      : ui.terminalState[p.id]}</span
                   >
                   <span class="spacer"></span>
                   <button
@@ -4332,35 +1849,38 @@
                       >Effort <ChevronDown size={12} /></button
                     >{/if}
                 </div>
-                {#if draggingPane && dropTarget?.id === p.id}<div
+                {#if panes.draggingPane && panes.dropTarget?.id === p.id}<div
                     class="dock-guide"
                     aria-hidden="true"
                   >
                     <span class="left">Left</span><span class="right">Right</span>
                     <span class="top">Above</span><span class="bottom">Below</span>
                   </div>{/if}
-                {#if dropTarget?.id === p.id}<div class={`drop-preview ${dropTarget.edge}`}>
+                {#if panes.dropTarget?.id === p.id}<div
+                    class={`drop-preview ${panes.dropTarget.edge}`}
+                  >
                     <span
-                      >{dropTarget.edge === 'center'
-                        ? `${dragCopy ? '+ Duplicate' : 'Move'} here`
-                        : `${dragCopy ? '+ Duplicate' : 'Move'}: split ${dropTarget.edge}`}</span
+                      >{panes.dropTarget.edge === 'center'
+                        ? `${panes.dragCopy ? '+ Duplicate' : 'Move'} here`
+                        : `${panes.dragCopy ? '+ Duplicate' : 'Move'}: split ${panes.dropTarget.edge}`}</span
                     >
                   </div>{/if}
               </section>{/if}{/each}
-          {#each viewers as viewer, index (viewer.id)}
+          {#each panes.viewers as viewer, index (viewer.id)}
             <ViewerWindow
               tileId={viewer.id}
-              dockRect={workspaceBoxes[viewer.workspaceId]?.[viewer.id] || {
+              dockRect={panes.workspaceBoxes[viewer.workspaceId]?.[viewer.id] || {
                 x: 0,
                 y: 0,
                 width: 100,
                 height: 100,
               }}
-              hidden={current?.id !== viewer.workspaceId || (!!maximize && maximize !== viewer.id)}
-              maximized={maximize === viewer.id}
-              onmaximize={() => (maximize = maximize === viewer.id ? '' : viewer.id)}
+              hidden={panes.current?.id !== viewer.workspaceId ||
+                (!!ui.maximize && ui.maximize !== viewer.id)}
+              maximized={ui.maximize === viewer.id}
+              onmaximize={() => (ui.maximize = ui.maximize === viewer.id ? '' : viewer.id)}
               ondrag={(e) => {
-                const w = workspaces.find((w) => w.id === viewer.workspaceId);
+                const w = panes.workspaces.find((w) => w.id === viewer.workspaceId);
                 if (w) startPaneDrag(e, viewer, w, true);
               }}
               onnew={() => openFiles(viewer.pane, 'documents', viewer.workspaceId)}
@@ -4369,18 +1889,20 @@
               offset={index % 8}
               layer={viewer.order}
               onactivate={() => {
-                if (viewer.order !== viewerOrder) viewer.order = ++viewerOrder;
+                if (viewer.order !== panes.viewerOrder) viewer.order = ++panes.viewerOrder;
               }}
               onclose={() => {
                 closeViewer(viewer.id);
               }}
             >
-              {#if dropTarget?.id === viewer.id}<div class={`drop-preview ${dropTarget.edge}`}>
-                  <span>Move: {dropTarget.edge}</span>
+              {#if panes.dropTarget?.id === viewer.id}<div
+                  class={`drop-preview ${panes.dropTarget.edge}`}
+                >
+                  <span>Move: {panes.dropTarget.edge}</span>
                 </div>{/if}
               <FilesDialog
-                hosts={device.hosts}
-                {inventories}
+                hosts={ui.device.hosts}
+                inventories={ui.inventories}
                 connected={connections}
                 initialHost={viewer.pane.hostId}
                 initialPath={viewer.initialPath}
@@ -4391,14 +1913,14 @@
                 ondocument={(path, hostId) => {
                   viewer.pane.hostId = hostId;
                   viewer.title = path
-                    ? `${device.hosts.find((h) => h.id === hostId)?.name || 'Host'}: ${path}`
+                    ? `${ui.device.hosts.find((h) => h.id === hostId)?.name || 'Host'}: ${path}`
                     : 'Files and previews';
                 }}
               />
             </ViewerWindow>
           {/each}
         </div>
-        {#if !current}<div class="empty-state">
+        {#if !panes.current}<div class="empty-state">
             <Brand large />
             <p class="holding-title">Let's speed things up</p>
             <div class="empty-actions">
@@ -4407,11 +1929,11 @@
                 onclick={() => {
                   if (!host) {
                     newHost = hostDefaults();
-                    modal = 'host';
+                    ui.modal = 'host';
                   } else showLaunch();
                 }}
                 ><Plus size={16} />{host ? 'Start a workspace' : 'Connect your first host'}</button
-              ><button onclick={() => (modal = 'command')}
+              ><button onclick={() => (ui.modal = 'command')}
                 ><Command size={16} /> Explore commands</button
               >
             </div>
@@ -4420,7 +1942,7 @@
     </main>
   </div>
 </div>
-{#if hostlessConnect && hostlessNeeds}
+{#if panes.hostlessConnect && panes.hostlessNeeds}
   <div class="modal-backdrop" role="presentation">
     <div
       class="modal"
@@ -4430,31 +1952,43 @@
       tabindex="-1"
       use:focusDialog
     >
-      <HostlessConnect {addHost} {connect} bind:hostlessConnect {hostlessNeeds} {task} />
+      <HostlessConnect
+        {addHost}
+        {connect}
+        bind:hostlessConnect={panes.hostlessConnect}
+        hostlessNeeds={panes.hostlessNeeds}
+        {task}
+      />
     </div>
   </div>
 {/if}
-{#if draggingPane}<div
+{#if panes.draggingPane}<div
     class="pane-drag-ghost"
-    style:left={`${dragPosition.x}px`}
-    style:top={`${dragPosition.y}px`}
+    style:left={`${panes.dragPosition.x}px`}
+    style:top={`${panes.dragPosition.y}px`}
   >
-    {dragCopy
+    {panes.dragCopy
       ? '+ Duplicate terminal'
-      : viewers.some((v) => v.id === draggingPane)
+      : panes.viewers.some((v) => v.id === panes.draggingPane)
         ? 'Move viewer'
         : 'Move terminal'} · Esc to cancel
   </div>{/if}
 
-{#if modal}<div
+{#if ui.modal}<div
     class="modal-backdrop"
     role="presentation"
     onpointerdown={(e) => {
       backdropPress = e.target === e.currentTarget;
     }}
     onclick={(e) => {
-      if (backdropPress && e.target === e.currentTarget && !busy && !filesLocked && !broadcastBusy)
-        modal = modal === 'changelog' ? changelogReturn : '';
+      if (
+        backdropPress &&
+        e.target === e.currentTarget &&
+        !ui.busy &&
+        !panes.filesLocked &&
+        !broadcast.busy
+      )
+        ui.modal = ui.modal === 'changelog' ? changelogReturn : '';
     }}
   >
     <div
@@ -4467,12 +2001,12 @@
         'new-session',
         'documents',
         'upload',
-      ].includes(modal)}
-      use:focusDialog={{ restore: restoreTerminalFocus, key: modal }}
+      ].includes(ui.modal)}
+      use:focusDialog={{ restore: restoreTerminalFocus, key: ui.modal }}
       role="dialog"
       aria-modal="true"
       aria-labelledby="modal-title"
-      data-modal={modal}
+      data-modal={ui.modal}
       tabindex="-1"
     >
       <div class="modal-header">
@@ -4495,14 +2029,14 @@
             'host-colors': 'Host colors',
             'tmux-settings': 'tmux settings',
             changelog: 'Changelog',
-            launch: launchAxis ? 'Add terminals' : 'Start a workspace',
+            launch: launcher.launchAxis ? 'Add terminals' : 'Start a workspace',
             sessions:
-              device.hosts.find((h) => h.id === (sessionHost || device.activeHost))?.kind ===
-              'powershell'
+              ui.device.hosts.find((h) => h.id === (launcher.sessionHost || ui.device.activeHost))
+                ?.kind === 'powershell'
                 ? 'PowerShell sessions'
                 : 'tmux sessions',
             'new-session': ['Name your session', 'Choose an agent', 'Choose a repository'][
-              sessionStep
+              launcher.sessionStep
             ],
             rename: 'Rename session',
             destroy: 'Destroy session',
@@ -4515,17 +2049,17 @@
             workspace: 'Workspace options',
             'listen-intro': 'Dictate into a terminal',
             'terminal-host-connection': 'Terminal host connection',
-          }[modal] || 'Dialog'}
+          }[ui.modal] || 'Dialog'}
         </h2>
         <button
           class="icon"
           aria-label="Close dialog"
-          disabled={busy || filesLocked || broadcastBusy}
-          onclick={() => (modal = modal === 'changelog' ? changelogReturn : '')}
+          disabled={ui.busy || panes.filesLocked || broadcast.busy}
+          onclick={() => (ui.modal = ui.modal === 'changelog' ? changelogReturn : '')}
           ><X size={18} /></button
         >
       </div>
-      {#if error}<p class="inline-error" role="alert">{error}</p>{/if}
+      {#if ui.error}<p class="inline-error" role="alert">{ui.error}</p>{/if}
       {#each Object.keys(downloadProgress) as id}<button
           onclick={() =>
             void call('model_cancel', { id })
@@ -4535,32 +2069,32 @@
               .catch(fail)}
           >Cancel {voiceModels.models.find((m) => m.id === id)?.name || id} download</button
         >{/each}
-      {#if (modal === 'upload' || modal === 'documents') && filesTarget}
+      {#if (ui.modal === 'upload' || ui.modal === 'documents') && panes.filesTarget}
         <FilesDialog
-          hosts={device.hosts}
-          {inventories}
+          hosts={ui.device.hosts}
+          inventories={ui.inventories}
           connected={connections}
-          initialHost={filesTarget.hostId}
-          directory={filesTarget.repo}
-          mode={modal}
+          initialHost={panes.filesTarget.hostId}
+          directory={panes.filesTarget.repo}
+          mode={ui.modal}
           onpaste={pasteFilePath}
-          onbusy={(value) => (filesLocked = value)}
+          onbusy={(value) => (panes.filesLocked = value)}
         />
-      {:else if modal === 'pane-host' && switchTarget}
+      {:else if ui.modal === 'pane-host' && panes.switchTarget}
         <PaneHost
-          {busy}
+          busy={ui.busy}
           {connections}
-          {device}
-          bind:switchHost
+          device={ui.device}
+          bind:switchHost={panes.switchHost}
           {switchPaneHost}
           {task}
-          {voiceStatus}
+          voiceStatus={dictation.status}
         />
-      {:else if modal === 'pane-repo' && repoTarget}
+      {:else if ui.modal === 'pane-repo' && repoTarget}
         <PaneRepo
-          {busy}
+          busy={ui.busy}
           {connections}
-          {device}
+          device={ui.device}
           {pasteRepoPrompt}
           {promptFor}
           {refreshRepoChoices}
@@ -4571,15 +2105,15 @@
           {repoWarnings}
           {task}
         />
-      {:else if modal === 'terminal-host-connection' && connectionTarget}
+      {:else if ui.modal === 'terminal-host-connection' && profiles.connectionTarget}
         <TerminalHostConnection
           {connectHostTerminals}
-          {connectionTarget}
+          connectionTarget={profiles.connectionTarget}
           {connections}
           {disconnectHostTerminals}
           {task}
         />
-      {:else if modal === 'support'}
+      {:else if ui.modal === 'support'}
         <SupportDialog
           version={releaseVersion(clientInfo.version)}
           status={updates.status || updates.label}
@@ -4588,11 +2122,11 @@
           updateBusy={updates.busy}
           updateSupported={desktop && clientInfo.updateSupported}
           onfeedback={openFeedback}
-          glow={device.supportGlow !== false}
-          highlight={recordingHighlight(device.recordingHighlight)}
-          highlightColor={device.recordingHighlightColor || '#39bdd7'}
+          glow={ui.device.supportGlow !== false}
+          highlight={recordingHighlight(ui.device.recordingHighlight)}
+          highlightColor={ui.device.recordingHighlightColor || '#39bdd7'}
           onglowchange={(enabled) => {
-            device.supportGlow = enabled;
+            ui.device.supportGlow = enabled;
             persistDevice();
           }}
           onupdate={() => {
@@ -4600,11 +2134,11 @@
             if (!updates.available) void checkUpdates(true);
           }}
         />
-      {:else if modal === 'feedback' && device.feedbackContact}
+      {:else if ui.modal === 'feedback' && ui.device.feedbackContact}
         <FeedbackDialog
           appName="DazeDev"
-          bind:name={device.feedbackContact.name}
-          bind:email={device.feedbackContact.email}
+          bind:name={ui.device.feedbackContact.name}
+          bind:email={ui.device.feedbackContact.email}
           bind:message={feedbackMessage}
           busy={feedbackBusy}
           sent={feedbackSent}
@@ -4612,39 +2146,39 @@
           oncontactchange={persistDevice}
           onmessagechange={() => (feedbackSent = false)}
           onsubmit={() => void sendFeedback()}
-          onclose={() => (modal = '')}
+          onclose={() => (ui.modal = '')}
         />
-      {:else if modal === 'repo-collision'}
-        <RepoCollision bind:modal {useSharedWorkingCopy} />
-      {:else if modal === 'close-native'}
+      {:else if ui.modal === 'repo-collision'}
+        <RepoCollision bind:modal={ui.modal} {useSharedWorkingCopy} />
+      {:else if ui.modal === 'close-native'}
         <CloseNative
-          {busy}
+          busy={ui.busy}
           {closeAnyway}
-          {closingApp}
+          closingApp={panes.closingApp}
           {finishNativeClose}
           {cancelNativeClose}
           {task}
         />
-      {:else if modal === 'close-terminal'}
-        <CloseTerminal bind:modal {confirmPendingClose} />
-      {:else if modal === 'listen-intro'}
+      {:else if ui.modal === 'close-terminal'}
+        <CloseTerminal bind:modal={ui.modal} {confirmPendingClose} />
+      {:else if ui.modal === 'listen-intro'}
         <ListenIntro
           {bindingFor}
-          bind:device
-          bind:modal
+          bind:device={ui.device}
+          bind:modal={ui.modal}
           {openSettings}
           {persistDevice}
-          startListening={() => record('dictation', listenIntroTarget)}
+          startListening={() => record('dictation', dictation.listenIntroTarget)}
           {task}
           voiceReady={voiceModels.ready}
         />
-      {:else if modal === 'voice-setup'}
+      {:else if ui.modal === 'voice-setup'}
         <VoiceSetup
-          {busy}
+          busy={ui.busy}
           {changeVoiceModel}
-          bind:device
+          bind:device={ui.device}
           {downloadProgress}
-          bind:modal
+          bind:modal={ui.modal}
           models={voiceModels.models}
           {openSettings}
           {persistDevice}
@@ -4652,137 +2186,156 @@
           switchingVoice={voiceModels.switching}
           {task}
           voiceCacheLoading={voiceModels.cacheLoading}
-          {voiceStatus}
+          voiceStatus={dictation.status}
         />
-      {:else if modal === 'changelog'}
+      {:else if ui.modal === 'changelog'}
         <Changelog
           availableUpdate={updates.available}
           {changelogReturn}
           {historyStatus}
-          bind:modal
+          bind:modal={ui.modal}
           bind:releaseFilter
           {releaseHistory}
         />
-      {:else if modal === 'delete-host' && deleteHostTarget}
-        <DeleteHost {busy} {deleteHost} {deleteHostTarget} bind:modal {task} />
-      {:else if modal === 'host-colors' && colorHost}
-        <HostColors {colorHost} bind:device {persistDevice} />
-      {:else if modal === 'tmux-settings' && tmuxHost}
+      {:else if ui.modal === 'delete-host' && profiles.deleteHostTarget}
+        <DeleteHost
+          busy={ui.busy}
+          {deleteHost}
+          deleteHostTarget={profiles.deleteHostTarget}
+          bind:modal={ui.modal}
+          {task}
+        />
+      {:else if ui.modal === 'host-colors' && colorHost}
+        <HostColors {colorHost} bind:device={ui.device} {persistDevice} />
+      {:else if ui.modal === 'tmux-settings' && tmuxHost}
         <TmuxSettings
           host={tmuxHost}
-          appScrollback={device.terminal?.scrollback || terminalDefaults.scrollback}
+          appScrollback={ui.device.terminal?.scrollback || terminalDefaults.scrollback}
         />
-      {:else if modal === 'pane-colors' && colorPane}
-        <PaneColors bind:colorPane {device} {updateWorkspace} {workspaces} />
-      {:else if modal === 'workspace' && workspaceTarget}
+      {:else if ui.modal === 'pane-colors' && ui.colorPane}
+        <PaneColors
+          bind:colorPane={ui.colorPane}
+          device={ui.device}
+          {updateWorkspace}
+          workspaces={panes.workspaces}
+        />
+      {:else if ui.modal === 'workspace' && workspaceTarget}
         <WorkspaceOptions
           {closeWorkspace}
-          {device}
-          bind:modal
-          bind:profiles
-          bind:renameValue
+          device={ui.device}
+          bind:modal={ui.modal}
+          bind:profiles={ui.profiles}
+          bind:renameValue={ui.renameValue}
           {saved}
           {updateWorkspace}
           bind:workspaceTarget
         />
-      {:else if modal === 'host'}
+      {:else if ui.modal === 'host'}
         <HostForm
           {aliases}
-          {busy}
+          busy={ui.busy}
           {connect}
-          bind:device
-          bind:modal
+          bind:device={ui.device}
+          bind:modal={ui.modal}
           bind:newHost
           {persistDevice}
           {task}
         />
-      {:else if modal === 'launch'}
+      {:else if ui.modal === 'launch'}
         <Launch
-          {busy}
+          busy={ui.busy}
           {connections}
-          {device}
-          bind:form
-          {inventories}
+          device={ui.device}
+          bind:form={ui.form}
+          inventories={ui.inventories}
           {launch}
-          {launchAxis}
-          bind:launchChooseRepo
-          {launchFromCommand}
+          launchAxis={launcher.launchAxis}
+          bind:launchChooseRepo={launcher.launchChooseRepo}
+          launchFromCommand={launcher.launchFromCommand}
           {task}
         />
-      {:else if modal === 'sessions'}
+      {:else if ui.modal === 'sessions'}
         <Sessions
           {attach}
-          {busy}
-          bind:destroyTarget
-          {device}
-          bind:modal
+          busy={ui.busy}
+          bind:destroyTarget={ui.destroyTarget}
+          device={ui.device}
+          bind:modal={ui.modal}
           {refreshSessions}
-          {sessionHost}
-          {sessionPane}
-          {sessions}
+          sessionHost={launcher.sessionHost}
+          sessionPane={launcher.sessionPane}
+          sessions={ui.sessions}
           {startSession}
           {task}
         />
-      {:else if modal === 'new-session'}
+      {:else if ui.modal === 'new-session'}
         <NewSession
-          {busy}
+          busy={ui.busy}
           {createSession}
-          {device}
-          bind:form
-          {inv}
-          bind:modal
-          bind:nameError
-          {selectedAgent}
-          {sessionHost}
-          bind:sessionStep
+          device={ui.device}
+          bind:form={ui.form}
+          inv={launcher.inv}
+          bind:modal={ui.modal}
+          bind:nameError={launcher.nameError}
+          selectedAgent={launcher.selectedAgent}
+          sessionHost={launcher.sessionHost}
+          bind:sessionStep={launcher.sessionStep}
           {task}
         />
-      {:else if modal === 'rename'}
-        <RenameSession {busy} {renameSession} bind:renameValue {task} />
-      {:else if modal === 'destroy'}
-        <DestroySession {busy} {destroySession} {destroyTarget} {device} bind:modal {task} />
-      {:else if modal === 'broadcast'}
+      {:else if ui.modal === 'rename'}
+        <RenameSession busy={ui.busy} {renameSession} bind:renameValue={ui.renameValue} {task} />
+      {:else if ui.modal === 'destroy'}
+        <DestroySession
+          busy={ui.busy}
+          {destroySession}
+          destroyTarget={ui.destroyTarget}
+          device={ui.device}
+          bind:modal={ui.modal}
+          {task}
+        />
+      {:else if ui.modal === 'broadcast'}
         <BroadcastDialog
-          bind:text={broadcastText}
-          bind:allHosts={broadcastAllHosts}
-          bind:allWorkspaces={broadcastAllWorkspaces}
-          hostName={broadcastHostName}
-          workspaceName={broadcastWorkspaceName}
-          phase={voiceMode === 'broadcast' ? voiceStatus : 'idle'}
-          busy={broadcastBusy}
-          snapshot={broadcastSnapshot}
-          result={broadcastResult}
+          bind:text={broadcast.text}
+          bind:allHosts={broadcast.allHosts}
+          bind:allWorkspaces={broadcast.allWorkspaces}
+          hostName={broadcast.hostName}
+          workspaceName={broadcast.workspaceName}
+          phase={dictation.mode === 'broadcast' ? dictation.status : 'idle'}
+          busy={broadcast.busy}
+          snapshot={broadcast.snapshot}
+          result={broadcast.result}
           onrecord={() => void task(() => record('broadcast'))}
           onreview={() => void task(reviewBroadcast)}
           onsend={() => void task(sendBroadcast)}
           onclose={() => {
-            if (!broadcastBusy) {
-              if (voiceMode === 'broadcast' && voiceStatus !== 'idle') void task(cancelVoice);
-              modal = '';
+            if (!broadcast.busy) {
+              if (dictation.mode === 'broadcast' && dictation.status !== 'idle')
+                void task(cancelVoice);
+              ui.modal = '';
             }
           }}
         />
-      {:else if modal === 'command'}
+      {:else if ui.modal === 'command'}
         <CommandDialog
-          {busy}
-          bind:commandError
-          bind:commandReview
+          busy={ui.busy}
+          bind:commandError={commands.error}
+          bind:commandReview={commands.review}
           {commandSubmit}
-          bind:commandText
+          bind:commandText={commands.text}
           {implementCommand}
           {record}
           {task}
-          {voiceMode}
-          {voicePreparing}
-          {voiceStatus}
+          voiceMode={dictation.mode}
+          voicePreparing={dictation.preparing}
+          voiceStatus={dictation.status}
         />
-      {:else if modal === 'settings'}
+      {:else if ui.modal === 'settings'}
         <div class="settings-compact settings-page">
           <UpdatesSection
             availableUpdate={updates.available}
             {checkUpdates}
             {clientInfo}
-            bind:device
+            bind:device={ui.device}
             {openUpdates}
             {persistDevice}
             {showChangelog}
@@ -4794,12 +2347,12 @@
           <PinSettings />
           <DictionarySettings
             compact
-            hosts={device.hosts.filter((h) => h.kind === 'ssh' || h.kind === 'tailscale')}
+            hosts={ui.device.hosts.filter((h) => h.kind === 'ssh' || h.kind === 'tailscale')}
           />
           <VoiceModelsSection
-            {busy}
+            busy={ui.busy}
             {changeVoiceModel}
-            bind:device
+            bind:device={ui.device}
             {downloadModel}
             {downloadProgress}
             hardware={voiceModels.hardware}
@@ -4814,55 +2367,61 @@
             {task}
             voiceCacheLoading={voiceModels.cacheLoading}
             voiceReady={voiceModels.ready}
-            {voiceStatus}
+            voiceStatus={dictation.status}
           />
           <VoiceHotkeysSection
             {bindingFor}
             {captureShortcut}
-            {capturingShortcut}
+            capturingShortcut={dictation.capturingShortcut}
             {changeVoiceModel}
-            bind:device
+            bind:device={ui.device}
             microphoneError={voiceModels.microphoneError}
             microphoneLoading={voiceModels.microphoneLoading}
             microphones={voiceModels.microphones}
             {persistDevice}
             {refreshMicrophones}
             {saveShortcut}
-            {shortcutStatus}
+            shortcutStatus={dictation.shortcutStatus}
             switchingVoice={voiceModels.switching}
             {task}
             voiceCacheLoading={voiceModels.cacheLoading}
-            {voiceStatus}
+            voiceStatus={dictation.status}
           />
-          <AppearanceSection bind:device {persistDevice} {systemReducedMotion} />
-          <TerminalSection bind:device {fail} {persistDevice} {setPasteConfirmation} {softAlert} />
+          <AppearanceSection bind:device={ui.device} {persistDevice} {systemReducedMotion} />
+          <TerminalSection
+            bind:device={ui.device}
+            {fail}
+            {persistDevice}
+            {setPasteConfirmation}
+            {softAlert}
+          />
           <ShortcutsSection
             bind:appShortcutStatus
             bind:capturingAppShortcut
-            {device}
+            device={ui.device}
             {resetAppShortcuts}
           />
           <ConnectionsSection
             {addHost}
             bind:connections={net.connections}
-            bind:device
+            bind:device={ui.device}
             {disconnectHost}
-            bind:modal
+            bind:modal={ui.modal}
             bind:newHost
             {persistDevice}
-            {settingsHost}
+            settingsHost={profiles.settingsHost}
             {task}
           />
           <HostPreferencesSection
-            {device}
-            bind:guidance
-            {profiles}
-            bind:promptTemplate
+            device={ui.device}
+            bind:guidance={profiles.guidance}
+            profiles={ui.profiles}
+            bind:promptTemplate={profiles.promptTemplate}
             {promptValues}
             {reloadHostProfile}
-            bind:roots
+            bind:roots={profiles.roots}
             {saveHostPreferences}
-            {settingsHost}
+            settingsHost={profiles.settingsHost}
             {task}
           />
           <details class="settings-section settings-disclosure">
@@ -4871,31 +2430,39 @@
             <Licenses />
           </details>
         </div>
-      {:else if modal === 'repos'}
+      {:else if ui.modal === 'repos'}
         <Repos
-          {busy}
+          busy={ui.busy}
           {cloneRepo}
-          {device}
-          bind:form
-          {githubRepos}
-          {inventories}
+          device={ui.device}
+          bind:form={ui.form}
+          githubRepos={launcher.githubRepos}
+          inventories={ui.inventories}
           {loadGithubRepos}
           {refresh}
-          {search}
+          search={ui.search}
           {showLaunch}
           {task}
         />
-      {:else if modal === 'agents'}
-        <Agents {busy} {device} {host} {inventories} {refresh} {startAgentFromPicker} {task} />
-      {:else if modal === 'worktree'}
+      {:else if ui.modal === 'agents'}
+        <Agents
+          busy={ui.busy}
+          device={ui.device}
+          {host}
+          inventories={ui.inventories}
+          {refresh}
+          {startAgentFromPicker}
+          {task}
+        />
+      {:else if ui.modal === 'worktree'}
         <Worktree
-          bind:branch
-          {busy}
+          bind:branch={commands.branch}
+          busy={ui.busy}
           {createWorktree}
-          bind:destination
+          bind:destination={commands.destination}
           {sendWorktree}
           {task}
-          bind:worktreeQuestion
+          bind:worktreeQuestion={commands.worktreeQuestion}
         />
       {/if}
     </div>
@@ -4913,7 +2480,7 @@
     >
       <UpdatePrompt
         availableUpdate={updates.available}
-        {busy}
+        busy={ui.busy}
         {checkUpdates}
         {clientInfo}
         {closeUpdates}
@@ -4924,42 +2491,46 @@
         updateProgress={updates.progress}
         updateState={updates.state}
         updateStatus={updates.status}
-        {voiceStatus}
+        voiceStatus={dictation.status}
       />
     </div>
   </div>
 {/if}
 
-{#if paneMenu}
-  <div class="pane-menu-dismiss" role="presentation" onpointerdown={() => (paneMenu = null)}></div>
+{#if ui.paneMenu}
+  <div
+    class="pane-menu-dismiss"
+    role="presentation"
+    onpointerdown={() => (ui.paneMenu = null)}
+  ></div>
   <div
     class="pane-menu"
     role="dialog"
     aria-label="Terminal actions"
     tabindex="-1"
     use:focusDialog
-    style={`left:${paneMenu.x}px;top:${paneMenu.y}px;max-height:calc(100vh - ${paneMenu.y + 8}px)`}
+    style={`left:${ui.paneMenu.x}px;top:${ui.paneMenu.y}px;max-height:calc(100vh - ${ui.paneMenu.y + 8}px)`}
   >
     <TerminalActionMenu
-      items={terminalMenuItems}
-      order={device.paneMenuOrder}
+      items={panes.menuItems}
+      order={ui.device.paneMenuOrder}
       onorder={(order) => {
-        device.paneMenuOrder = order;
+        ui.device.paneMenuOrder = order;
         persistDevice();
       }}
-      onsplit={(edge) => addTerminal(edge, paneMenu!.pane)}
-      transfers={workspaces.map((w) => ({
+      onsplit={(edge) => addTerminal(edge, ui.paneMenu!.pane)}
+      transfers={panes.workspaces.map((w) => ({
         id: w.id,
-        label: `${w.hostId === HOSTLESS ? 'Hostless' : device.hosts.find((h) => h.id === w.hostId)?.name} / ${w.name}`,
+        label: `${w.hostId === HOSTLESS ? 'Hostless' : ui.device.hosts.find((h) => h.id === w.hostId)?.name} / ${w.name}`,
       }))}
-      transferDisabled={dictationActive}
+      transferDisabled={dictation.active}
       ontransfer={(id, duplicate) => {
-        const destination = workspaces.find((w) => w.id === id);
-        if (destination) menuPaneDrop(paneMenu!.pane, destination, duplicate);
+        const destination = panes.workspaces.find((w) => w.id === id);
+        if (destination) menuPaneDrop(ui.paneMenu!.pane, destination, duplicate);
       }}
     />
   </div>
-{/if}{#if dictionarySelection !== null}
+{/if}{#if ui.dictionarySelection !== null}
   <div class="modal-backdrop" role="presentation">
     <div
       class="modal"
@@ -4969,11 +2540,11 @@
       tabindex="-1"
       use:focusDialog
     >
-      <button onclick={() => (dictionarySelection = null)}>Close</button>
+      <button onclick={() => (ui.dictionarySelection = null)}>Close</button>
       <DictionarySettings
-        hosts={device.hosts.filter((h) => h.kind === 'ssh' || h.kind === 'tailscale')}
-        selection={dictionarySelection}
-        ondone={() => (dictionarySelection = null)}
+        hosts={ui.device.hosts.filter((h) => h.kind === 'ssh' || h.kind === 'tailscale')}
+        selection={ui.dictionarySelection}
+        ondone={() => (ui.dictionarySelection = null)}
       />
     </div>
   </div>
@@ -5008,7 +2579,7 @@
         {browserRequests}
         bind:browserTrust
         {decideBrowserRequest}
-        {device}
+        device={ui.device}
       />
     </div>
   </div>

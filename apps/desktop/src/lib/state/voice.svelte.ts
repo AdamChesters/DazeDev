@@ -9,8 +9,6 @@ export interface VoiceModelsDeps {
   /** Current recording phase; models change only while 'idle'. */
   voiceStatus: () => string;
   persist: () => void;
-  /** Speech backend changes; forget the backend the last recording used. */
-  resetBackend: () => void;
   notice: (message: string) => void;
   fail: (e: unknown) => void;
   mediaDevices: () => MediaDevices | undefined;
@@ -87,7 +85,6 @@ export class VoiceModels {
     try {
       await deps.call('voice_release');
       this.#cacheSignature = '';
-      deps.resetBackend();
       deps.persist();
       await this.configureCache();
     } catch (e) {
@@ -110,7 +107,6 @@ export class VoiceModels {
       await deps.call('voice_release');
       this.#cacheSignature = '';
       deps.device().voice.model = id;
-      deps.resetBackend();
       deps.persist();
       await this.configureCache();
     } finally {
