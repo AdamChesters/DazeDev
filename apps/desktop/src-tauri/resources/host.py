@@ -1,5 +1,5 @@
 """DazeDev's stdlib-only host protocol. Executed in memory; installs no daemon."""
-import threading, concurrent.futures
+import threading, concurrent.futures, collections
 import base64, contextlib, fcntl, getpass, hashlib, json, os, pathlib, re, shlex, shutil, socket, subprocess, sys, tempfile, time, uuid
 P = pathlib.Path
 os.environ['PATH']=str(P.home()/'.local/bin')+os.pathsep+os.environ.get('PATH','')
@@ -859,12 +859,6 @@ def dispatch(method,a):
         return repo_info(path)
     raise ValueError('Unknown method')
 
-def reply_frames(prefix, reply):
-    # Short numbered lines survive Windows console display wrapping. The client
-    # validates order and reassembles the original JSON before using any result.
-    payload=base64.b64encode(json.dumps(reply,separators=(',',':')).encode()).decode()
-    total=(len(payload)+47)//48
-    return [prefix+'@'+str(i)+'/'+str(total)+':'+payload[i*48:(i+1)*48] for i in range(total)]
 # Read-only methods share the read lane; everything else stays ordered on the
 # single mutation lane. Inline methods run on the input loop itself.
 INLINE_METHODS = frozenset({'ping','browser_prepare','browser_result'})
@@ -876,25 +870,72 @@ SHORT_DEADLINE_METHODS = frozenset({'inventory','capabilities','repositories','g
 def lane_for(method):
     if method in INLINE_METHODS: return 'inline'
     return 'read' if method in READ_METHODS else 'mutation'
+# The desktop client rejects replies with more frames than this; the link
+# would end, so an oversized reply becomes an error for that request only.
+MAX_REPLY_FRAMES = 350000
+def reply_payload(reply):
+    return base64.b64encode(json.dumps(reply,separators=(',',':')).encode()).decode()
+def reply_frames(prefix, reply, payload=None):
+    # Short numbered lines survive Windows console display wrapping. The client
+    # validates order and reassembles the original JSON before using any result.
+    payload=reply_payload(reply) if payload is None else payload
+    total=(len(payload)+47)//48
+    return [prefix+'@'+str(i)+'/'+str(total)+':'+payload[i*48:(i+1)*48] for i in range(total)]
+def encode_reply(prefix, reply):
+    rid=reply.get('id','unknown') if isinstance(reply,dict) else 'unknown'
+    try: payload=reply_payload(reply)
+    except (TypeError,ValueError) as e: payload=reply_payload({'id':rid,'error':'Host reply could not be encoded: '+str(e)})
+    if (len(payload)+47)//48 > MAX_REPLY_FRAMES:
+        payload=reply_payload({'id':rid,'error':'Host reply is too large to send ('+str(len(payload)*3//4)+' bytes). Narrow the request and retry.'})
+    return ''.join(frame+'\n' for frame in reply_frames(prefix,reply,payload))
+class ReplyWriter:
+    # One thread writes whole replies: the clients need each reply's frames
+    # back to back. Urgent replies (ping, browser) go before queued ones, and
+    # callers never wait for the write itself.
+    def __init__(self):
+        self.cond=threading.Condition(); self.urgent=collections.deque(); self.normal=collections.deque(); self.done=False
+        self.thread=threading.Thread(target=self.run,daemon=True); self.thread.start()
+    def put(self, block, urgent=False):
+        with self.cond:
+            (self.urgent if urgent else self.normal).append(block); self.cond.notify()
+    def run(self):
+        while True:
+            with self.cond:
+                while not self.urgent and not self.normal and not self.done: self.cond.wait()
+                if not self.urgent and not self.normal: return
+                block=(self.urgent or self.normal).popleft()
+            try: sys.stdout.write(block); sys.stdout.flush()
+            except (OSError,ValueError): pass
+    def close(self):
+        with self.cond: self.done=True; self.cond.notify()
+        self.thread.join()
+WRITER = None
 _reply_lock = threading.Lock()
-def send_reply(prefix, reply):
-    with _reply_lock:
-        for frame in reply_frames(prefix,reply): print(frame,flush=True)
-def handle_request(prefix, request):
+def send_reply(prefix, reply, urgent=False):
+    block=encode_reply(prefix,reply)
+    if WRITER: WRITER.put(block,urgent); return
+    with _reply_lock: sys.stdout.write(block); sys.stdout.flush()
+def handle_request(prefix, request, urgent=False):
     try:
         _operation_deadline.end = time.monotonic() + (30 if request['method'] in SHORT_DEADLINE_METHODS else 240)
         reply={'id':request['id'],'result':dispatch(request['method'],request.get('args',{}))}
     except Exception as e: reply={'id':request.get('id','unknown'),'error':str(e)}
-    send_reply(prefix,reply)
+    send_reply(prefix,reply,urgent)
 def main():
-    global BROWSER, BROWSER_ERROR
+    global BROWSER, BROWSER_ERROR, WRITER
     nonce=sys.argv[1];os.environ['PATH']=str(P.home()/'.local/bin')+':'+os.environ.get('PATH','')
     prefix='DAZED:'+nonce+':'
+    WRITER=ReplyWriter()
+    try: serve(prefix)
+    finally:
+        WRITER.close(); WRITER=None
+def serve(prefix):
+    global BROWSER, BROWSER_ERROR
     if globals().get('BROWSER_SOURCE') and os.environ.get('DAZED_BROWSER_ENDPOINT'):
         try:
             namespace={'__name__':'dazedev_browser'}
             exec(compile(BROWSER_SOURCE,'<dazedev-browser>','exec'),namespace)
-            BROWSER=namespace['Bridge'](BROWSER_SOURCE,os.environ['DAZED_BROWSER_ENDPOINT'],os.environ['DAZED_BROWSER_DESKTOP'],lambda value: send_reply(prefix,dict(event='browser-open',**value)),start=False)
+            BROWSER=namespace['Bridge'](BROWSER_SOURCE,os.environ['DAZED_BROWSER_ENDPOINT'],os.environ['DAZED_BROWSER_DESKTOP'],lambda value: send_reply(prefix,dict(event='browser-open',**value),True),start=False)
         except Exception as error: BROWSER_ERROR=str(error)
     send_reply(prefix,{'id':'ready','result':{'machine':MACHINE,'user':getpass.getuser()}})
     if BROWSER: BROWSER.start()
@@ -913,8 +954,8 @@ def main():
                 if lane != 'inline':
                     if not slots.acquire(blocking=False): raise RuntimeError('Host task queue is full; wait for current operations.')
                     (reads if lane == 'read' else mutations).submit(finish,request)
-                else: handle_request(prefix,request)
-            except Exception as e: send_reply(prefix,{'id':request.get('id','unknown'),'error':str(e)})
+                else: handle_request(prefix,request,True)
+            except Exception as e: send_reply(prefix,{'id':request.get('id','unknown') if isinstance(request,dict) else 'unknown','error':str(e)})
 if __name__=='__main__':
     try: main()
     finally:
