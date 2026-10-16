@@ -2855,7 +2855,7 @@
   function focusBroadcastInput() {
     if (modal === 'broadcast' && appHasFocus())
       document
-        .querySelector<HTMLTextAreaElement>('[role="dialog"][aria-label="broadcast"] textarea')
+        .querySelector<HTMLTextAreaElement>('[data-modal="broadcast"] textarea')
         ?.focus();
   }
   function openBroadcast() {
@@ -3126,7 +3126,7 @@
   function focusCommandInput() {
     if (modal !== 'command' || !appHasFocus()) return;
     const input = document.querySelector<HTMLTextAreaElement>(
-      '[role="dialog"][aria-label="command"] textarea',
+      '[data-modal="command"] textarea',
     );
     if (!input || document.activeElement === input) return;
     // Preserve an explicit edit elsewhere; recover focus lost when the Stop button disappears.
@@ -4742,14 +4742,15 @@
         'documents',
         'upload',
       ].includes(modal)}
-      use:focusDialog={{ restore: restoreTerminalFocus }}
+      use:focusDialog={{ restore: restoreTerminalFocus, key: modal }}
       role="dialog"
       aria-modal="true"
-      aria-label={modal === 'feedback' ? supportContent.feedback.title : modal}
+      aria-labelledby="modal-title"
+      data-modal={modal}
       tabindex="-1"
     >
       <div class="modal-header">
-        <h2>
+        <h2 id="modal-title">
           {{
             host: 'Connect a machine',
             transcript: 'Review transcription',
@@ -4786,7 +4787,9 @@
             agents: 'Agents on this host',
             worktree: 'Create a worktree',
             workspace: 'Workspace options',
-          }[modal] || modal}
+            'listen-intro': 'Dictate into a terminal',
+            'terminal-host-connection': 'Terminal host connection',
+          }[modal] || 'Dialog'}
         </h2>
         <button
           class="icon"
