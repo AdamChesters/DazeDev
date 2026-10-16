@@ -1127,3 +1127,26 @@ fn shared_schema_lists_methods_the_desktop_calls() {
         frame.len() - 4
     );
 }
+
+#[test]
+fn host_messages_parse_into_typed_kinds() {
+    let parse = |v: Value| HostMessage::parse(v);
+    assert!(matches!(
+        parse(json!({"id":"7","event":"browser-open","url":"https://example.invalid/"})),
+        Some(HostMessage::BrowserOpen { id, url }) if id == "7" && url == "https://example.invalid/"
+    ));
+    assert!(matches!(
+        parse(json!({"id":"ready","result":{"protocol":2}})),
+        Some(HostMessage::Ready(identity)) if identity["protocol"] == 2
+    ));
+    assert!(matches!(
+        parse(json!({"id":"3","result":{"ok":true}})),
+        Some(HostMessage::Reply { id, result: Ok(result) }) if id == "3" && result["ok"] == true
+    ));
+    assert!(matches!(
+        parse(json!({"id":"4","error":{"code":"conflict","message":"Changed"}})),
+        Some(HostMessage::Reply { result: Err(error), .. }) if error == "CONFLICT: Changed"
+    ));
+    assert!(parse(json!({"id":"5","event":"future-event"})).is_none());
+    assert!(parse(json!({"id":5})).is_none());
+}

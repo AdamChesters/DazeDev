@@ -150,6 +150,52 @@ pub(super) fn request_frame(request: &Value) -> Result<Vec<u8>, String> {
     frame.extend(body);
     Ok(frame)
 }
+/// One message from the host helper (see shared/protocol/host-v2.json).
+pub(super) enum HostMessage {
+    /// The helper asks the desktop to open a link.
+    BrowserOpen { id: String, url: Value },
+    /// The helper started; carries its identity and protocol version.
+    Ready(Value),
+    /// The answer to one request.
+    Reply {
+        id: String,
+        result: Result<Value, String>,
+    },
+}
+#[derive(Deserialize)]
+struct Envelope {
+    #[serde(default)]
+    id: String,
+    #[serde(default)]
+    event: Option<String>,
+    #[serde(default)]
+    url: Value,
+    #[serde(default)]
+    result: Value,
+    #[serde(default)]
+    error: Value,
+}
+impl HostMessage {
+    /// None for malformed messages and events this version does not know.
+    pub(super) fn parse(value: Value) -> Option<Self> {
+        let envelope: Envelope = serde_json::from_value(value).ok()?;
+        match envelope.event.as_deref() {
+            Some("browser-open") => Some(Self::BrowserOpen {
+                id: envelope.id,
+                url: envelope.url,
+            }),
+            Some(_) => None,
+            None if envelope.id == "ready" => Some(Self::Ready(envelope.result)),
+            None => Some(Self::Reply {
+                result: match host_error(&envelope.error) {
+                    Some(error) => Err(error),
+                    None => Ok(envelope.result),
+                },
+                id: envelope.id,
+            }),
+        }
+    }
+}
 /// Error text for the frontend. Protocol 2 sends `{code, message}`; a
 /// conflict keeps the `CONFLICT:` prefix the frontend looks for.
 pub(super) fn host_error(error: &Value) -> Option<String> {

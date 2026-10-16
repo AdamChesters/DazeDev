@@ -31,28 +31,31 @@ pub(super) fn host_message(
     v: Value,
     sink: &EventSink,
 ) -> bool {
-    let id = v["id"].as_str().unwrap_or("");
-    if v["event"] == "browser-open" {
-        if conn.pty.active.load(Ordering::Acquire) && *lock(&conn.ready) {
-            sink(
-                "host-browser-open",
-                json!({"hostId":host_id,"nonce":nonce,"id":id,"url":v["url"]}),
-            );
+    match HostMessage::parse(v) {
+        Some(HostMessage::BrowserOpen { id, url }) => {
+            if conn.pty.active.load(Ordering::Acquire) && *lock(&conn.ready) {
+                sink(
+                    "host-browser-open",
+                    json!({"hostId":host_id,"nonce":nonce,"id":id,"url":url}),
+                );
+            }
         }
-    } else if id == "ready" {
-        if conn.binary && v["result"]["protocol"].as_u64() != Some(HOST_PROTOCOL) {
-            sink(
-                "host-output",
-                json!({"hostId":host_id,"text":"The host helper does not match this version of DazeDev.\n"}),
-            );
-            return false;
+        Some(HostMessage::Ready(identity)) => {
+            if conn.binary && identity["protocol"].as_u64() != Some(HOST_PROTOCOL) {
+                sink(
+                    "host-output",
+                    json!({"hostId":host_id,"text":"The host helper does not match this version of DazeDev.\n"}),
+                );
+                return false;
+            }
+            return host_ready(conn, host_id, identity, sink);
         }
-        return host_ready(conn, host_id, v["result"].clone(), sink);
-    } else if let Some(tx) = lock(&conn.pending).remove(id) {
-        let _ = tx.send(match host_error(&v["error"]) {
-            Some(e) => Err(e),
-            None => Ok(v["result"].clone()),
-        });
+        Some(HostMessage::Reply { id, result }) => {
+            if let Some(tx) = lock(&conn.pending).remove(&id) {
+                let _ = tx.send(result);
+            }
+        }
+        None => {}
     }
     true
 }
