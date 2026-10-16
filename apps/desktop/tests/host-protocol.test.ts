@@ -19,7 +19,9 @@ describe('host protocol schema', () => {
   it('lists every host method the frontend calls', () => {
     const called = new Set<string>();
     for (const file of sources(join(root, 'src'))) {
-      for (const match of readFileSync(file, 'utf8').matchAll(/rpc(?:<[^>]*>)?\([^,()]+,\s*'([a-z_]+)'/g))
+      for (const match of readFileSync(file, 'utf8').matchAll(
+        /rpc(?:<[^>]*>)?\([^,()]+,\s*'([a-z_]+)'/g,
+      ))
         called.add(match[1]);
     }
     expect(called.size).toBeGreaterThan(10);

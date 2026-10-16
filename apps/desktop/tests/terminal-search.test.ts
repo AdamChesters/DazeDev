@@ -28,7 +28,9 @@ function inlineWorkers() {
           limit: number;
         };
         queueMicrotask(() =>
-          worker.onmessage?.({ data: { matches: findLineMatches(lines, options, limit) } } as MessageEvent),
+          worker.onmessage?.({
+            data: { matches: findLineMatches(lines, options, limit) },
+          } as MessageEvent),
         );
       },
     };
@@ -138,7 +140,12 @@ describe('live terminal search', () => {
     expect(f.select).toHaveBeenCalledWith(2, 0, 4);
   });
   it('does not join hard newline boundaries', async () => {
-    expect(await new LiveBufferSearch(fixture(['upl', 'oad']).term, inlineWorkers().workers).collectAsync(options)).toHaveLength(0);
+    expect(
+      await new LiveBufferSearch(
+        fixture(['upl', 'oad']).term,
+        inlineWorkers().workers,
+      ).collectAsync(options),
+    ).toHaveLength(0);
   });
   it('maps wide and surrogate-pair characters to terminal cells', async () => {
     const f = fixture(['界😀upload']);
@@ -202,7 +209,12 @@ describe('live terminal search', () => {
 
 describe('bounded worker search', () => {
   it('terminates a pathological expression and accepts a subsequent search', async () => {
-    const code = buildSync({entryPoints: ['src/lib/terminal-search.worker.ts'],bundle: true,write: false,format: 'iife'}).outputFiles[0].text;
+    const code = buildSync({
+      entryPoints: ['src/lib/terminal-search.worker.ts'],
+      bundle: true,
+      write: false,
+      format: 'iife',
+    }).outputFiles[0].text;
     let terminated = 0;
     class BrowserWorker {
       onmessage: ((event: MessageEvent) => void) | null = null;

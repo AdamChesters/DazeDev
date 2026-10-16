@@ -47,9 +47,7 @@
       ><button onclick={() => showChangelog()}>Changelog</button><button
         onclick={() => exportDiagnostics(clientInfo.version)}>Export diagnostics</button
       >
-    </div>{:else}<p class="hint">
-      Test build: download updates manually for this platform.
-    </p>
+    </div>{:else}<p class="hint">Test build: download updates manually for this platform.</p>
     <div class="settings-actions">
       <button onclick={() => showChangelog()}>Changelog</button><button
         onclick={() => exportDiagnostics(clientInfo.version)}>Export diagnostics</button

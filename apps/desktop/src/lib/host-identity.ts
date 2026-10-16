@@ -13,8 +13,12 @@ export function refreshHostIdentity(
       for (const pane of workspace.panes) {
         const before = JSON.stringify([pane.hostId, pane.hostKey, pane.hostDetails]);
         if (pane.hostKey === host.fingerprint) pane.hostId = host.id;
-        else if (pane.hostId === host.id && (!pane.hostKey ||
-          (host.kind === 'powershell' && pane.hostKey === `${inventory.machine}:${inventory.user}:${host.socket}`)))
+        else if (
+          pane.hostId === host.id &&
+          (!pane.hostKey ||
+            (host.kind === 'powershell' &&
+              pane.hostKey === `${inventory.machine}:${inventory.user}:${host.socket}`))
+        )
           pane.hostKey = host.fingerprint;
         if (pane.hostKey === host.fingerprint) {
           pane.hostDetails = {
@@ -27,7 +31,8 @@ export function refreshHostIdentity(
             socket: host.socket,
           };
         }
-        if (JSON.stringify([pane.hostId, pane.hostKey, pane.hostDetails]) !== before) changed.add(profile);
+        if (JSON.stringify([pane.hostId, pane.hostKey, pane.hostDetails]) !== before)
+          changed.add(profile);
       }
   return changed;
 }

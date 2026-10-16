@@ -20,7 +20,9 @@ it('removes per-pane entries for deleted panes and keeps the object when nothing
   expect(pruneKeys(status, new Set(['a']))).toEqual({ a: 1 });
 });
 it('removes remembered focus for deleted panes and workspaces but keeps unloaded hosts', () => {
-  const { byWorkspace, byGroup } = paneContainers([workspace('w1', ['p1', 'p2'], [['p1', 'gone']])]);
+  const { byWorkspace, byGroup } = paneContainers([
+    workspace('w1', ['p1', 'p2'], [['p1', 'gone']]),
+  ]);
   const focus = { w1: 'p9', w2: 'p3', unloaded: 'p4' };
   const seen = new Set(['w1', 'w2']);
   expect(prunePaneChoices(focus, byWorkspace, seen, false)).toEqual({ unloaded: 'p4' });
@@ -32,7 +34,14 @@ it('removes remembered focus for deleted panes and workspaces but keeps unloaded
 it('moves the old silent remote-copy default to notify once', () => {
   const old = {
     ...defaults(),
-    terminal: { fontSize: 13, scrollback: 4000, gpu: true, ligatures: false, images: true, clipboard: 'write' as const },
+    terminal: {
+      fontSize: 13,
+      scrollback: 4000,
+      gpu: true,
+      ligatures: false,
+      images: true,
+      clipboard: 'write' as const,
+    },
     clipboardByHost: { a: 'write' as const, b: 'off' as const, c: 'read-write' as const },
   };
   const migrated = migrateClipboardPolicy(old);

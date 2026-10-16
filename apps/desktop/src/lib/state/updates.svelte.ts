@@ -2,7 +2,8 @@ import { releaseVersion } from '../release-version';
 import { UpdateCheck } from '../update-checks';
 
 export type UpdateInfo = { version: string; notes: string; size: number };
-export type UpdateState = 'unchecked' | 'checking' | 'current' | 'available' | 'error' | 'installing';
+export type UpdateState =
+  'unchecked' | 'checking' | 'current' | 'available' | 'error' | 'installing';
 
 export interface UpdatesDeps {
   desktop: boolean;

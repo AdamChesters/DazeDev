@@ -25,9 +25,7 @@
 </p>
 {#each hostlessNeeds.required as required}<p>{required.name}</p>{/each}
 {#if hostlessNeeds.missing.length}<p class="hint">
-    Add these hosts with their original user and tmux socket: {hostlessNeeds.missing.join(
-      ', ',
-    )}.
+    Add these hosts with their original user and tmux socket: {hostlessNeeds.missing.join(', ')}.
   </p>{/if}
 <div class="row">
   {#if hostlessNeeds.required.length}<button

@@ -76,7 +76,16 @@ function logicalLine(buffer: IBuffer, first: number, withPoints = false): Logica
     const wrapped = !!buffer.getLine(row + 1)?.isWrapped;
     if (!withPoints) {
       let rowText = line.translateToString(!wrapped);
-      if (wrapped && rowText.endsWith(' ') && !line.getCell(line.length - 1)?.getChars() && buffer.getLine(row + 1)?.getCell(0)?.getWidth() === 2) rowText = rowText.slice(0, -1);
+      if (
+        wrapped &&
+        rowText.endsWith(' ') &&
+        !line.getCell(line.length - 1)?.getChars() &&
+        buffer
+          .getLine(row + 1)
+          ?.getCell(0)
+          ?.getWidth() === 2
+      )
+        rowText = rowText.slice(0, -1);
       text += rowText;
       if (!wrapped) break;
       row++;

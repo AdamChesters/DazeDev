@@ -17,8 +17,8 @@
 <details class="settings-section settings-disclosure">
   <summary>Keyboard shortcuts <span>App actions</span></summary>
   <p class="hint">
-    Ctrl+letter shortcuts without Shift or Alt are left to the terminal while a terminal
-    has focus, so shell and editor keys such as Ctrl+K keep working there.
+    Ctrl+letter shortcuts without Shift or Alt are left to the terminal while a terminal has focus,
+    so shell and editor keys such as Ctrl+K keep working there.
   </p>
   {#each appActions as action}
     <div class="hotkey-record">
@@ -32,8 +32,7 @@
         onclick={() => {
           capturingAppShortcut = action.id;
           appShortcutStatus = 'Press the new key combination. Escape cancels.';
-        }}
-        >{capturingAppShortcut === action.id ? 'Press keys…' : 'Change'}</button
+        }}>{capturingAppShortcut === action.id ? 'Press keys…' : 'Change'}</button
       >
     </div>
   {/each}

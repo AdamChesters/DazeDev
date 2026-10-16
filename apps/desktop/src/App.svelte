@@ -25,7 +25,12 @@
   import FilesDialog from './components/FilesDialog.svelte';
   import ViewerWindow from './components/ViewerWindow.svelte';
   import Licenses from './components/Licenses.svelte';
-  import { hostLabel, terminalPresentation, unknownStatus, type PaneStatus } from './lib/pane-status';
+  import {
+    hostLabel,
+    terminalPresentation,
+    unknownStatus,
+    type PaneStatus,
+  } from './lib/pane-status';
   import { diagnostic } from './lib/diagnostics';
   import { onMount, tick, untrack } from 'svelte';
   import { AlertThrottle } from './lib/terminal-alerts';
@@ -72,16 +77,8 @@
     Palette,
     Upload,
   } from '@lucide/svelte';
-  import {
-    defaultPrompt,
-    renderPrompt,
-    type PromptValues,
-  } from './lib/prompt';
-  import {
-    terminals,
-    terminalDefaults,
-    deliverDictation,
-  } from './lib/terminals';
+  import { defaultPrompt, renderPrompt, type PromptValues } from './lib/prompt';
+  import { terminals, terminalDefaults, deliverDictation } from './lib/terminals';
   import { tabColors, retainedPaneColors } from './lib/colors';
   import TmuxSettings from './components/TmuxSettings.svelte';
   import Brand from './components/Brand.svelte';
@@ -155,9 +152,7 @@
   import { Capture } from './lib/audio';
   import { VoiceCaptureKeys } from './lib/voice-capture-keys';
   import { RecordingTail } from './lib/recording-tail';
-  import {
-    voiceStackReady,
-  } from './lib/voice-setup';
+  import { voiceStackReady } from './lib/voice-setup';
   import { changelog, mergeChangelog, type ReleaseEntry } from './lib/changelog';
   import { releaseVersion } from './lib/release-version';
   import { focusDialog } from './lib/focus';
@@ -624,8 +619,12 @@
       error = message;
     },
   });
-  const { open: openUpdates, close: closeUpdates, check: checkUpdates, install: installUpdate } =
-    updates;
+  const {
+    open: openUpdates,
+    close: closeUpdates,
+    check: checkUpdates,
+    install: installUpdate,
+  } = updates;
   let changelogReturn = $state('settings');
   let releaseHistory = $state<ReleaseEntry[]>(changelog);
   let releaseFilter = $state<'all' | 'desktop' | 'mobile'>('all');
@@ -753,7 +752,9 @@
   ) {
     if (sameShortcut(binding, bindingFor(mode === 'dictation' ? 'command' : 'dictation')))
       throw new Error('Choose different hotkeys for terminal dictation and IDE commands.');
-    const clash = appActions.find((a) => sameShortcut(appShortcut(device.appShortcuts, a.id), binding));
+    const clash = appActions.find((a) =>
+      sameShortcut(appShortcut(device.appShortcuts, a.id), binding),
+    );
     if (clash) throw new Error(`${binding.label} is already used by ${clash.label}.`);
     if (mode === 'dictation') device.inputShortcut = binding;
     else device.commandShortcut = binding;
@@ -944,7 +945,9 @@
     };
     if (nativePane(pane)) {
       void task(async () => {
-        pane = await createNativeTerminalPane(pane, (args) => rpc<Session>(pane.hostId, 'create', args));
+        pane = await createNativeTerminalPane(pane, (args) =>
+          rpc<Session>(pane.hostId, 'create', args),
+        );
         if (!insert()) await rpc(pane.hostId, 'destroy', { id: pane.sessionId, stamp: pane.stamp });
       });
     } else insert();
@@ -1616,12 +1619,22 @@
       if (progress !== terminalProgress) terminalProgress = progress;
       alertThrottle.retain(live);
       let changed = false;
-      const focus = prunePaneChoices(device.localFocus || {}, byWorkspace, seenContainers, complete);
+      const focus = prunePaneChoices(
+        device.localFocus || {},
+        byWorkspace,
+        seenContainers,
+        complete,
+      );
       if (device.localFocus && focus !== device.localFocus) {
         device.localFocus = focus;
         changed = true;
       }
-      const tabs = prunePaneChoices(device.activeTerminalTabs || {}, byGroup, seenContainers, complete);
+      const tabs = prunePaneChoices(
+        device.activeTerminalTabs || {},
+        byGroup,
+        seenContainers,
+        complete,
+      );
       if (device.activeTerminalTabs && tabs !== device.activeTerminalTabs) {
         device.activeTerminalTabs = tabs;
         changed = true;
@@ -1799,7 +1812,8 @@
   function setPasteConfirmation(confirm: boolean) {
     device.terminal = { ...(device.terminal || terminalDefaults), confirmPaste: confirm };
     persistDevice();
-    if (!confirm) notice = 'Multi-line paste no longer asks first. Change this in Settings > Terminal.';
+    if (!confirm)
+      notice = 'Multi-line paste no longer asks first. Change this in Settings > Terminal.';
   }
   function saved(hostId: string) {
     deviceStore.saved(hostId);
@@ -2595,9 +2609,7 @@
   });
   function focusBroadcastInput() {
     if (modal === 'broadcast' && appHasFocus())
-      document
-        .querySelector<HTMLTextAreaElement>('[data-modal="broadcast"] textarea')
-        ?.focus();
+      document.querySelector<HTMLTextAreaElement>('[data-modal="broadcast"] textarea')?.focus();
   }
   function openBroadcast() {
     if (voiceStatus !== 'idle') return;
@@ -2866,9 +2878,7 @@
   }
   function focusCommandInput() {
     if (modal !== 'command' || !appHasFocus()) return;
-    const input = document.querySelector<HTMLTextAreaElement>(
-      '[data-modal="command"] textarea',
-    );
+    const input = document.querySelector<HTMLTextAreaElement>('[data-modal="command"] textarea');
     if (!input || document.activeElement === input) return;
     // Preserve an explicit edit elsewhere; recover focus lost when the Stop button disappears.
     const active = document.activeElement;
@@ -3011,11 +3021,9 @@
   }
   async function loadGithubRepos() {
     githubRepos = (
-      await rpc<{ full_name: string; description: string }[][]>(
-        device.activeHost,
-        'github_repos',
-        { identity: form.identity },
-      )
+      await rpc<{ full_name: string; description: string }[][]>(device.activeHost, 'github_repos', {
+        identity: form.identity,
+      })
     ).flat();
   }
   async function cloneRepo(repo: string) {
@@ -3124,8 +3132,7 @@
           typeof request?.requestId === 'string' &&
           typeof request.hostId === 'string' &&
           typeof request.url === 'string'
-        )
-        {
+        ) {
           browserRequests = [...browserRequests, request];
           // The question waits in this window; make sure the user can see it.
           void (async () => {
@@ -4041,7 +4048,8 @@
                     <span class="terminal-name" title={presentation.name}>{presentation.name}</span>
                     <span
                       class="terminal-type"
-                      title={`${presentation.type}${presentation.model ? ' / ' + presentation.model : ''}`}>{presentation.type}</span
+                      title={`${presentation.type}${presentation.model ? ' / ' + presentation.model : ''}`}
+                      >{presentation.type}</span
                     >
                   </div>
                   {#if p.hostId !== w.hostId}
@@ -4244,7 +4252,9 @@
                     settings={{
                       ...(device.terminal || terminalDefaults),
                       clipboard:
-                        device.clipboardByHost?.[p.hostId] || device.terminal?.clipboard || 'notify',
+                        device.clipboardByHost?.[p.hostId] ||
+                        device.terminal?.clipboard ||
+                        'notify',
                     }}
                     onclipboard={(characters) =>
                       (notice = `${p.name}: a program on the host copied ${characters} characters to your clipboard.`)}
@@ -4522,7 +4532,8 @@
               .then(() => {
                 downloadProgress[id] = 'Cancelling';
               })
-              .catch(fail)}>Cancel {voiceModels.models.find((m) => m.id === id)?.name || id} download</button
+              .catch(fail)}
+          >Cancel {voiceModels.models.find((m) => m.id === id)?.name || id} download</button
         >{/each}
       {#if (modal === 'upload' || modal === 'documents') && filesTarget}
         <FilesDialog
@@ -4657,7 +4668,10 @@
       {:else if modal === 'host-colors' && colorHost}
         <HostColors {colorHost} bind:device {persistDevice} />
       {:else if modal === 'tmux-settings' && tmuxHost}
-        <TmuxSettings host={tmuxHost} appScrollback={device.terminal?.scrollback || terminalDefaults.scrollback} />
+        <TmuxSettings
+          host={tmuxHost}
+          appScrollback={device.terminal?.scrollback || terminalDefaults.scrollback}
+        />
       {:else if modal === 'pane-colors' && colorPane}
         <PaneColors bind:colorPane {device} {updateWorkspace} {workspaces} />
       {:else if modal === 'workspace' && workspaceTarget}

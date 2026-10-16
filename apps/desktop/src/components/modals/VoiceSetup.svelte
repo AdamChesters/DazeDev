@@ -35,12 +35,12 @@
 </script>
 
 <p>
-  Voice models are downloaded separately from DazeDev to keep the app small and let you
-  choose your stack. Downloads use the verified versions supported by this release.
+  Voice models are downloaded separately from DazeDev to keep the app small and let you choose your
+  stack. Downloads use the verified versions supported by this release.
 </p>
 <p class="hint">
-  Default stack: Parakeet transcription, Silero silence detection and S1-mini cleanup.
-  Download once; everything runs offline on this device with no account or per-use cost.
+  Default stack: Parakeet transcription, Silero silence detection and S1-mini cleanup. Download
+  once; everything runs offline on this device with no account or per-use cost.
 </p>
 <p>
   Selected: <strong

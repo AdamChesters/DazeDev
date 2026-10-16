@@ -13,8 +13,8 @@
 </script>
 
 <p>
-  Colors for {colorHost.name}. Workspaces and terminals inherit these unless they have their
-  own colors. This choice is saved on this device.
+  Colors for {colorHost.name}. Workspaces and terminals inherit these unless they have their own
+  colors. This choice is saved on this device.
 </p>
 <ColorPicker
   value={device.hosts.find((h) => h.id === colorHost?.id)?.colors}

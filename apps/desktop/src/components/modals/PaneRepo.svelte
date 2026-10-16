@@ -40,15 +40,14 @@
       void task(refreshRepoChoices);
     }}
   >
-    {#each device.hosts as h}<option
-        value={h.id}
-        disabled={connections[h.id] !== 'Connected'}>{h.name}</option
+    {#each device.hosts as h}<option value={h.id} disabled={connections[h.id] !== 'Connected'}
+        >{h.name}</option
       >{/each}
   </select></label
 >
 <p class="hint">
-  Paste the configured orientation prompt into this existing terminal. Choose a matching
-  host if you have manually opened a nested SSH connection.
+  Paste the configured orientation prompt into this existing terminal. Choose a matching host if you
+  have manually opened a nested SSH connection.
 </p>
 <RepoPicker
   repos={repoChoices}
@@ -61,16 +60,12 @@
     >Prompt preview<textarea
       readonly
       rows="7"
-      value={promptFor({ ...repoTarget, hostId: repoHost, repo: repoPath })}
-    ></textarea></label
+      value={promptFor({ ...repoTarget, hostId: repoHost, repo: repoPath })}></textarea></label
   >{/if}
 <div class="form-row">
-  <button disabled={busy} onclick={() => void task(refreshRepoChoices)}
-    >Refresh repositories</button
+  <button disabled={busy} onclick={() => void task(refreshRepoChoices)}>Refresh repositories</button
   >
-  <button
-    class="primary"
-    disabled={busy || !repoPath}
-    onclick={() => void task(pasteRepoPrompt)}>Paste for review</button
+  <button class="primary" disabled={busy || !repoPath} onclick={() => void task(pasteRepoPrompt)}
+    >Paste for review</button
   >
 </div>

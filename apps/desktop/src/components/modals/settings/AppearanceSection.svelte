@@ -18,8 +18,9 @@
   <div class="settings-grid">
     <label
       >Theme<select bind:value={device.theme} onchange={persistDevice}
-        ><option value="blue">Blue</option><option value="charcoal">Charcoal</option
-        ><option value="green">Green</option></select
+        ><option value="blue">Blue</option><option value="charcoal">Charcoal</option><option
+          value="green">Green</option
+        ></select
       ></label
     >
     <label
@@ -29,16 +30,12 @@
           device.recordingHighlight = recordingHighlight(e.currentTarget.value);
           persistDevice();
         }}
-        >{#each recordingHighlights as effect}<option value={effect.id}
-            >{effect.name}</option
+        >{#each recordingHighlights as effect}<option value={effect.id}>{effect.name}</option
           >{/each}</select
       ></label
     >
     <label
-      >Highlight animation<select
-        bind:value={device.highlightMotion}
-        onchange={persistDevice}
-      >
+      >Highlight animation<select bind:value={device.highlightMotion} onchange={persistDevice}>
         <option value="system">Follow system</option>
         <option value="animate">Always animate highlights</option>
         <option value="static">Keep highlights still</option>
@@ -46,8 +43,8 @@
     >
     {#if systemReducedMotion && (!device.highlightMotion || device.highlightMotion === 'system')}
       <p class="muted">
-        Your system has reduced motion enabled. Choose Always animate highlights to enable
-        movement here.
+        Your system has reduced motion enabled. Choose Always animate highlights to enable movement
+        here.
       </p>
     {/if}
     {#if recordingHighlight(device.recordingHighlight) === 'static'}<label

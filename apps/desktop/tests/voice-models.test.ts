@@ -37,7 +37,11 @@ function setup(list: ModelInfo[], overrides: Partial<VoiceModelsDeps> = {}) {
   return { voice: new VoiceModels(deps), deps, device, calls, names: () => calls.map(([n]) => n) };
 }
 
-const stack = () => [model('parakeet', true), model('silero', true, 'vad'), model('s1-mini', true, 'cleanup')];
+const stack = () => [
+  model('parakeet', true),
+  model('silero', true, 'vad'),
+  model('s1-mini', true, 'cleanup'),
+];
 
 describe('VoiceModels', () => {
   it('preloads installed models once per configuration', async () => {
@@ -70,7 +74,9 @@ describe('VoiceModels', () => {
       return stack();
     });
     await voice.loadModels();
-    expect(deps.notice).toHaveBeenCalledWith('Voice preload failed; recording can retry: Error: no GPU');
+    expect(deps.notice).toHaveBeenCalledWith(
+      'Voice preload failed; recording can retry: Error: no GPU',
+    );
     expect(voice.cacheLoading).toBe(false);
   });
 

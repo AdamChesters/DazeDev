@@ -43,12 +43,9 @@
     ? ` Download: ${(availableUpdate.size / 1000000).toFixed(1)} MB.`
     : ''}
 </p>
-<button disabled={updateState === 'installing'} onclick={() => showChangelog('')}
-  >Changelog</button
->
+<button disabled={updateState === 'installing'} onclick={() => showChangelog('')}>Changelog</button>
 {#if availableUpdate}<p class="hint">
-    The app restarts after updating. Your settings, models and remote tmux sessions are
-    preserved.
+    The app restarts after updating. Your settings, models and remote tmux sessions are preserved.
   </p>{/if}
 {#if !desktop || !clientInfo.updateSupported}<p class="hint">
     Download updates manually for this platform.

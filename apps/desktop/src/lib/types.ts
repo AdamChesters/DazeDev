@@ -127,7 +127,9 @@ export interface Device {
   };
   clipboardByHost?: Record<string, import('./terminals').TerminalSettings['clipboard']>;
   clipboardPolicy?: number;
-  appShortcuts?: Partial<Record<import('./app-shortcuts').AppAction, import('./shortcut').Shortcut>>;
+  appShortcuts?: Partial<
+    Record<import('./app-shortcuts').AppAction, import('./shortcut').Shortcut>
+  >;
   terminal?: import('./terminals').TerminalSettings;
   inputMode?: 'toggle' | 'hold';
   motionPreferenceVersion?: number;

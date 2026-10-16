@@ -51,7 +51,11 @@ function credentialPrompt(prompt: string): 'password' | 'passphrase' | 'code' | 
 }
 export function credentialLabel(output: string) {
   const kind = credentialPrompt(promptLine(output));
-  return kind === 'passphrase' ? 'Key passphrase' : kind === 'code' ? 'Verification code' : 'Password';
+  return kind === 'passphrase'
+    ? 'Key passphrase'
+    : kind === 'code'
+      ? 'Verification code'
+      : 'Password';
 }
 export function verificationUrl(output: string) {
   return output.match(/https:\/\/[^\s<>\x1b]+/)?.[0]?.replace(/[).,]+$/, '') ?? '';

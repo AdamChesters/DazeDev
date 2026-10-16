@@ -50,57 +50,57 @@
 </script>
 
 {#if !localImageSource(src)}<RemoteImage url={src} />{:else}
-{#if error}<p role="alert">{error}</p>{/if}
-<!-- The image surface supports wheel zoom, pointer pan and keyboard controls. -->
-<!-- svelte-ignore a11y_no_noninteractive_tabindex, a11y_no_noninteractive_element_interactions -->
-<div
-  class="image-viewport"
-  class:dragging
-  bind:this={viewport}
-  bind:clientWidth={width}
-  bind:clientHeight={height}
-  role="application"
-  aria-label={`Image preview: ${path}`}
-  tabindex="0"
-  ondblclick={fit}
-  onpointerdown={down}
-  onpointermove={move}
-  onpointerup={() => (dragging = false)}
-  onlostpointercapture={() => (dragging = false)}
-  onwheel={(event) => {
-    event.preventDefault();
-    changeZoom(event.deltaY < 0 ? 1.15 : 1 / 1.15);
-  }}
-  onkeydown={(event) => {
-    if (
-      !['+', '=', '-', '0', 'ArrowLeft', 'ArrowRight', 'ArrowUp', 'ArrowDown'].includes(event.key)
-    )
-      return;
-    event.preventDefault();
-    if (event.key === '+' || event.key === '=') changeZoom(1.25);
-    else if (event.key === '-') changeZoom(1 / 1.25);
-    else if (event.key === '0') fit();
-    else {
-      x += event.key === 'ArrowLeft' ? 40 : event.key === 'ArrowRight' ? -40 : 0;
-      y += event.key === 'ArrowUp' ? 40 : event.key === 'ArrowDown' ? -40 : 0;
-    }
-  }}
->
-  <img
-    {src}
-    alt={path}
-    draggable="false"
-    style:width={`${naturalWidth}px`}
-    style:height={`${naturalHeight}px`}
-    style:transform={`translate(-50%, -50%) translate(${x}px, ${y}px) scale(${scale})`}
-    onload={(event) => {
-      naturalWidth = (event.currentTarget as HTMLImageElement).naturalWidth;
-      naturalHeight = (event.currentTarget as HTMLImageElement).naturalHeight;
+  {#if error}<p role="alert">{error}</p>{/if}
+  <!-- The image surface supports wheel zoom, pointer pan and keyboard controls. -->
+  <!-- svelte-ignore a11y_no_noninteractive_tabindex, a11y_no_noninteractive_element_interactions -->
+  <div
+    class="image-viewport"
+    class:dragging
+    bind:this={viewport}
+    bind:clientWidth={width}
+    bind:clientHeight={height}
+    role="application"
+    aria-label={`Image preview: ${path}`}
+    tabindex="0"
+    ondblclick={fit}
+    onpointerdown={down}
+    onpointermove={move}
+    onpointerup={() => (dragging = false)}
+    onlostpointercapture={() => (dragging = false)}
+    onwheel={(event) => {
+      event.preventDefault();
+      changeZoom(event.deltaY < 0 ? 1.15 : 1 / 1.15);
     }}
-    onerror={() =>
-      (error = 'The image could not be displayed. Check the file or link and try again.')}
-  />
-</div>
+    onkeydown={(event) => {
+      if (
+        !['+', '=', '-', '0', 'ArrowLeft', 'ArrowRight', 'ArrowUp', 'ArrowDown'].includes(event.key)
+      )
+        return;
+      event.preventDefault();
+      if (event.key === '+' || event.key === '=') changeZoom(1.25);
+      else if (event.key === '-') changeZoom(1 / 1.25);
+      else if (event.key === '0') fit();
+      else {
+        x += event.key === 'ArrowLeft' ? 40 : event.key === 'ArrowRight' ? -40 : 0;
+        y += event.key === 'ArrowUp' ? 40 : event.key === 'ArrowDown' ? -40 : 0;
+      }
+    }}
+  >
+    <img
+      {src}
+      alt={path}
+      draggable="false"
+      style:width={`${naturalWidth}px`}
+      style:height={`${naturalHeight}px`}
+      style:transform={`translate(-50%, -50%) translate(${x}px, ${y}px) scale(${scale})`}
+      onload={(event) => {
+        naturalWidth = (event.currentTarget as HTMLImageElement).naturalWidth;
+        naturalHeight = (event.currentTarget as HTMLImageElement).naturalHeight;
+      }}
+      onerror={() =>
+        (error = 'The image could not be displayed. Check the file or link and try again.')}
+    />
+  </div>
 {/if}
 
 <style>

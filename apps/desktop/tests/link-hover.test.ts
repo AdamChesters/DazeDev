@@ -2,7 +2,11 @@ import { expect, it, vi } from 'vitest';
 import type { Terminal } from '@xterm/xterm';
 import { privateLinkifier, restoreLinkHoverOnReentry } from '../src/lib/link-hover';
 
-const target = () => ({ addEventListener: vi.fn(), removeEventListener: vi.fn(), contains: () => true });
+const target = () => ({
+  addEventListener: vi.fn(),
+  removeEventListener: vi.fn(),
+  contains: () => true,
+});
 function terminal(linkifier: unknown) {
   const screen = target();
   const root = target();

@@ -19,7 +19,6 @@
     void task(renameSession);
   }}
 >
-  <label
-    >Session name<input bind:value={renameValue} required pattern="[A-Za-z0-9_-]+" /></label
+  <label>Session name<input bind:value={renameValue} required pattern="[A-Za-z0-9_-]+" /></label
   ><button class="primary" disabled={busy}>Rename</button>
 </form>

@@ -37,8 +37,8 @@
 >
   <label>Workspace name<input bind:value={renameValue} /></label>
   <p class="hint">
-    Applies to this sidebar tab and all terminals without their own color override,
-    including new terminals.
+    Applies to this sidebar tab and all terminals without their own color override, including new
+    terminals.
   </p>
   <ColorPicker
     value={workspaceTarget?.colors}
@@ -86,7 +86,6 @@
     ><button class="primary">Save name</button>
   </div>
   <p class="hint">
-    Deleting removes the saved layout and closes plain shells. Attached tmux sessions stay
-    alive.
+    Deleting removes the saved layout and closes plain shells. Attached tmux sessions stay alive.
   </p>
 </form>

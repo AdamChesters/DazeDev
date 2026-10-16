@@ -32,9 +32,9 @@
 <details class="settings-section settings-disclosure">
   <summary>Connections <span>{device.hosts.length} hosts</span></summary>
   <p class="hint">
-    Windows local terminals can use native PowerShell or WSL. Native sessions support
-    background persistence and same-process handoff to a PowerShell window. Remote
-    terminals use the host login shell.
+    Windows local terminals can use native PowerShell or WSL. Native sessions support background
+    persistence and same-process handoff to a PowerShell window. Remote terminals use the host login
+    shell.
   </p>
   {#if !device.hosts.length}<p class="hint">No hosts configured.</p>{/if}
   <button onclick={addHost}><Plus size={14} /> Add host</button>
@@ -55,15 +55,12 @@
     </div>{/each}
   {#if settingsHost}<label
       >Clipboard access for selected host<select
-        value={device.clipboardByHost?.[settingsHost] ||
-          device.terminal?.clipboard ||
-          'notify'}
+        value={device.clipboardByHost?.[settingsHost] || device.terminal?.clipboard || 'notify'}
         onchange={(e) => {
           (device.clipboardByHost ||= {})[settingsHost] = e.currentTarget
             .value as TerminalSettings['clipboard'];
           persistDevice();
-        }}
-        ><ClipboardOptions /></select
+        }}><ClipboardOptions /></select
       ></label
     >{/if}
 </details>

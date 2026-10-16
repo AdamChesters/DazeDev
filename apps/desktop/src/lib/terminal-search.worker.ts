@@ -1,6 +1,8 @@
 import { findLineMatches, type SearchOptions } from './terminal-search';
 
-self.onmessage = (event: MessageEvent<{ lines: string[]; options: SearchOptions; limit: number }>) => {
+self.onmessage = (
+  event: MessageEvent<{ lines: string[]; options: SearchOptions; limit: number }>,
+) => {
   try {
     const { lines, options, limit } = event.data;
     self.postMessage({ matches: findLineMatches(lines, options, limit) });

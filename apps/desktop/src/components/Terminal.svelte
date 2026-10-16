@@ -136,7 +136,9 @@
     if (recoveryPending) return recoveryPending;
     const target = observedStatus;
     const current = generation;
-    recoveryBusy = true; recoveryError = ''; recoveryEpoch++;
+    recoveryBusy = true;
+    recoveryError = '';
+    recoveryEpoch++;
     onstate('Opening terminal…');
     recoveryPending = (async () => {
       try {
@@ -145,7 +147,11 @@
         const value = await rpc<PaneStatus>(pane.hostId, 'terminal_status', { pid: remotePid });
         if (dead || current !== generation) return;
         if (value.paneDead) throw Error('The terminal is still ended. Try Open terminal again.');
-        if (value.paneDead !== false || value.sessionId !== target.sessionId || value.paneId !== target.paneId)
+        if (
+          value.paneDead !== false ||
+          value.sessionId !== target.sessionId ||
+          value.paneId !== target.paneId
+        )
           throw Error('Session changed. Wait for current terminal status before opening it.');
         metadata(value);
       } catch (error) {
@@ -154,7 +160,10 @@
           onstate('Could not open terminal. ' + recoveryError);
         }
         throw error;
-      } finally { recoveryBusy = false; recoveryPending = undefined; }
+      } finally {
+        recoveryBusy = false;
+        recoveryPending = undefined;
+      }
     })();
     return recoveryPending;
   }
@@ -358,7 +367,11 @@
     if (source === 'review') text = reviewPasteText(text, term.modes.bracketedPasteMode);
     if (source === 'command') checkCommandText(text);
     explicitPaste = true;
-    try {term.paste(text);} finally {explicitPaste = false;}
+    try {
+      term.paste(text);
+    } finally {
+      explicitPaste = false;
+    }
     const afterPaste = context();
     try {
       await inputChain;
@@ -509,11 +522,23 @@
       try {
         if (opened && remoteReady && connected && (visible || floating)) {
           const value = await rpc<PaneStatus>(pane.hostId, 'terminal_status', { pid: remotePid });
-          if (!disposed && current === generation && epoch === recoveryEpoch &&
-              !(observedStatus.paneDead && value.attachment === 'unknown')) metadata(value);
+          if (
+            !disposed &&
+            current === generation &&
+            epoch === recoveryEpoch &&
+            !(observedStatus.paneDead && value.attachment === 'unknown')
+          )
+            metadata(value);
         } else if (!opened || !connected) metadata(unknownStatus);
       } catch {
-        if (!disposed && current === generation && epoch === recoveryEpoch && !recoveryBusy && !observedStatus.paneDead) metadata(unknownStatus);
+        if (
+          !disposed &&
+          current === generation &&
+          epoch === recoveryEpoch &&
+          !recoveryBusy &&
+          !observedStatus.paneDead
+        )
+          metadata(unknownStatus);
       } finally {
         if (!disposed) statusTimer = setTimeout(pollStatus, 2500);
       }
@@ -808,7 +833,9 @@
       },
       search: showFind,
       findMatches: (options, limit) =>
-        opened && remoteReady && !dead ? liveSearch.collectAsync(options, limit) : Promise.resolve([]),
+        opened && remoteReady && !dead
+          ? liveSearch.collectAsync(options, limit)
+          : Promise.resolve([]),
       revealMatch: (id) => opened && remoteReady && liveSearch.reveal(id),
       releaseSearch: () => liveSearch.release(),
       searchSelection: () => liveSearch.selection(),
@@ -899,7 +926,8 @@
       <p role="status">Session ended. Open a new terminal here to continue.</p>
       {#if recoveryError}<p role="alert">{recoveryError}</p>{/if}
       <button disabled={recoveryBusy} onclick={() => void recover().catch(() => {})}
-        >{recoveryBusy ? 'Opening terminal…' : 'Open terminal'}</button>
+        >{recoveryBusy ? 'Opening terminal…' : 'Open terminal'}</button
+      >
       <button disabled={recoveryBusy} onclick={oncloseview}>Close view</button>
     </div>{/if}
   {#if detached}
@@ -1021,8 +1049,12 @@
     border-top: 1px solid #bd8882;
     z-index: 4;
   }
-  .ended-banner p { margin: 0 0 6px; }
-  .ended-banner button { margin-right: 6px; }
+  .ended-banner p {
+    margin: 0 0 6px;
+  }
+  .ended-banner button {
+    margin-right: 6px;
+  }
   .disconnect-banner:disabled {
     opacity: 1;
     cursor: wait;

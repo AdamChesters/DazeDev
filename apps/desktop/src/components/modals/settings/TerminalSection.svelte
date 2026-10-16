@@ -47,11 +47,10 @@
       /> Play a soft notification sound</label
     >
     <p class="hint">
-      Uses explicit terminal notifications or shell command-completion markers. Support
-      depends on the agent or shell integration; DazeDev does not infer completion from
-      inactivity. "Command finished" shows when you are not watching that terminal or the
-      command ran for 10 seconds or more. Each terminal alerts at most once every three
-      seconds.
+      Uses explicit terminal notifications or shell command-completion markers. Support depends on
+      the agent or shell integration; DazeDev does not infer completion from inactivity. "Command
+      finished" shows when you are not watching that terminal or the command ran for 10 seconds or
+      more. Each terminal alerts at most once every three seconds.
     </p>
     <div class="form-row">
       <label
@@ -75,30 +74,20 @@
       >
     </div>
     <p class="hint">
-      Each open terminal keeps this many lines in memory, including terminals in other
-      workspaces. Default 10,000; up to 100,000.
+      Each open terminal keeps this many lines in memory, including terminals in other workspaces.
+      Default 10,000; up to 100,000.
     </p>
     <div class="settings-checks">
       <label class="check"
-        ><input
-          type="checkbox"
-          bind:checked={device.terminal.gpu}
-          onchange={persistDevice}
-        /> GPU rendering</label
+        ><input type="checkbox" bind:checked={device.terminal.gpu} onchange={persistDevice} /> GPU rendering</label
       >
       <label class="check"
-        ><input
-          type="checkbox"
-          bind:checked={device.terminal.images}
-          onchange={persistDevice}
-        /> Terminal images</label
+        ><input type="checkbox" bind:checked={device.terminal.images} onchange={persistDevice} /> Terminal
+        images</label
       >
       <label class="check"
-        ><input
-          type="checkbox"
-          bind:checked={device.terminal.ligatures}
-          onchange={persistDevice}
-        /> Font ligatures</label
+        ><input type="checkbox" bind:checked={device.terminal.ligatures} onchange={persistDevice} /> Font
+        ligatures</label
       >
     </div>
     <label class="check"
@@ -116,10 +105,7 @@
       /> Ask before pasting text with line breaks</label
     >
     <label
-      >Remote copy (OSC 52)<select
-        bind:value={device.terminal.clipboard}
-        onchange={persistDevice}
-      >
+      >Remote copy (OSC 52)<select bind:value={device.terminal.clipboard} onchange={persistDevice}>
         <ClipboardOptions />
       </select></label
     >
@@ -127,7 +113,6 @@
       Copy: Ctrl+Shift+C. Paste: Ctrl+V or Ctrl+Shift+V. Search: {appShortcut(
         device.appShortcuts,
         'search',
-      ).label}. Remote paste access lets programs on the host read this device's
-      clipboard.
+      ).label}. Remote paste access lets programs on the host read this device's clipboard.
     </p>
   </details>{/if}

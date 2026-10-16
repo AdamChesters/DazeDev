@@ -38,13 +38,11 @@
   }}
 >
   <p role="note">
-    <strong
-      >Early alpha: commands may be interpreted incorrectly. Review before running.</strong
-    >
+    <strong>Early alpha: commands may be interpreted incorrectly. Review before running.</strong>
   </p>
   <p class="hint">
-    IDE commands control DazeDev. They are never pasted into a terminal. While listening,
-    Enter finishes transcription and Escape abandons it.
+    IDE commands control DazeDev. They are never pasted into a terminal. While listening, Enter
+    finishes transcription and Escape abandons it.
   </p>
   <label
     >Command<textarea
@@ -112,9 +110,8 @@
           ? 'Stop and review'
           : 'Speak command'}</button
       >
-      <button
-        class="primary"
-        disabled={!commandText.trim() || busy || voiceStatus !== 'idle'}>Interpret</button
+      <button class="primary" disabled={!commandText.trim() || busy || voiceStatus !== 'idle'}
+        >Interpret</button
       >
     </div>
     <details>

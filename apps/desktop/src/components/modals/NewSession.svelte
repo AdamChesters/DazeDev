@@ -72,9 +72,8 @@
           form.model = '';
           form.effort = '';
         }}
-        ><option value="shell">None · plain shell</option
-        >{#each inv?.agents || [] as a}<option value={a.id}
-            >{a.id}{a.path ? '' : ' · install and start'}</option
+        ><option value="shell">None · plain shell</option>{#each inv?.agents || [] as a}<option
+            value={a.id}>{a.id}{a.path ? '' : ' · install and start'}</option
           >{/each}</select
       ></label
     >
@@ -112,13 +111,12 @@
     <label
       >GitHub identity<select bind:value={form.identity}
         ><option value="">Existing host environment</option
-        >{#each inv?.identities || [] as i}<option value={i.login}>{i.login}</option
-          >{/each}</select
+        >{#each inv?.identities || [] as i}<option value={i.login}>{i.login}</option>{/each}</select
       ></label
     >
     {#if form.repo && form.agent !== 'shell'}<label class="check"
-        ><input type="checkbox" bind:checked={form.brief} /> Read repo instructions and give a
-        concise orientation</label
+        ><input type="checkbox" bind:checked={form.brief} /> Read repo instructions and give a concise
+        orientation</label
       >{/if}
     <p class="hint">
       {form.repo

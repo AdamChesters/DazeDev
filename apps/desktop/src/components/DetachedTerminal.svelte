@@ -63,14 +63,21 @@
   const endedTarget = $derived(viewState?.metadata ? deadPaneTarget(viewState.metadata) : null);
   async function recover() {
     if (recoveryBusy) return;
-    recoveryBusy = true; recoveryError = '';
-    try { await request('recover'); }
-    catch (error) { recoveryError = String(error); }
-    finally { recoveryBusy = false; }
+    recoveryBusy = true;
+    recoveryError = '';
+    try {
+      await request('recover');
+    } catch (error) {
+      recoveryError = String(error);
+    } finally {
+      recoveryBusy = false;
+    }
   }
-  const presentation = $derived(viewState
-    ? terminalPresentation(viewState.pane, viewState.metadata)
-    : { name: 'Terminal', type: 'shell', model: '' });
+  const presentation = $derived(
+    viewState
+      ? terminalPresentation(viewState.pane, viewState.metadata)
+      : { name: 'Terminal', type: 'shell', model: '' },
+  );
   let lastWindowTitle = '';
   $effect(() => {
     if (!viewState) return;
@@ -78,7 +85,11 @@
     document.title = title;
     if (desktop && lastWindowTitle !== title) {
       lastWindowTitle = title;
-      void getCurrentWindow().setTitle(title).catch(() => { lastWindowTitle = ''; });
+      void getCurrentWindow()
+        .setTitle(title)
+        .catch(() => {
+          lastWindowTitle = '';
+        });
     }
   });
   let image = $state<ViewedImage | null>(null);
@@ -264,7 +275,8 @@
   }
   let pasteRequest = $state<{ text: string; resolve: (accepted: boolean) => void } | null>(null);
   function confirmPaste(text: string): Promise<boolean> {
-    if (!needsPasteConfirmation(text, viewState?.settings.confirmPaste)) return Promise.resolve(true);
+    if (!needsPasteConfirmation(text, viewState?.settings.confirmPaste))
+      return Promise.resolve(true);
     pasteRequest?.resolve(false);
     return new Promise((resolve) => (pasteRequest = { text, resolve }));
   }
@@ -402,7 +414,10 @@
         copySelectedTerminalText(
           event,
           terminal.getSelection(),
-          (text) => text.length <= 1048576 ? navigator.clipboard.writeText(text) : Promise.reject(new Error('Selection is too large for the clipboard.')),
+          (text) =>
+            text.length <= 1048576
+              ? navigator.clipboard.writeText(text)
+              : Promise.reject(new Error('Selection is too large for the clipboard.')),
           (message) => (notice = message),
         )
       )
@@ -642,9 +657,7 @@
     </div>{/if}
   <header style:background-color={colors?.background} style:color={colors?.foreground}>
     <span class="title pane-title"
-      ><span class="terminal-name" title={presentation.name}
-        >{presentation.name}</span
-      ><span
+      ><span class="terminal-name" title={presentation.name}>{presentation.name}</span><span
         class="terminal-type"
         title={`${presentation.type}${presentation.model ? ' / ' + presentation.model : ''}`}
         >{presentation.type}</span
@@ -665,7 +678,8 @@
       <p role="status">Session ended. Open a new terminal here to continue.</p>
       {#if recoveryError}<p role="alert">{recoveryError}</p>{/if}
       <button disabled={recoveryBusy} onclick={() => void recover()}
-        >{recoveryBusy ? 'Opening terminal…' : 'Open terminal'}</button>
+        >{recoveryBusy ? 'Opening terminal…' : 'Open terminal'}</button
+      >
       <button disabled={recoveryBusy} onclick={() => void action('close')}>Close view</button>
     </div>{/if}
   {#if menu}<nav aria-label="Terminal actions">
@@ -776,9 +790,16 @@
 {/if}
 
 <style>
-  .ended-banner { padding: 8px; border-bottom: 1px solid #bd8882; }
-  .ended-banner p { margin: 0 0 6px; }
-  .ended-banner button { margin-right: 6px; }
+  .ended-banner {
+    padding: 8px;
+    border-bottom: 1px solid #bd8882;
+  }
+  .ended-banner p {
+    margin: 0 0 6px;
+  }
+  .ended-banner button {
+    margin-right: 6px;
+  }
   .scoped-search-navigation {
     position: fixed;
     z-index: 90;

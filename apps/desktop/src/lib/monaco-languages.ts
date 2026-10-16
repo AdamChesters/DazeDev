@@ -5,7 +5,12 @@
 export type LanguageEntry = [id: string, module: string, extensions: string[], filenames: string[]];
 export const languageTable: LanguageEntry[] = [
   ['plaintext', '', ['.txt'], []],
-  ['json', 'json', ['.json', '.bowerrc', '.jshintrc', '.jscsrc', '.eslintrc', '.babelrc', '.har'], []],
+  [
+    'json',
+    'json',
+    ['.json', '.bowerrc', '.jshintrc', '.jscsrc', '.eslintrc', '.babelrc', '.har'],
+    [],
+  ],
   ['abap', 'abap', ['.abap'], []],
   ['apex', 'apex', ['.cls'], []],
   ['azcli', 'azcli', ['.azcli'], []],
@@ -37,8 +42,18 @@ export const languageTable: LanguageEntry[] = [
   ['graphql', 'graphql', ['.graphql', '.gql'], []],
   ['handlebars', 'handlebars', ['.handlebars', '.hbs'], []],
   ['hcl', 'hcl', ['.tf', '.tfvars', '.hcl'], []],
-  ['html', 'html', ['.html', '.htm', '.shtml', '.xhtml', '.mdoc', '.jsp', '.asp', '.aspx', '.jshtm'], []],
-  ['ini', 'ini', ['.ini', '.properties', '.gitconfig'], ['config', '.gitattributes', '.gitconfig', '.editorconfig']],
+  [
+    'html',
+    'html',
+    ['.html', '.htm', '.shtml', '.xhtml', '.mdoc', '.jsp', '.asp', '.aspx', '.jshtm'],
+    [],
+  ],
+  [
+    'ini',
+    'ini',
+    ['.ini', '.properties', '.gitconfig'],
+    ['config', '.gitattributes', '.gitconfig', '.editorconfig'],
+  ],
   ['java', 'java', ['.java', '.jav'], []],
   ['javascript', 'javascript', ['.js', '.es6', '.jsx', '.mjs', '.cjs'], ['jakefile']],
   ['julia', 'julia', ['.jl'], []],
@@ -48,7 +63,12 @@ export const languageTable: LanguageEntry[] = [
   ['liquid', 'liquid', ['.liquid', '.html.liquid'], []],
   ['lua', 'lua', ['.lua'], []],
   ['m3', 'm3', ['.m3', '.i3', '.mg', '.ig'], []],
-  ['markdown', 'markdown', ['.md', '.markdown', '.mdown', '.mkdn', '.mkd', '.mdwn', '.mdtxt', '.mdtext'], []],
+  [
+    'markdown',
+    'markdown',
+    ['.md', '.markdown', '.mdown', '.mkdn', '.mkd', '.mdwn', '.mdtxt', '.mdtext'],
+    [],
+  ],
   ['mdx', 'mdx', ['.mdx'], []],
   ['mips', 'mips', ['.s'], []],
   ['msdax', 'msdax', ['.dax', '.msdax'], []],
@@ -93,7 +113,30 @@ export const languageTable: LanguageEntry[] = [
   ['typespec', 'typespec', ['.tsp'], []],
   ['vb', 'vb', ['.vb'], []],
   ['wgsl', 'wgsl', ['.wgsl'], []],
-  ['xml', 'xml', ['.xml', '.xsd', '.dtd', '.ascx', '.csproj', '.config', '.props', '.targets', '.wxi', '.wxl', '.wxs', '.xaml', '.svg', '.svgz', '.opf', '.xslt', '.xsl'], []],
+  [
+    'xml',
+    'xml',
+    [
+      '.xml',
+      '.xsd',
+      '.dtd',
+      '.ascx',
+      '.csproj',
+      '.config',
+      '.props',
+      '.targets',
+      '.wxi',
+      '.wxl',
+      '.wxs',
+      '.xaml',
+      '.svg',
+      '.svgz',
+      '.opf',
+      '.xslt',
+      '.xsl',
+    ],
+    [],
+  ],
   ['yaml', 'yaml', ['.yaml', '.yml'], []],
 ];
 export const languageModules: Record<string, () => Promise<unknown>> = {
@@ -184,7 +227,9 @@ export function languageForPath(path: string): string {
   const name = (path.split(/[/\\]/).at(-1) || '').toLowerCase();
   if (/\.(mdc|markdown)$/.test(name) || /^\.(cursor|cline)rules$/.test(name)) return 'markdown';
   return (
-    languageTable.find(([, , , filenames]) => filenames.some((f) => f.toLowerCase() === name))?.[0] ||
+    languageTable.find(([, , , filenames]) =>
+      filenames.some((f) => f.toLowerCase() === name),
+    )?.[0] ||
     languageTable.find(([, , extensions]) => extensions.some((e) => name.endsWith(e)))?.[0] ||
     'plaintext'
   );

@@ -48,7 +48,10 @@ export function migrateClipboardPolicy(device: Device): Device {
   return {
     ...device,
     clipboardPolicy: 1,
-    terminal: device.terminal && { ...device.terminal, clipboard: upgrade(device.terminal.clipboard) },
+    terminal: device.terminal && {
+      ...device.terminal,
+      clipboard: upgrade(device.terminal.clipboard),
+    },
     clipboardByHost:
       device.clipboardByHost &&
       Object.fromEntries(

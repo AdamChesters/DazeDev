@@ -1,5 +1,9 @@
 import { expect, it } from 'vitest';
-import { AlertThrottle, commandFinishedAlert, terminalNotification } from '../src/lib/terminal-alerts';
+import {
+  AlertThrottle,
+  commandFinishedAlert,
+  terminalNotification,
+} from '../src/lib/terminal-alerts';
 it('accepts explicit notifications while excluding progress and control sequences', () => {
   expect(terminalNotification(9, 'Ready for your reply')).toBe('Ready for your reply');
   expect(terminalNotification(777, 'notify;Agent;Finished')).toBe('Agent: Finished');

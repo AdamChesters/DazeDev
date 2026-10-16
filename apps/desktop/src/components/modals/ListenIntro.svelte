@@ -27,13 +27,13 @@
 
 <h2>Speak into your terminal</h2>
 <p>
-  Select a terminal, then tap <strong>{bindingFor('dictation').label}</strong> to listen. In toggle
-  mode, tap again to stop and review the text in that terminal. Double-tap the same shortcut to
-  send it with Enter.
+  Select a terminal, then tap <strong>{bindingFor('dictation').label}</strong> to listen. In toggle mode,
+  tap again to stop and review the text in that terminal. Double-tap the same shortcut to send it with
+  Enter.
 </p>
 <p>
-  Keyboard shortcuts and mouse or device buttons work while DazeDev is focused. You can also
-  choose hold-to-talk: hold to record, release to stop.
+  Keyboard shortcuts and mouse or device buttons work while DazeDev is focused. You can also choose
+  hold-to-talk: hold to record, release to stop.
 </p>
 <p class="hint">
   Transcription and optional tidy-up run locally. {voiceReady
@@ -41,8 +41,8 @@
     : 'The selected voice stack needs a one-time download. Installed models are reused.'}
 </p>
 {#if device.voice.automatic}<p class="hint">
-    Automatic Enter is currently enabled. Dictation will submit as soon as transcription
-    finishes. Turn it off in settings to review first.
+    Automatic Enter is currently enabled. Dictation will submit as soon as transcription finishes.
+    Turn it off in settings to review first.
   </p>{/if}
 <div class="row">
   <button

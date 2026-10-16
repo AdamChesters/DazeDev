@@ -81,7 +81,11 @@ export interface TerminalSettings {
   confirmPaste?: boolean;
 }
 export function remoteClipboardWrite(policy: TerminalSettings['clipboard'] | undefined) {
-  return policy === 'off' ? 'block' : policy === 'write' || policy === 'read-write' ? 'allow' : 'notify';
+  return policy === 'off'
+    ? 'block'
+    : policy === 'write' || policy === 'read-write'
+      ? 'allow'
+      : 'notify';
 }
 export const terminalDefaults: TerminalSettings = {
   fontSize: 13,

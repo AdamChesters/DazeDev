@@ -54,9 +54,7 @@
       ><option value="local">Local macOS / Linux</option></select
     ></label
   >{#if newHost.kind === 'ssh' || newHost.kind === 'tailscale'}<label
-      >{newHost.kind === 'tailscale'
-        ? 'Tailscale hostname or IP'
-        : 'SSH alias or hostname'}<input
+      >{newHost.kind === 'tailscale' ? 'Tailscale hostname or IP' : 'SSH alias or hostname'}<input
         list="ssh-aliases"
         bind:value={newHost.address}
         placeholder="dev-box or 100.x.x.x"
@@ -95,8 +93,8 @@
         ><input type="checkbox" bind:checked={newHost.systemSsh} /> Use system OpenSSH</label
       >
       <p class="hint">
-        Only for hosts that need hardware security keys, PKCS#11 or other options the
-        built-in client lacks. Each terminal then signs in separately.
+        Only for hosts that need hardware security keys, PKCS#11 or other options the built-in
+        client lacks. Each terminal then signs in separately.
       </p>
     </details>
     <datalist id="ssh-aliases"
@@ -104,15 +102,15 @@
     >
     <p class="hint">
       {#if newHost.kind === 'tailscale'}
-        Uses your signed-in Tailscale device identity and Tailscale-verified host keys. No
-        SSH password or key is needed. The target must enable Tailscale SSH; an accept
-        policy connects directly, while a check policy can require browser reauthentication.
-        Native Windows cannot serve Tailscale SSH. For WSL, use its Linux endpoint's own
-        tailnet name. DazeDev remote hosts need Python 3.9 or newer and tmux.
+        Uses your signed-in Tailscale device identity and Tailscale-verified host keys. No SSH
+        password or key is needed. The target must enable Tailscale SSH; an accept policy connects
+        directly, while a check policy can require browser reauthentication. Native Windows cannot
+        serve Tailscale SSH. For WSL, use its Linux endpoint's own tailnet name. DazeDev remote
+        hosts need Python 3.9 or newer and tmux.
       {:else}
-        Your OpenSSH config, keys, certificates and agent are respected. You sign in once
-        per host; every terminal shares that connection. Password and host-key prompts
-        appear next. Passwords are never saved.
+        Your OpenSSH config, keys, certificates and agent are respected. You sign in once per host;
+        every terminal shares that connection. Password and host-key prompts appear next. Passwords
+        are never saved.
       {/if}
     </p>{:else if newHost.kind === 'powershell'}
     <label
@@ -123,8 +121,8 @@
       </select></label
     >
     <p class="hint">
-      Runs natively on this Windows machine, with hardware access and no WSL requirement.
-      Sessions can stay running when DazeDev closes. PowerShell 7 must already be installed.
+      Runs natively on this Windows machine, with hardware access and no WSL requirement. Sessions
+      can stay running when DazeDev closes. PowerShell 7 must already be installed.
     </p>
   {:else if newHost.kind === 'wsl'}<label
       >Distribution<input
