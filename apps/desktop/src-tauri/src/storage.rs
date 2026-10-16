@@ -284,8 +284,10 @@ pub fn load_device(data: &Path) -> Result<serde_json::Value, String> {
     }
 }
 fn read_device(path: &Path) -> Result<serde_json::Value, String> {
-    let v: serde_json::Value = serde_json::from_slice(&fs::read(path).map_err(|e| e.to_string())?)
-        .map_err(|e| e.to_string())?;
+    let bytes = fs::read(path).map_err(|e| e.to_string())?;
+    // Windows editors and PowerShell 5 may write a UTF-8 byte order mark.
+    let text = bytes.strip_prefix(b"\xEF\xBB\xBF").unwrap_or(&bytes);
+    let v: serde_json::Value = serde_json::from_slice(text).map_err(|e| e.to_string())?;
     if !v.is_object()
         || !v.get("hosts").is_some_and(|h| h.is_array())
         || !v.get("voice").is_some_and(|h| h.is_object())
@@ -326,6 +328,22 @@ pub fn save_device(data: &Path, value: &serde_json::Value) -> Result<(), String>
 #[cfg(test)]
 mod device_recovery_tests {
     use super::*;
+    #[test]
+    fn settings_with_a_byte_order_mark_load_unchanged() {
+        let data = std::env::temp_dir().join(format!("dazedev-bom-{}", uuid::Uuid::new_v4()));
+        fs::create_dir_all(&data).unwrap();
+        let mut bytes = b"\xEF\xBB\xBF".to_vec();
+        bytes.extend_from_slice(br#"{"hosts":[],"voice":{"model":"parakeet"}}"#);
+        fs::write(data.join("device.json"), &bytes).unwrap();
+        let value = load_device(&data).unwrap();
+        assert_eq!(value["voice"]["model"], "parakeet");
+        assert!(fs::read_dir(&data).unwrap().all(|e| !e
+            .unwrap()
+            .file_name()
+            .to_string_lossy()
+            .starts_with("device.corrupt-")));
+        fs::remove_dir_all(data).unwrap();
+    }
     #[test]
     fn corrupt_primary_recovers_without_destroying_evidence_or_backup() {
         let d = std::env::temp_dir().join(format!("dazedev-settings-{}", uuid::Uuid::new_v4()));
