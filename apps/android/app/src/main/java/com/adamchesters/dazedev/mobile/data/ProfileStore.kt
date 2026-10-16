@@ -38,6 +38,12 @@ class ProfileStore(
             prefs.edit().putBoolean("secure_screen", value).apply()
         }
 
+    var keepConnected: Boolean
+        get() = prefs.getBoolean("keep_connected", false)
+        set(value) {
+            prefs.edit().putBoolean("keep_connected", value).apply()
+        }
+
     fun load(): ConnectionProfile = loadAll().firstOrNull() ?: ConnectionProfile()
 
     override fun save(profile: ConnectionProfile) {

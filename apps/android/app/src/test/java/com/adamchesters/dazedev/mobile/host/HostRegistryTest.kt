@@ -96,4 +96,23 @@ class HostRegistryTest {
             watcher.cancel()
             scope.cancel()
         }
+
+    @Test fun disconnectAllClosesEveryHostAndReportsIt() =
+        runTest {
+            val scope = CoroutineScope(SupervisorJob() + StandardTestDispatcher(testScheduler))
+            val factory = FakeLinkFactory()
+            val registry = fakeRegistry(scope, factory)
+            val events = mutableListOf<HostEvent>()
+            val watcher = scope.launch { registry.events.toList(events) }
+            registry.connect(tailscaleProfile("a"), "")
+            registry.connect(tailscaleProfile("b"), "")
+            advanceUntilIdle()
+            registry.disconnectAll()
+            advanceUntilIdle()
+            assertEquals(listOf(ConnectionPhase.Disconnected, ConnectionPhase.Disconnected), registry.hosts.value.map { it.phase })
+            assertEquals(listOf(HostEvent.Disconnected("a"), HostEvent.Disconnected("b")), events)
+            assertFalse(factory.hosts.any { it.isOpen })
+            watcher.cancel()
+            scope.cancel()
+        }
 }

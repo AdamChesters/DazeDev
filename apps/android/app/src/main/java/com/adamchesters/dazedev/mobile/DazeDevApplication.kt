@@ -7,6 +7,7 @@ import com.adamchesters.dazedev.mobile.data.ProfileStore
 import com.adamchesters.dazedev.mobile.host.HelperSources
 import com.adamchesters.dazedev.mobile.host.HostRegistry
 import com.adamchesters.dazedev.mobile.host.SshHostLinkFactory
+import com.adamchesters.dazedev.mobile.service.KeepConnected
 import com.adamchesters.dazedev.mobile.ui.BrowserLauncher
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
@@ -19,14 +20,17 @@ class DazeDevApplication : Application() {
 
     override fun onCreate() {
         super.onCreate()
+        val store = ProfileStore(this)
         hosts =
             HostRegistry(
-                store = ProfileStore(this),
+                store = store,
                 links = SshHostLinkFactory(::knownHosts),
                 helpers = ::helperSources,
                 readKey = ::readPrivateKey,
                 openBrowser = { url -> BrowserLauncher.open(this, url) },
             )
+        hosts.keepConnected.value = store.keepConnected
+        KeepConnected(this, hosts, hosts.keepConnected).start()
     }
 
     fun knownHosts(id: String) = File(filesDir, "ssh/$id/known_hosts")

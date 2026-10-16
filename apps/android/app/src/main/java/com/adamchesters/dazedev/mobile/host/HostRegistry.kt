@@ -45,6 +45,9 @@ class HostRegistry(
 
     val all: Collection<HostEntry> get() = entries.values
 
+    /** The "Keep hosts connected in the background" setting. */
+    val keepConnected = MutableStateFlow(false)
+
     init {
         store.loadAll().forEach(::add)
         publish()
@@ -190,6 +193,14 @@ class HostRegistry(
         h.phase = ConnectionPhase.Disconnected
         h.linkError = null
         publish()
+    }
+
+    /** Disconnects every host, for example from the keep-connected notification. */
+    fun disconnectAll() {
+        entries.values.filter { it.phase != ConnectionPhase.Disconnected }.forEach { h ->
+            disconnect(h.profile.id)
+            hostEvents.tryEmit(HostEvent.Disconnected(h.profile.id))
+        }
     }
 
     private fun linkLost(

@@ -25,7 +25,7 @@ class MainViewModel(
 ) : AndroidViewModel(application) {
     private val registry = (application as DazeDevApplication).hosts
     private val store = ProfileStore(application)
-    private val ui = UiStore(DazeDevMobileUiState(profile = store.load(), secureScreen = store.secureScreen))
+    private val ui = UiStore(DazeDevMobileUiState(profile = store.load(), secureScreen = store.secureScreen, keepConnected = store.keepConnected))
     val uiState: StateFlow<DazeDevMobileUiState> = ui.state.asStateFlow()
     private val terminal = TerminalController(ui, registry, viewModelScope)
     private val connections = ConnectionController(ui, registry, terminal)
@@ -56,6 +56,7 @@ class MainViewModel(
         when (event) {
             is HostEvent.Message -> ui.message(event.text)
             is HostEvent.LinkLost -> terminal.linkLost(event.hostId, event.error)
+            is HostEvent.Disconnected -> terminal.linkLost(event.hostId, "This host was disconnected. Connect again to continue.")
             is HostEvent.KeyChanged -> ui.update { it.copy(hostKeyChange = event.change) }
         }
     }
@@ -243,6 +244,17 @@ class MainViewModel(
     fun setSecureScreen(value: Boolean) {
         store.secureScreen = value
         ui.update { it.copy(secureScreen = value) }
+    }
+
+    /** Keeps host connections open in the background with a foreground service while hosts are connected. */
+    fun setKeepConnected(value: Boolean) {
+        store.keepConnected = value
+        registry.keepConnected.value = value
+        ui.update { it.copy(keepConnected = value) }
+    }
+
+    fun notificationsDenied() {
+        ui.message("Notifications are off, so the keep-connected notice is hidden. Hosts still stay connected in the background.")
     }
 
     fun closeHostKeys() = hostKeys.closeHostKeys()

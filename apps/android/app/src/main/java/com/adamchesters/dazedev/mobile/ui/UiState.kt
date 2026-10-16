@@ -107,6 +107,7 @@ data class DazeDevMobileUiState(
     val browserRequest: BrowserRequest? = null,
     val authNotice: AuthNotice? = null,
     val secureScreen: Boolean = false,
+    val keepConnected: Boolean = false,
 )
 
 fun DazeDevMobileUiState.withHosts(hosts: List<HostSnapshot>) = copy(hosts = hosts.map { HostSummary(it.profile, it.phase, it.folders.size, it.fingerprint, it.folders) })
