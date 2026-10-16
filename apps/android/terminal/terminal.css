@@ -33,6 +33,19 @@ body {
   gap: 8px;
   padding: 8px;
 }
+#quick {
+  flex: none;
+  display: flex;
+  gap: 4px;
+  padding: 4px;
+  overflow-x: auto;
+}
+#quick button {
+  flex: 1 0 40px;
+  min-height: 40px;
+  padding: 0 6px;
+}
+#quick[hidden],
 #keys[hidden] {
   display: none;
 }

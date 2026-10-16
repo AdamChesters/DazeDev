@@ -10,16 +10,24 @@ import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.selects.select
 import java.util.concurrent.atomic.AtomicBoolean
+import java.util.concurrent.atomic.AtomicLong
+import kotlinx.coroutines.flow.onEach
 import org.json.JSONObject
 
 class TerminalStream(private val ssh: SshConnection, parent: CoroutineScope) {
     private val scope = CoroutineScope(parent.coroutineContext + SupervisorJob(parent.coroutineContext[Job]))
     private var active: ChannelExec? = null
     private val closing=AtomicBoolean(false)
-    private val outgoing = Channel<ByteArray>(32)
+    // Input waits in a byte-bounded queue; only a dead stream refuses it.
+    private val outgoing = Channel<ByteArray>(Channel.UNLIMITED)
+    private val queuedInput = AtomicLong(0)
     private val sizes = Channel<Pair<Int,Int>>(Channel.CONFLATED)
-    private val incoming = Channel<ByteArray>(8)
-    val output = incoming.receiveAsFlow()
+    // Output is drained from SSH at once so a slow renderer never fills JSch's
+    // shared pipe and stalls other channels on the same connection.
+    private val incoming = Channel<ByteArray>(Channel.UNLIMITED)
+    private val bufferedOutput = AtomicLong(0)
+    private val drained = Channel<Unit>(Channel.CONFLATED)
+    val output = incoming.receiveAsFlow().onEach {bufferedOutput.addAndGet(-it.size.toLong());drained.trySend(Unit)}
     private val _connected=MutableStateFlow(false)
     val state = _connected.asStateFlow()
     val connected get() = _connected.value
@@ -57,7 +65,7 @@ class TerminalStream(private val ssh: SshConnection, parent: CoroutineScope) {
                         }
                         outgoing.onReceiveCatching {result->
                             val bytes=result.getOrNull()
-                            if(bytes!=null && !closing.get()){output.write(bytes);output.flush()}
+                            if(bytes!=null){queuedInput.addAndGet(-bytes.size.toLong());if(!closing.get()){output.write(bytes);output.flush()}}
                         }
                     }
                 }
@@ -66,18 +74,32 @@ class TerminalStream(private val ssh: SshConnection, parent: CoroutineScope) {
         }
         scope.launch(Dispatchers.IO) {
             try {
-                val buffer=ByteArray(8192)
-                while(isActive && !closing.get()) {val size=input.read(buffer);if(size<0) break;incoming.send(buffer.copyOf(size))}
+                val buffer=ByteArray(32768)
+                while(isActive && !closing.get()) {
+                    val size=input.read(buffer);if(size<0) break
+                    // Past this much unrendered output, wait rather than use unbounded memory.
+                    while(bufferedOutput.get()>MAX_BUFFERED_OUTPUT && !closing.get())withTimeoutOrNull(250){drained.receive()}
+                    bufferedOutput.addAndGet(size.toLong());incoming.send(buffer.copyOf(size))
+                }
             } catch(e:Exception) {incoming.close(e)} finally {close()}
         }
     }
-    fun send(bytes: ByteArray): Boolean = connected && !closing.get() && bytes.size in 1..65_536 && outgoing.trySend(bytes.copyOf()).isSuccess
+    /** False when the stream is closed or too much input is already waiting. */
+    fun send(bytes: ByteArray): Boolean {
+        if(!connected || closing.get() || bytes.size !in 1..65_536)return false
+        if(queuedInput.addAndGet(bytes.size.toLong())>MAX_QUEUED_INPUT){queuedInput.addAndGet(-bytes.size.toLong());return false}
+        return outgoing.trySend(bytes.copyOf()).isSuccess.also {if(!it)queuedInput.addAndGet(-bytes.size.toLong())}
+    }
     fun resize(cols: Int, rows: Int) {if(connected && !closing.get())sizes.trySend(cols.coerceIn(2,500) to rows.coerceIn(2,300))}
     /** Leaves tmux copy mode on this session's active pane, if it is in it. */
     suspend fun cancelCopyMode() {
         val target = attached ?: return
         ssh.execute(TerminalScrollCommands.cancel(target.first, target.second, target.third), 15_000)
             .requireSuccess("Returning to live terminal output")
+    }
+    private companion object {
+        const val MAX_QUEUED_INPUT = 1L shl 20
+        const val MAX_BUFFERED_OUTPUT = 8L shl 20
     }
     fun close() {
         if(closing.compareAndSet(false,true)) {

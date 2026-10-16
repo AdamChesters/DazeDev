@@ -357,7 +357,7 @@ fun TerminalScreen(
             Box(Modifier.fillMaxSize()) {
                 // A fresh WebView per attachment; it measures before the stream attaches.
                 key(uiState.terminalEpoch) {
-                    InteractiveTerminal(stream,terminalController,{cols,rows->onMeasured(uiState.terminalEpoch,cols,rows)},{scrolledBack=it},onMessage,Modifier.fillMaxSize())
+                    InteractiveTerminal(stream,terminalController,{cols,rows->onMeasured(uiState.terminalEpoch,cols,rows)},{scrolledBack=it},onMessage,{onMessage("The terminal view stopped. Reconnecting.");onReconnect()},Modifier.fillMaxSize())
                 }
                 val problem = uiState.terminalError ?: if (stream != null && !connected) "Terminal disconnected." else null
                 if (problem != null) Surface(Modifier.fillMaxSize(), color = TerminalBackground.copy(alpha = 0.92f)) {
