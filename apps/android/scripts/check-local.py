@@ -50,8 +50,11 @@ with tempfile.TemporaryDirectory(prefix="dazedev-android-checks-") as scratch:
             DAZEDEV_RELEASE_STORE_PASSWORD="check-only",
             DAZEDEV_RELEASE_KEY_ALIAS="check",
             DAZEDEV_RELEASE_KEY_PASSWORD="check-only")
-        result = subprocess.call([str(root / "gradlew"), "--offline", "--no-daemon", "--max-workers=2",
-            "ktlintCheck", "lintDebug", "testDebugUnitTest", "assembleDebug", "assembleDebugAndroidTest", "assembleRelease"], cwd=root, env=env)
+        # The terminal page's touch logic (scrolling, extra-keys taps) has plain Node tests.
+        result = subprocess.call(["node", "--test", *sorted(str(p) for p in (root / "terminal").glob("*.test.mjs"))], cwd=root, env=env)
+        if result == 0:
+            result = subprocess.call([str(root / "gradlew"), "--offline", "--no-daemon", "--max-workers=2",
+                "ktlintCheck", "lintDebug", "testDebugUnitTest", "assembleDebug", "assembleDebugAndroidTest", "assembleRelease"], cwd=root, env=env)
     finally:
         for server in servers:
             server.terminate()

@@ -6,6 +6,7 @@ import { WebglAddon } from "@xterm/addon-webgl";
 import "@xterm/xterm/css/xterm.css";
 import "./terminal.css";
 import { installTouchScroll, wheelAccumulator } from "./touch-scroll.js";
+import { installTapKey } from "./tap-keys.js";
 const term = new Terminal({
   cursorBlink: false,
   scrollback: 5000,
@@ -64,13 +65,12 @@ if (window.DazeBridge)
 term.loadAddon(new WebLinksAddon((_event, url) => linkActivated(url)));
 const mods = { Control: 0, Alt: 0, Shift: 0 };
 let ready = false,
-  repeat = null,
   dispatching = false;
 let submission = null;
+// Held extra keys stop repeating when the app clears or disposes the terminal.
+const tapKeys = [];
 const stopRepeat = () => {
-  clearTimeout(repeat);
-  clearInterval(repeat);
-  repeat = null;
+  for (const t of tapKeys) t.cancel();
 };
 const clearOnce = () => {
   for (const m in mods) if (mods[m] === 1) mods[m] = 0;
@@ -310,17 +310,7 @@ for (const k of keys) {
   const b = document.createElement("button");
   b.textContent = labels[k] || k.replace("Arrow", "");
   b.setAttribute("aria-label", k);
-  b.onpointerdown = (e) => {
-    e.preventDefault();
-    stopRepeat();
-    key(k);
-    if (k.startsWith("Arrow"))
-      repeat = setTimeout(() => {
-        repeat = setInterval(() => key(k), 90);
-      }, 350);
-  };
-  b.onpointerup = stopRepeat;
-  b.onpointercancel = stopRepeat;
+  tapKeys.push(installTapKey(b, { press: () => key(k), repeat: k.startsWith("Arrow") }));
   b.onkeydown = (e) => {
     if (e.key === "Enter" || e.key === " ") {
       e.preventDefault();
@@ -330,7 +320,8 @@ for (const k of keys) {
   drawer.append(b);
 }
 // Extra keys above the phone keyboard. Ctrl and Alt apply to the next key only, including
-// a key typed on the phone keyboard. The row scrolls sideways for Home, End and the page keys.
+// a key typed on the phone keyboard. The row scrolls sideways for Home, End and the page keys;
+// a key fires on a tap, never on a drag (tap-keys.js).
 for (const [label, k, name] of [
   ["Esc", "Escape", "Escape"],
   ["Tab", "Tab", "Tab"],
@@ -355,36 +346,33 @@ for (const [label, k, name] of [
   if (k === "Control" || k === "Alt") {
     b.dataset.mod = k;
     b.setAttribute("aria-pressed", "false");
-    b.onpointerdown = (e) => {
-      e.preventDefault();
-      mods[k] = mods[k] ? 0 : 1;
-      updateMods();
-    };
+    tapKeys.push(installTapKey(b, {
+      press: () => {
+        mods[k] = mods[k] ? 0 : 1;
+        updateMods();
+      },
+    }));
   } else if (k.length === 1) {
-    b.onpointerdown = (e) => {
-      e.preventDefault();
-      const ctrl = !!mods.Control,
-        alt = !!mods.Alt;
-      for (const m in mods) mods[m] = 0;
-      updateMods();
-      let data = k;
-      if (ctrl && k === "-") data = "\x1f";
-      if (alt) data = "\x1b" + data;
-      bridge("input", data);
-    };
+    tapKeys.push(installTapKey(b, {
+      press: () => {
+        const ctrl = !!mods.Control,
+          alt = !!mods.Alt;
+        for (const m in mods) mods[m] = 0;
+        updateMods();
+        let data = k;
+        if (ctrl && k === "-") data = "\x1f";
+        if (alt) data = "\x1b" + data;
+        bridge("input", data);
+      },
+    }));
   } else
-    b.onpointerdown = (e) => {
-      e.preventDefault();
-      stopRepeat();
-      key(k);
-      clearOnce();
-      if (k.startsWith("Arrow"))
-        repeat = setTimeout(() => {
-          repeat = setInterval(() => key(k), 90);
-        }, 350);
-    };
-  b.onpointerup = stopRepeat;
-  b.onpointercancel = stopRepeat;
+    tapKeys.push(installTapKey(b, {
+      press: () => {
+        key(k);
+        clearOnce();
+      },
+      repeat: k.startsWith("Arrow"),
+    }));
   quick.append(b);
 }
 new ResizeObserver(layout).observe(quick);

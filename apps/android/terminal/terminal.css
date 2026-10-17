@@ -43,11 +43,17 @@ body {
   gap: 4px;
   padding: 4px;
   overflow-x: auto;
+  overscroll-behavior-x: contain;
 }
 #quick button {
   flex: 1 0 44px;
   min-height: 40px;
   padding: 0 6px;
+  /* The row scrolls sideways under the finger; a key fires only on a tap (tap-keys.js). */
+  touch-action: pan-x;
+}
+#keys button {
+  touch-action: pan-y;
 }
 #quick[hidden],
 #keys[hidden] {
