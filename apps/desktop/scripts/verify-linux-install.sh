@@ -57,6 +57,7 @@ cp "$scripts/verify-linux-startup.py" "$appimage" "$work/"
 [[ -f "$artifacts/voice_smoke" ]] && cp "$artifacts/voice_smoke" "$artifacts/jfk.wav" "$work/"
 chown -R tester: "$work"
 chmod +x "$work"/*.AppImage
+[[ -f "$work/voice_smoke" ]] && chmod +x "$work/voice_smoke" # artifacts lose the exec bit
 sandbox=""
 if ! runuser -u tester -- unshare -U true 2> /dev/null; then
   # Only for this container: the WebKit sandbox needs user namespaces.
@@ -70,8 +71,10 @@ set -euo pipefail
 export XDG_RUNTIME_DIR=$(mktemp -d)
 if pulseaudio --daemonize=yes --exit-idle-time=-1 2>/dev/null; then
   for _ in $(seq 50); do pactl info > /dev/null 2>&1 && break; sleep 0.2; done
+  # WebKit ignores monitor sources, so offer a silent input device as the microphone.
   pactl load-module module-null-sink sink_name=dazedev_test > /dev/null || true
-  pactl set-default-source dazedev_test.monitor || true
+  pactl load-module module-null-source source_name=dazedev_mic > /dev/null || true
+  pactl set-default-source dazedev_mic || true
 else
   echo "PulseAudio did not start; microphone check will fail" >&2
 fi
@@ -96,6 +99,7 @@ xvfb() { as_tester xvfb-run -a -s '-screen 0 1440x920x24' "$@"; }
 check ".deb: interface loads, settings saved in XDG folder and kept on restart" deb-startup.txt \
   xvfb python3 -I verify-linux-startup.py --binary /usr/bin/DazeDev --screenshot "$work/deb-window.png"
 cp "$work/deb-window.png" "$results/" 2>/dev/null || true
+as_tester pactl list short sources > "$results/audio-sources.txt" 2>&1 || true
 check ".deb: WebKit microphone stream" deb-microphone.txt \
   xvfb python3 -I verify-linux-startup.py --binary /usr/bin/DazeDev --microphone
 if [[ -f "$work/voice_smoke" ]]; then

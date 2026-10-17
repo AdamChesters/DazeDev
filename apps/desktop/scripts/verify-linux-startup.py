@@ -8,6 +8,7 @@ PulseAudio/PipeWire source); --screenshot FILE saves the window as PNG.
 """
 import argparse
 import base64
+import fcntl
 import json
 import os
 from pathlib import Path
@@ -42,8 +43,24 @@ navigator.mediaDevices.getUserMedia({audio: true}).then(async (stream) => {
   const devices = await navigator.mediaDevices.enumerateDevices();
   result.inputs = devices.filter((d) => d.kind === 'audioinput').map((d) => d.label);
   done(result);
-}).catch((e) => done({error: String(e)}));
+}).catch(async (e) => {
+  const devices = await navigator.mediaDevices.enumerateDevices().catch(() => []);
+  done({error: String(e), devices: devices.map((d) => d.kind + ':' + d.label)});
+});
 """
+
+
+def released(lock):
+    """True once the previous app instance has dropped its single-instance lock."""
+    if not lock.exists():
+        return True
+    with lock.open("rb") as handle:
+        try:
+            fcntl.flock(handle, fcntl.LOCK_EX | fcntl.LOCK_NB)
+        except BlockingIOError:
+            return False
+        fcntl.flock(handle, fcntl.LOCK_UN)
+        return True
 
 
 def verify(package=None, binary=None, microphone=False, screenshot=None):
@@ -145,6 +162,8 @@ def verify(package=None, binary=None, microphone=False, screenshot=None):
                     assert not (data / "startup-error.txt").exists()
                     request("DELETE", prefix)
                     session = None
+                    # The next launch must not race the previous process's shutdown.
+                    wait_for(lambda: released(data / "instance.lock"), "previous instance exit")
                 settings = json.loads((data / "device.json").read_text())
                 assert settings["hosts"] == [] and isinstance(settings["voice"], dict)
                 print(f"PASS packaged Linux UI ({binary}): fresh startup, native settings write "
