@@ -19,23 +19,56 @@ BROWSER_ERROR = None
 SOCKET = os.environ.get('DAZED_TMUX_SOCKET', '')
 MACHINE = hashlib.sha256((socket.gethostname() + ':' + (P('/etc/machine-id').read_text().strip() if P('/etc/machine-id').exists() else str(P.home()))).encode()).hexdigest()[:24]
 def profile_key(): return MACHINE + (':'+hashlib.sha256(SOCKET.encode()).hexdigest()[:12] if SOCKET else '')
-AGENTS = {'codex': ['npm', 'install', '-g', '@openai/codex'], 'claude': ['npm', 'install', '-g', '@anthropic-ai/claude-code'], 'gemini': ['npm', 'install', '-g', '@google/gemini-cli'], 'opencode': ['npm', 'install', '-g', 'opencode-ai']}
+# Built-in agents, keyed by executable name. Each install is the publisher's
+# documented user-scoped method: a native release, the publisher's install
+# script (downloaded, then run with `shell`) or an npm package under ~/.local.
+# `prompt` is how a starting prompt reaches an interactive session: 'arg'
+# appends it, a flag passes it as that flag's value, and agents without one
+# start without a prompt. `launch` and `promptLaunch` are leading arguments
+# for agents whose interactive session is a subcommand.
+AGENTS = {
+    'codex': {'name': 'Codex', 'install': {'native': 'codex'}, 'prompt': 'arg'},
+    'claude': {'name': 'Claude Code', 'install': {'script': 'https://claude.ai/install.sh'}, 'prompt': 'arg'},
+    'gemini': {'name': 'Gemini CLI', 'install': {'npm': '@google/gemini-cli', 'node': 20}, 'prompt': '--prompt-interactive'},
+    'opencode': {'name': 'OpenCode', 'install': {'npm': 'opencode-ai', 'node': 20}, 'prompt': '--prompt'},
+    'copilot': {'name': 'GitHub Copilot CLI', 'install': {'script': 'https://gh.io/copilot-install'}, 'prompt': '-i'},
+    'cursor-agent': {'name': 'Cursor CLI', 'install': {'script': 'https://cursor.com/install'}, 'prompt': 'arg'},
+    'qwen': {'name': 'Qwen Code', 'install': {'npm': '@qwen-code/qwen-code', 'node': 22}, 'prompt': '--prompt-interactive'},
+    'droid': {'name': 'Factory Droid', 'install': {'npm': 'droid', 'node': 20}, 'prompt': 'arg'},
+    'goose': {'name': 'goose', 'install': {'script': 'https://github.com/aaif-goose/goose/releases/download/stable/download_cli.sh', 'env': {'CONFIGURE': 'false'}},
+              'launch': ['session'], 'promptLaunch': ['run', '--interactive', '--text'], 'prompt': 'arg', 'flags': False},
+    'amp': {'name': 'Amp', 'install': {'script': 'https://ampcode.com/install.sh'}},
+    'crush': {'name': 'Crush', 'install': {'npm': '@charmland/crush', 'node': 20}},
+    'aider': {'name': 'Aider', 'install': {'script': 'https://aider.chat/install.sh', 'shell': 'sh'}},
+    'kimi': {'name': 'Kimi Code', 'install': {'script': 'https://code.kimi.com/kimi-code/install.sh'}},
+}
+# User-scoped folders the installers above use besides ~/.local/bin.
+AGENT_DIRS = ['.opencode/bin', '.amp/bin', '.kimi-code/bin']
 INSTALLER = r"""import os, platform, shutil, subprocess, tempfile, urllib.request, tarfile, pathlib
 agent = INSTALL_AGENT
+spec = INSTALL_SPEC
 home = pathlib.Path.home()
 bin_dir = home / '.local' / 'bin'
 bin_dir.mkdir(parents=True, exist_ok=True)
-os.environ['PATH'] = str(bin_dir) + ':' + str(home / '.opencode' / 'bin') + ':' + os.environ.get('PATH', '')
+os.environ['PATH'] = ':'.join([str(bin_dir)] + [str(home / d) for d in INSTALL_DIRS] + [os.environ.get('PATH', '')])
+binary = spec.get('binary', agent)
+def installed():
+    if binary.startswith('/'): return os.path.isfile(binary) and os.access(binary, os.X_OK)
+    return bool(shutil.which(binary))
 try:
     distro = platform.freedesktop_os_release()
 except (OSError, AttributeError):
     distro = {}
 print('Host: ' + distro.get('PRETTY_NAME', platform.system()) + ' / ' + platform.machine(), flush=True)
-if not shutil.which(agent):
+if not installed() and 'command' in spec:
+    # A custom agent's own install command, exactly as the user saved it.
+    print('Installing ' + spec['name'] + ' with its saved install command:\n  ' + spec['command'], flush=True)
+    subprocess.run([spec['shell'], '-c', spec['command']], check=True)
+elif not installed():
     print('Installing ' + agent + ' for this user. This runs the upstream publisher\'s current installer; trust that publisher and review its output.', flush=True)
     if platform.system() != 'Linux':
         raise RuntimeError('One-click installation currently supports Linux and WSL hosts.')
-    if agent == 'codex':
+    if 'native' in spec:
         arch = {'x86_64':'x86_64', 'amd64':'x86_64', 'aarch64':'aarch64', 'arm64':'aarch64'}.get(platform.machine().lower())
         if not arch: raise RuntimeError('Codex native installer requires x86_64 or arm64 Linux.')
         asset = 'codex-' + arch + '-unknown-linux-musl'
@@ -52,26 +85,29 @@ if not shutil.which(agent):
                     staged.chmod(0o755); staged.replace(target)
                 finally:
                     staged.unlink(missing_ok=True)
-    elif agent == 'claude':
+    elif 'script' in spec:
         family = distro.get('ID', '')
-        prerequisites = {'ubuntu':'sudo apt install bash curl', 'debian':'sudo apt install bash curl', 'linuxmint':'sudo apt install bash curl', 'pop':'sudo apt install bash curl', 'fedora':'sudo dnf install bash curl', 'rhel':'sudo dnf install bash curl', 'rocky':'sudo dnf install bash curl', 'almalinux':'sudo dnf install bash curl', 'arch':'sudo pacman -S bash curl', 'opensuse-leap':'sudo zypper install bash curl', 'opensuse-tumbleweed':'sudo zypper install bash curl', 'alpine':'apk add bash curl libgcc libstdc++ ripgrep'}
-        if family == 'alpine': os.environ['USE_BUILTIN_RIPGREP'] = '0'
-        required = ['bash', 'curl'] + (['rg'] if family == 'alpine' else [])
+        shell = spec.get('shell', 'bash')
+        tools = ' '.join(sorted({shell, 'bash', 'curl'})) if shell == 'bash' else shell + ' curl'
+        prerequisites = {'ubuntu':'sudo apt install ' + tools, 'debian':'sudo apt install ' + tools, 'linuxmint':'sudo apt install ' + tools, 'pop':'sudo apt install ' + tools, 'fedora':'sudo dnf install ' + tools, 'rhel':'sudo dnf install ' + tools, 'rocky':'sudo dnf install ' + tools, 'almalinux':'sudo dnf install ' + tools, 'arch':'sudo pacman -S ' + tools, 'opensuse-leap':'sudo zypper install ' + tools, 'opensuse-tumbleweed':'sudo zypper install ' + tools, 'alpine':'apk add ' + tools + (' libgcc libstdc++ ripgrep' if agent == 'claude' else '')}
+        if family == 'alpine' and agent == 'claude': os.environ['USE_BUILTIN_RIPGREP'] = '0'
+        required = [shell, 'curl'] + (['rg'] if family == 'alpine' and agent == 'claude' else [])
         if any(not shutil.which(cmd) for cmd in required):
-            raise RuntimeError('Prerequisites missing. Run ' + prerequisites.get(family, 'your package manager to install bash and curl') + ', then retry.')
+            raise RuntimeError('Prerequisites missing. Run ' + prerequisites.get(family, 'your package manager to install ' + tools) + ', then retry.')
+        print('Installer: ' + spec['script'], flush=True)
         with tempfile.TemporaryDirectory(prefix='dazedev-install-') as temp:
             script = pathlib.Path(temp) / 'install.sh'
-            urllib.request.urlretrieve('https://claude.ai/install.sh', script)
-            subprocess.run(['bash', str(script)], check=True)
+            urllib.request.urlretrieve(spec['script'], script)
+            subprocess.run([shell, str(script)], check=True, env=dict(os.environ, **spec.get('env', {})))
     else:
+        minimum = spec.get('node', 20)
         npm = shutil.which('npm')
-        if not npm: raise RuntimeError('Install Node.js 20 or newer and npm with your host package manager, then retry. No system packages were changed.')
+        if not npm: raise RuntimeError('Install Node.js ' + str(minimum) + ' or newer and npm with your host package manager, then retry. No system packages were changed.')
         major = int(subprocess.check_output(['node', '-p', 'process.versions.node.split(".")[0]'], text=True).strip())
-        if major < 20: raise RuntimeError('Node.js 20 or newer is required. Upgrade Node.js on this host, then retry.')
-        package = {'gemini':'@google/gemini-cli', 'opencode':'opencode-ai'}[agent]
-        subprocess.run([npm, 'install', '--prefix', str(home / '.local'), '-g', package], check=True)
-if not shutil.which(agent): raise RuntimeError(agent + ' was not found after installation. Review the installer output above.')
-print(agent + ' ready. Complete authentication in its interface.', flush=True)
+        if major < minimum: raise RuntimeError('Node.js ' + str(minimum) + ' or newer is required. Upgrade Node.js on this host, then retry.')
+        subprocess.run([npm, 'install', '--prefix', str(home / '.local'), '-g', spec['npm']], check=True)
+if not installed(): raise RuntimeError(binary + ' was not found after installation. Review the installer output above.')
+print(spec.get('name', agent) + ' ready. Complete authentication in its interface.', flush=True)
 """
 _operation_deadline = threading.local()
 def run(args, timeout=20, env=None, cwd=None, check=True):
@@ -79,7 +115,8 @@ def run(args, timeout=20, env=None, cwd=None, check=True):
     if deadline is not None:
         timeout = min(timeout, deadline - time.monotonic())
         if timeout <= 0: raise TimeoutError('Host discovery deadline exceeded')
-    p = subprocess.run(args, capture_output=True, text=True, timeout=timeout, env=env, cwd=cwd)
+    # No child reads the protocol stream: protocol 1 requests arrive on stdin.
+    p = subprocess.run(args, capture_output=True, text=True, timeout=timeout, env=env, cwd=cwd, stdin=subprocess.DEVNULL)
     if check and p.returncode: raise RuntimeError((p.stderr or p.stdout or 'Command failed')[-3000:].strip())
     return p.stdout.strip()
 def tmux(*args, **kwargs): return run(['tmux'] + (['-L', SOCKET] if SOCKET else []) + list(args), **kwargs)
@@ -122,7 +159,8 @@ def sessions():
 def session_agent(value):
     if not re.fullmatch(r'\$\d+', str(value)): raise ValueError('Invalid session ID')
     parts=tmux('display-message','-p','-t',value,'#{pane_current_command}\t#{pane_pid}',check=False).split('\t')
-    if parts and parts[0] in AGENTS: return parts[0]
+    names=agent_names()
+    if parts and agent_named(parts[0],names): return agent_named(parts[0],names)
     if len(parts)!=2 or not parts[1].isdigit(): return 'shell'
     queue=[parts[1]]; visited=set()
     while queue and len(visited)<64:
@@ -132,8 +170,8 @@ def session_agent(value):
             if base.stat().st_uid != os.getuid(): continue
             argv=(base/'cmdline').read_bytes().split(b'\0')
             for raw in argv[:3]:
-                name=P(raw.decode(errors='replace')).name
-                if name in AGENTS: return name
+                name=agent_named(P(raw.decode(errors='replace')).name,names)
+                if name: return name
             children=(base/'task'/pid/'children').read_text().split()
             queue.extend(child for child in children if child not in visited)
         except OSError: pass
@@ -233,7 +271,124 @@ def identity_env(login):
     return env
 
 def agent_path(name):
-    return shutil.which(name) or next((str(p) for p in [P.home()/'.local/bin'/name, P.home()/'.opencode/bin'/name] if p.is_file() and os.access(p,os.X_OK)), None)
+    # A custom agent may name its executable by absolute path.
+    if name.startswith('/'): return name if os.path.isfile(name) and os.access(name,os.X_OK) else None
+    return shutil.which(name) or next((str(p) for p in [P.home()/'.local/bin'/name]+[P.home()/d/name for d in AGENT_DIRS] if p.is_file() and os.access(p,os.X_OK)), None)
+
+# Custom agents the user added. They live beside host.json, apart from the
+# workspace profile: an agent installed for this user is the same for every
+# tmux socket, and saving one never conflicts with workspace edits.
+CUSTOM_AGENTS_MAX = 32
+CUSTOM_AGENTS_BYTES = 65536
+AGENT_ID = r'[a-z][a-z0-9-]{0,31}'
+GENERIC_PROGRAMS = frozenset({'sh','bash','zsh','fish','dash','ksh','mksh','tcsh','csh','nu','pwsh','env','sudo','doas','exec','nohup','tmux','screen','ssh','mosh','node','nodejs','npx','npm','bun','bunx','deno','python','python3','uv','uvx','pipx','java','ruby','perl'})
+AGENT_BINARY = r'(?:/[^\x00-\x20\x7f]*/)?[A-Za-z0-9_+][A-Za-z0-9._+-]{0,63}'
+def agents_file(): return config_dir()/'agents.json'
+def agent_text(value, label, limit, required=False):
+    if value is None: value=''
+    if not isinstance(value,str): raise ValueError(label+' must be text')
+    value=value.strip()
+    if required and not value: raise ValueError(label+' is required')
+    if len(value)>limit: raise ValueError(label+' must be at most '+str(limit)+' characters')
+    # One line only: no newlines, escapes or other control characters.
+    if re.search(r'[\x00-\x1f\x7f]',value): raise ValueError(label+' must be a single line without control characters')
+    return value
+def custom_agent_validate(value):
+    if not isinstance(value,dict): raise ValueError('Invalid custom agent')
+    agent_id=value.get('id')
+    if not isinstance(agent_id,str) or not re.fullmatch(AGENT_ID,agent_id):
+        raise ValueError('Agent IDs use 1 to 32 lowercase letters, numbers and hyphens, starting with a letter')
+    if agent_id=='shell' or agent_id in AGENTS: raise ValueError(agent_id+' is a built-in agent; choose another ID')
+    record={k:v for k,v in value.items() if re.fullmatch(r'[A-Za-z][A-Za-z0-9_]{0,39}',str(k))}
+    record.update(id=agent_id,name=agent_text(value.get('name'),'Display name',60,True),
+        command=agent_text(value.get('command'),'Launch command',2000,True),
+        install=agent_text(value.get('install'),'Install command',2000),
+        version=agent_text(value.get('version'),'Version command',500),
+        binary=agent_text(value.get('binary'),'Detection binary',256))
+    if not record['binary']:
+        # Detect by the command's first word when it is a plain program name or path.
+        try: first=shlex.split(record['command'])[0]
+        except (ValueError,IndexError): first=''
+        record['binary']=first
+    if not re.fullmatch(AGENT_BINARY,record['binary']) or '/../' in record['binary']+'/' or '/./' in record['binary']+'/':
+        raise ValueError('Add a detection binary: the program name or absolute path the launch command starts')
+    # Panes are detected by this name, so it must be the agent's own program.
+    if P(record['binary']).name in GENERIC_PROGRAMS: raise ValueError('Name the agent\'s own program as detection binary, not '+P(record['binary']).name)
+    return record
+def custom_agents_validate(value):
+    if not isinstance(value,list) or len(value)>CUSTOM_AGENTS_MAX: raise ValueError('Keep at most '+str(CUSTOM_AGENTS_MAX)+' custom agents')
+    agents=[custom_agent_validate(v) for v in value]
+    if len({a['id'] for a in agents})!=len(agents): raise ValueError('Each custom agent needs its own ID')
+    if len(json.dumps(agents).encode())>CUSTOM_AGENTS_BYTES: raise ValueError('Custom agents are too large to save')
+    return agents
+def agents_read(a=None):
+    path=agents_file()
+    dictionary_regular(path)
+    if not path.exists(): return {'agents':[],'revision':''}
+    raw=path.read_bytes()
+    if len(raw)>CUSTOM_AGENTS_BYTES*2: raise ValueError('Custom agents file is too large')
+    doc=json.loads(raw)
+    if not isinstance(doc,dict) or doc.get('schema')!=1: raise ValueError('Unsupported custom agents file; existing file preserved')
+    return {'agents':custom_agents_validate(doc.get('agents')),'revision':hashlib.sha256(raw).hexdigest()}
+def agents_save(a):
+    agents=custom_agents_validate(a.get('agents'))
+    folder=config_dir();folder.mkdir(mode=0o700,parents=True,exist_ok=True);os.chmod(folder,0o700)
+    for name in ['agents.json','agents.lock']: dictionary_regular(folder/name)
+    lock_fd=os.open(folder/'agents.lock',os.O_RDWR|os.O_CREAT|getattr(os,'O_NOFOLLOW',0),0o600)
+    with os.fdopen(lock_fd,'a+') as lock:
+        fcntl.flock(lock,fcntl.LOCK_EX)
+        path=folder/'agents.json'
+        if agents_read()['revision']!=a.get('revision',''): raise HostError('conflict','custom agents changed on another device. Reload them and try again.')
+        # Keep fields a newer client wrote at the top of the file.
+        doc=json.loads(path.read_bytes()) if path.exists() else {}
+        doc.update(schema=1,agents=agents)
+        fd,temp=tempfile.mkstemp(prefix='.agents-',dir=folder)
+        try:
+            with os.fdopen(fd,'w') as out: json.dump(doc,out);out.flush();os.fsync(out.fileno())
+            os.replace(temp,path)
+        finally:
+            if os.path.exists(temp): os.unlink(temp)
+    _custom_cache.clear()
+    return agents_read()
+_custom_cache = {}
+def custom_agents():
+    # Status polls read this often; reread only when the file changes.
+    path=agents_file()
+    try: info=path.lstat(); key=(info.st_mtime_ns,info.st_size,info.st_ino)
+    except OSError: return []
+    if _custom_cache.get('key')!=key:
+        try: agents=agents_read()['agents']
+        except (OSError,ValueError,RuntimeError): agents=[]
+        _custom_cache.update(key=key,agents=agents)
+    return _custom_cache['agents']
+def custom_agent(agent_id):
+    return next((c for c in custom_agents() if c['id']==agent_id),None)
+def agent_names():
+    # Executable name -> agent ID for detecting what runs in a pane.
+    names={n:n for n in AGENTS}
+    for c in custom_agents(): names.setdefault(P(c['binary']).name,c['id'])
+    return names
+def agent_named(name, names=None):
+    names=agent_names() if names is None else names
+    if name in names: return names[name]
+    # Linux truncates process names to 15 bytes.
+    return next((v for k,v in names.items() if len(name)==15 and len(k)>15 and k.startswith(name)),None)
+def login_shell():
+    shell=os.environ.get('SHELL') or '/bin/sh'
+    return shell if shutil.which(shell) else '/bin/sh'
+def custom_version(c):
+    if not c['version']: return ''
+    try: return run([login_shell(),'-c',c['version']],timeout=5,check=False).splitlines()[0][:160]
+    except (IndexError,OSError,subprocess.SubprocessError,TimeoutError): return ''
+def custom_inventory(c, path):
+    return {'id':c['id'],'name':c['name'],'path':path,'version':custom_version(c) if path else '','models':[],'modelFlag':False,'effortFlag':False,
+            'install':c['install'],'installable':bool(c['install']),'prompt':False,'custom':True}
+
+def agent_install_text(name):
+    spec=AGENTS[name]['install']
+    if 'native' in spec or name=='claude': return 'Official native user installer'
+    if 'script' in spec: return 'Official user installer: '+spec['script']
+    return 'npm install -g '+spec['npm']
 
 def inventory():
     try: profile=load_profile(); profile_error=''
@@ -244,6 +399,7 @@ def inventory():
         if path:
             try: version=run([path,'--version'],timeout=8)[:160];helptext=run([path,'--help'],timeout=8,check=False)
             except Exception as e: version=str(e)[:160]
+        if AGENTS[name].get('flags') is False: helptext=''
         models=[]
         if name=='codex':
             cache=P.home()/'.codex/models_cache.json'
@@ -253,14 +409,18 @@ def inventory():
         if name=='opencode' and path:
             try: models=[{'id':m,'name':m,'efforts':[]} for m in run([path,'models'],timeout=10,check=False).splitlines() if '/' in m and '\x1b' not in m]
             except Exception: pass
-        agents.append({'id':name,'path':path,'version':version,'models':models,'modelFlag':'--model' in helptext,'effortFlag':'--effort' in helptext or name=='codex','install':('Official native user installer' if name in ['codex','claude'] else ' '.join(AGENTS[name]))})
+        agents.append({'id':name,'name':AGENTS[name]['name'],'path':path,'version':version,'models':models,'modelFlag':'--model' in helptext,'effortFlag':'--effort' in helptext or name=='codex','install':agent_install_text(name),'installable':True,'prompt':'prompt' in AGENTS[name],'custom':False})
+    warnings=[]
+    try: custom=agents_read()['agents']
+    except (OSError,ValueError,RuntimeError) as e: custom=[]; warnings.append('Custom agents could not be read: '+str(e))
+    agents+=[custom_inventory(c,agent_path(c['binary'])) for c in custom]
     identities=[]
     if shutil.which('gh'):
         try:
             status=json.loads(run(['gh','auth','status','--json','hosts'],check=False))
             identities=[{'login':a['login'],'active':a.get('active',False)} for a in status.get('hosts',{}).get('github.com',[]) if a.get('login')]
         except Exception: pass
-    warnings=[]; found=repos(profile['preferences'].get('roots',[]),warnings)
+    found=repos(profile['preferences'].get('roots',[]),warnings)
     return {'warnings':list(dict.fromkeys(warnings)), 'hostname':socket.gethostname(),'user':getpass.getuser(),'machine':MACHINE,'home':str(P.home()),'tmux':shutil.which('tmux'),'agents':agents,'identities':identities,'repos':found, 'sessions':sessions(),'observedAt':time.time(), 'profileError':profile_error}
 
 def capabilities():
@@ -274,6 +434,7 @@ def capabilities():
             helptext=run([path,'--help'],timeout=5,check=False)
         except Exception:
             version='';helptext=''
+        if AGENTS[name].get('flags') is False: helptext=''
         models=[]
         if name=='codex':
             cache=P.home()/'.codex/models_cache.json'
@@ -281,8 +442,11 @@ def capabilities():
                 models=[{'id':m['slug'],'efforts':[e.get('reasoning_effort',e.get('effort','')) for e in m.get('supported_reasoning_levels',[])]} for m in json.loads(cache.read_text()).get('models',[]) if m.get('slug')]
             # Any cache format change must not fail connect.
             except Exception: models=[]
-        agents.append({'id':name,'version':version,'models':models,'modelFlag':'--model' in helptext,'effortFlag':'--effort' in helptext or name=='codex'})
-    return {'agents':agents,'protocol':1,'transport':'ssh-tmux','features':['profiles','sessions','repositories','tmux-settings']}
+        agents.append({'id':name,'name':AGENTS[name]['name'],'version':version,'models':models,'modelFlag':'--model' in helptext,'effortFlag':'--effort' in helptext or name=='codex','prompt':'prompt' in AGENTS[name],'custom':False})
+    for c in custom_agents():
+        if agent_path(c['binary']):
+            agents.append({'id':c['id'],'name':c['name'],'version':custom_version(c),'models':[],'modelFlag':False,'effortFlag':False,'prompt':False,'custom':True})
+    return {'agents':agents,'protocol':1,'transport':'ssh-tmux','features':['profiles','sessions','repositories','tmux-settings','custom-agents']}
 
 def create_session(a):
     name=a['name']
@@ -296,15 +460,30 @@ def create_session(a):
         if tmux('show-options','-qv','-t',s['id'],'@dazed-operation',check=False)==op: return s
     agent=a.get('agent','shell');model=a.get('model','');effort=a.get('effort','');login=a.get('identity','')
     env=identity_env(login)
-    if agent not in ['shell',*AGENTS]: raise ValueError('Unknown agent')
+    custom=None
+    if agent not in ['shell',*AGENTS]:
+        # The launch command comes from this host's saved custom agents, never from the request.
+        custom=custom_agent(agent) if isinstance(agent,str) else None
+        if not custom: raise ValueError('Unknown agent')
     prompt=a.get('brief','')
-    args=[]
-    if agent!='shell':
+    args=[]; install=None
+    if custom:
+        if model or effort: raise ValueError('Custom agents start with their own model settings. Put any model option in the launch command.')
+        if prompt: raise ValueError('Custom agents start without a starting prompt. Paste it once the agent is running.')
+        exe=agent_path(custom['binary'])
+        if not exe and not a.get('install'): raise RuntimeError(custom['name']+' is not installed on this host')
+        if not exe and not custom['install']: raise RuntimeError(custom['name']+' is not installed and has no install command. Add one or install it yourself.')
+        # The user's command runs exactly as saved, as one argument to their shell.
+        shell=login_shell(); args=[shell,'-c',custom['command']]
+        if not exe: install={'name':custom['name'],'binary':custom['binary'],'command':custom['install'],'shell':shell}
+    elif agent!='shell':
+        spec=AGENTS[agent]
         exe=agent_path(agent)
         if not exe and not a.get('install'): raise RuntimeError(f'{agent} is not installed on this host')
         if not exe and (model or effort): raise ValueError('Install the agent before selecting non-default model or effort')
-        helptext=run([exe,'--help'],timeout=8,check=False) if exe else ''
-        args=[exe or agent]
+        if prompt and 'prompt' not in spec: raise ValueError(spec['name']+' does not take a starting prompt. Paste it once the agent is running.')
+        helptext=run([exe,'--help'],timeout=8,check=False) if exe and spec.get('flags') is not False else ''
+        args=[exe or agent]+spec.get('promptLaunch' if prompt and 'promptLaunch' in spec else 'launch',[])
         if model:
             if '--model' not in helptext: raise ValueError('This agent version does not advertise --model')
             args+=['--model',model]
@@ -313,13 +492,13 @@ def create_session(a):
             elif '--effort' in helptext: args+=['--effort',effort]
             else: raise ValueError('This agent does not advertise effort selection')
         if prompt:
-            if agent=='gemini': args+=['--prompt-interactive',prompt]
-            elif agent=='opencode': args+=['--prompt',prompt]
-            else: args.append(prompt)
+            if spec['prompt']=='arg': args.append(prompt)
+            else: args+=[spec['prompt'],prompt]
+        if a.get('install') and not exe: install=dict(spec['install'],name=spec['name'])
     # Resolve credentials inside the new child. Only the account name travels in argv.
     bootstrap = "import os,subprocess,json,shutil; "
-    if a.get('install') and agent != 'shell':
-        bootstrap += "INSTALL_AGENT="+repr(agent)+"; exec("+repr(INSTALLER)+"); "
+    if install:
+        bootstrap += "INSTALL_AGENT="+repr(agent)+"; INSTALL_SPEC="+repr(install)+"; INSTALL_DIRS="+repr(AGENT_DIRS)+"; exec("+repr(INSTALLER)+"); "
     if login:
         bootstrap += "t=subprocess.check_output(['gh','auth','token','--hostname','github.com','--user',"+repr(login)+"],text=True).strip(); os.environ['GH_TOKEN']=t; "
         bootstrap += "u=json.loads(subprocess.check_output(['gh','api','user'],text=True)); assert u['login'].lower()=="+repr(login.lower())+"; "
@@ -751,7 +930,8 @@ def terminal_status(a):
             if not pane_dead and client['panePid'].isdigit():
                 pane_processes=descend(int(client['panePid']));seen.update(pane_processes)
                 # Only executable names from this pane determine its agent label.
-                agents={rows[p] for p in pane_processes if rows.get(p) in AGENTS}
+                names=agent_names()
+                agents={agent_named(rows[p],names) for p in pane_processes if agent_named(rows.get(p,''),names)}
                 agent=next(iter(agents)) if len(agents)==1 else 'shell'
     nested=any(rows.get(p) in ('ssh','mosh','mosh-client') for p in seen)
     if nested: return dict(unknown,nestedSsh=True)
@@ -934,6 +1114,8 @@ def dispatch(method,a):
     if method=='process_context': return process_context(a['pid'])
     if method=='dictionary_read': return dictionary_read(a)
     if method=='dictionary_write': return dictionary_write(a)
+    if method=='agents_read': return agents_read(a)
+    if method=='agents_save': return agents_save(a)
     if method=='capabilities': return capabilities()
     if method=='ping': return {'machine':MACHINE,'user':getpass.getuser(),'hostname':socket.gethostname()}
     if method=='profile_load': return load_profile()
@@ -970,7 +1152,7 @@ def dispatch(method,a):
 INLINE_METHODS = frozenset({'ping','browser_prepare','browser_result'})
 READ_METHODS = frozenset({'inventory','capabilities','repositories','repository_worktrees','github_repos',
     'sessions','session_context','session_agent','profile_load','documents','file_read','image_read',
-    'document_read','terminal_status','process_context','tmux_settings_read','dictionary_read','upload_preflight'})
+    'document_read','terminal_status','process_context','tmux_settings_read','dictionary_read','upload_preflight','agents_read'})
 # Discovery calls get a short deadline; clones, uploads and launches get the long one.
 SHORT_DEADLINE_METHODS = frozenset({'inventory','capabilities','repositories','github_repos'})
 def lane_for(method):

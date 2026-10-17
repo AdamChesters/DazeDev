@@ -3,6 +3,7 @@
   import { ArrowUpRight } from '@lucide/svelte';
   import type { Device, Inventory } from '../../lib/types';
   import type { SessionForm, Task } from './types';
+  import { BUILT_IN_AGENTS, agentLabel, takesPrompt } from '../../lib/agents';
   let {
     busy,
     connections,
@@ -26,6 +27,11 @@
     launchFromCommand: boolean;
     task: Task;
   } = $props();
+  // Installed agents on the chosen host; built-ins while its inventory loads.
+  let agentChoices = $derived(
+    inventories[form.hostId]?.agents.filter((a) => a.path) ?? BUILT_IN_AGENTS,
+  );
+  let chosenAgent = $derived(inventories[form.hostId]?.agents.find((a) => a.id === form.agent));
 </script>
 
 <form
@@ -68,9 +74,8 @@
     </p>
     <label
       >Agent<select bind:value={form.agent}
-        ><option value="shell">Plain shell</option
-        >{#each ['codex', 'claude', 'gemini', 'opencode'] as agent}<option value={agent}
-            >{agent}</option
+        ><option value="shell">Plain shell</option>{#each agentChoices as agent}<option
+            value={agent.id}>{agentLabel(agent)}</option
           >{/each}</select
       ></label
     >
@@ -90,7 +95,7 @@
         disabled={busy}
       />
     {:else if form.repo}<p class="hint">Repository: {form.repo}</p>{/if}
-    {#if form.agent !== 'shell' && form.repo}<label class="check"
+    {#if form.agent !== 'shell' && form.repo && takesPrompt(chosenAgent)}<label class="check"
         ><input type="checkbox" bind:checked={form.brief} /> Read repository instructions and give a concise
         orientation</label
       >{/if}

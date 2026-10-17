@@ -18,7 +18,18 @@ object HostReplies {
                     val e = m.getJSONArray("efforts")
                     m.getString("id") to (0 until e.length()).map { e.getString(it) }
                 }
-            AgentCapability(agent.getString("id"), agent.optString("version"), efforts.keys.toList(), efforts, agent.getBoolean("modelFlag"), agent.getBoolean("effortFlag"))
+            val id = agent.getString("id")
+            AgentCapability(
+                id,
+                agent.optString("version"),
+                efforts.keys.toList(),
+                efforts,
+                agent.getBoolean("modelFlag"),
+                agent.getBoolean("effortFlag"),
+                name = agent.optString("name").ifBlank { id },
+                prompt = agent.optBoolean("prompt", true),
+                custom = agent.optBoolean("custom", false),
+            )
         }
     }
 }

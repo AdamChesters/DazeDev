@@ -1,3 +1,4 @@
+import { agentTerms } from './agents';
 import type { Host, Inventory } from './types';
 export type Action =
   | { kind: 'split'; axis: 'row' | 'column' }
@@ -66,15 +67,35 @@ export function parseCommand(
     /^(?:please\s+)?(?:new|create|start|open)\b/.test(l) &&
     /\b(group|workspace|tab|terminals?|windows?|agents?|sessions?|panes?)\b/.test(l)
   ) {
+    const host = hosts.filter((h) => l.includes(h.name.toLowerCase()));
+    if (host.length > 1)
+      throw new Error('More than one host matched. Choose a host in the launch form.');
+    const targetHost = host[0]?.id || hostId;
+    const targetInventory =
+      inventories?.[targetHost] || (targetHost === hostId ? inventory : undefined);
+    // Built-in agents plus whatever the target host reports, by ID or display name.
+    const escape = (x: string) => x.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+    const terms = agentTerms(targetInventory);
+    const termPattern = terms.map((t) => escape(t.term)).join('|');
     const cm = l.match(
-      /\b(\d+|one|two|three|four|five|six|seven|eight|nine|ten|eleven|twelve)\s+(?:new\s+)?(?:tmux\s+)?(?:terminal|window|agent|session|codex|claude|gemini|opencode)/,
+      new RegExp(
+        '\\b(\\d+|one|two|three|four|five|six|seven|eight|nine|ten|eleven|twelve)\\s+(?:new\\s+)?(?:tmux\\s+)?(?:terminal|window|agent|session|' +
+          termPattern +
+          ')',
+      ),
     );
     const count = cm ? numbers[cm[1]] || Number(cm[1]) : 1;
     if (!Number.isSafeInteger(count) || count < 1)
       throw new Error('Choose a positive whole number of terminals.');
-    const agents = ['codex', 'claude', 'gemini', 'opencode'].filter((x) =>
-      new RegExp('\\b' + x + '\\b').test(l),
-    );
+    let unmatched = l;
+    const matchedTerms: string[] = [];
+    for (const t of terms) {
+      const pattern = new RegExp('(?<![\\w-])' + escape(t.term) + '(?![\\w-])', 'g');
+      if (!pattern.test(unmatched)) continue;
+      matchedTerms.push(t.term);
+      unmatched = unmatched.replace(pattern, ' ');
+    }
+    const agents = [...new Set(matchedTerms.map((term) => terms.find((t) => t.term === term)!.id))];
     if (agents.length > 1) throw new Error('Choose one agent for this command.');
     const agent = agents[0] || 'shell';
     const chooseRepo = /\b(?:show|open) (?:the )?(?:repo|repository) picker\b/.test(l);
@@ -83,12 +104,6 @@ export function parseCommand(
       !/\s+and\s+(?:show|open) (?:the )?(?:repo|repository) picker$/.test(l)
     )
       throw new Error('Run one command at a time, or add “and show repo picker”.');
-    const host = hosts.filter((h) => l.includes(h.name.toLowerCase()));
-    if (host.length > 1)
-      throw new Error('More than one host matched. Choose a host in the launch form.');
-    const targetHost = host[0]?.id || hostId;
-    const targetInventory =
-      inventories?.[targetHost] || (targetHost === hostId ? inventory : undefined);
     const repos = (targetInventory?.repos || []).filter((r) =>
       new RegExp('\\b' + r.name.replace(/[.*+?^${}()|[\]\\]/g, '\\$&') + '\\b', 'i').test(s),
     );
@@ -110,7 +125,7 @@ export function parseCommand(
     );
     const name = named?.[1] || named?.[2] || named?.[3] || 'New workspace';
     // Never silently discard an unknown count, destination or secondary action.
-    let remaining = l
+    let remaining = unmatched
       .replace(/(?:called|named)\s+(?:"[^"]+"|'[^']+'|.+?)(?=\s+(?:using|with|on|under)\b|$)/g, ' ')
       .replace(/\bmodel\s+[\w./:-]+/g, ' ');
     const entities = [
@@ -130,7 +145,7 @@ export function parseCommand(
       );
     remaining = remaining
       .replace(
-        /\b(?:please|new|create|start|open|a|the|with|using|in|on|under|group|workspace|tab|terminals?|windows?|agents?|sessions?|panes?|tmux|codex|claude|gemini|opencode|and|show|repo|repository|picker|effort|minimal|low|medium|high|xhigh|one|two|three|four|five|six|seven|eight|nine|ten|eleven|twelve|\d+)\b/g,
+        /\b(?:please|new|create|start|open|a|the|with|using|in|on|under|group|workspace|tab|terminals?|windows?|agents?|sessions?|panes?|tmux|and|show|repo|repository|picker|effort|minimal|low|medium|high|xhigh|one|two|three|four|five|six|seven|eight|nine|ten|eleven|twelve|\d+)\b/g,
         ' ',
       )
       .trim();

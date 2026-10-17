@@ -11,6 +11,14 @@
     "browser-open"
   ],
   "methods": {
+    "agents_read": {
+      "lane": "read",
+      "deadline": 240
+    },
+    "agents_save": {
+      "lane": "mutation",
+      "deadline": 240
+    },
     "browser_prepare": {
       "lane": "inline",
       "deadline": 240

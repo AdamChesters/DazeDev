@@ -109,12 +109,12 @@ internal fun NewSessionDialog(
                     }
 
                     1 -> {
-                        (listOf("shell") + agents.map { it.id }).forEach { id ->
+                        (listOf("shell" to "shell") + agents.map { it.id to it.name }).forEach { (id, label) ->
                             FilterChip(selected = agent == id, onClick = {
                                 agent = id
                                 model = ""
                                 effort = ""
-                            }, label = { Text(id) })
+                            }, label = { Text(label) })
                         }
                         capability?.let { Text(it.version) }
                         if (capability?.modelFlag == true) {
@@ -135,18 +135,18 @@ internal fun NewSessionDialog(
                             capability.efforts[model].orEmpty().forEach { value -> TextButton(onClick = { effort = value }) { Text(value) } }
                         }
                         OutlinedTextField(identity, { identity = it }, label = { Text("Host GitHub account (optional)") }, supportingText = { Text("Use an account already signed in on this host. Credentials stay on the host.") }, singleLine = true, modifier = Modifier.fillMaxWidth())
-                        if (agent != "shell") OutlinedTextField(brief, { brief = it }, label = { Text("Starting brief (optional)") }, minLines = 3, modifier = Modifier.fillMaxWidth())
+                        if (agent != "shell" && capability?.prompt != false) OutlinedTextField(brief, { brief = it }, label = { Text("Starting brief (optional)") }, minLines = 3, modifier = Modifier.fillMaxWidth())
                     }
 
                     else -> {
-                        Text("$count terminals · ${workspaceName.ifBlank {name}}\n$name\n${path.ifBlank {"Home directory"}}\n$agent ${model.ifBlank {"default model"}} ${effort.ifBlank {"default effort"}}\n${identity.ifBlank {"Default host identity"}}")
-                        if (brief.isNotBlank()) Text(brief)
+                        Text("$count terminals · ${workspaceName.ifBlank {name}}\n$name\n${path.ifBlank {"Home directory"}}\n${capability?.name ?: agent} ${model.ifBlank {"default model"}} ${effort.ifBlank {"default effort"}}\n${identity.ifBlank {"Default host identity"}}")
+                        if (brief.isNotBlank() && capability?.prompt != false) Text(brief)
                         Text("Start opens this command on the selected host. No agent installation is performed.")
                     }
                 }
                 Row(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
                     TextButton(onClick = { if (step > 0) step-- else onDismiss() }) { Text(if (step > 0) "Back" else "Cancel") }
-                    Button(onClick = { if (step < 2) step++ else onCreate(SessionLaunch(name, path, agent, model, effort, identity, brief, workspaceId = workspace, workspaceName = workspaceName.ifBlank { name }, count = count.toIntOrNull() ?: 1)) }, enabled = !isCreating && name.matches(Regex("[\\w-]+")) && (path.isBlank() || path.startsWith('/')) && (count.toIntOrNull() ?: 0) in 1..8) { Text(if (step < 2) "Next" else "Start") }
+                    Button(onClick = { if (step < 2) step++ else onCreate(SessionLaunch(name, path, agent, model, effort, identity, if (capability?.prompt == false) "" else brief, workspaceId = workspace, workspaceName = workspaceName.ifBlank { name }, count = count.toIntOrNull() ?: 1)) }, enabled = !isCreating && name.matches(Regex("[\\w-]+")) && (path.isBlank() || path.startsWith('/')) && (count.toIntOrNull() ?: 0) in 1..8) { Text(if (step < 2) "Next" else "Start") }
                 }
             }
         }

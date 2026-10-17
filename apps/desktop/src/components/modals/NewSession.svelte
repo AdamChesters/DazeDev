@@ -3,6 +3,7 @@
   import type { Device, Inventory } from '../../lib/types';
   import type { SessionForm, Task } from './types';
   import { sessionNameError } from '../../lib/session-name';
+  import { agentLabel, startable, takesPrompt } from '../../lib/agents';
   let {
     busy,
     createSession,
@@ -73,11 +74,21 @@
           form.effort = '';
         }}
         ><option value="shell">None · plain shell</option>{#each inv?.agents || [] as a}<option
-            value={a.id}>{a.id}{a.path ? '' : ' · install and start'}</option
+            value={a.id}
+            disabled={!startable(a, true)}
+            >{agentLabel(a)}{a.custom ? ' · custom' : ''}{a.path
+              ? ''
+              : startable(a, true)
+                ? ' · install and start'
+                : ' · not installed'}</option
           >{/each}</select
       ></label
     >
-    {#if form.agent !== 'shell'}
+    {#if selectedAgent?.custom}<p class="hint">
+        Runs the saved launch command for {agentLabel(selectedAgent)}. Put model options in that
+        command.
+      </p>
+    {:else if form.agent !== 'shell'}
       <label
         >Model<input
           bind:value={form.model}
@@ -114,7 +125,7 @@
         >{#each inv?.identities || [] as i}<option value={i.login}>{i.login}</option>{/each}</select
       ></label
     >
-    {#if form.repo && form.agent !== 'shell'}<label class="check"
+    {#if form.repo && form.agent !== 'shell' && takesPrompt(selectedAgent)}<label class="check"
         ><input type="checkbox" bind:checked={form.brief} /> Read repo instructions and give a concise
         orientation</label
       >{/if}
@@ -138,7 +149,9 @@
         : sessionStep < 2
           ? 'Next'
           : form.agent !== 'shell' && !selectedAgent?.path
-            ? 'Trust upstream installer and start session'
+            ? selectedAgent?.custom
+              ? 'Run saved install command and start session'
+              : 'Trust upstream installer and start session'
             : 'Create session & join'}</button
     >
   </div>

@@ -10,6 +10,12 @@ data class AgentCapability(
     val efforts: Map<String, List<String>>,
     val modelFlag: Boolean,
     val effortFlag: Boolean,
+    /** Display name; hosts before 0.3.9 send only the ID. */
+    val name: String = id,
+    /** False when a new session cannot carry a starting brief. */
+    val prompt: Boolean = true,
+    /** Added by the user on the host. */
+    val custom: Boolean = false,
 )
 
 data class SessionLaunch(

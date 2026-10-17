@@ -40,6 +40,14 @@ export interface Agent {
   modelFlag: boolean;
   effortFlag: boolean;
   install: string;
+  /** Display name; hosts before 0.3.9 send only the ID. */
+  name?: string;
+  /** False when the agent has no install the host can run. */
+  installable?: boolean;
+  /** False when a new session cannot carry a starting prompt. */
+  prompt?: boolean;
+  /** Added by the user on this host. */
+  custom?: boolean;
 }
 export interface Inventory {
   warnings?: string[];
