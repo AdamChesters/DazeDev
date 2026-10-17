@@ -5,8 +5,8 @@
     "linux": {
       "deb": {
         "section": "devel",
-        "depends": ["libgomp1", "libssl3 | libssl3t64", "python3", "tmux"],
-        "recommends": ["gstreamer1.0-plugins-good", "gstreamer1.0-pulseaudio"]
+        "depends": ["libgomp1", "libssl3 | libssl3t64"],
+        "recommends": ["python3", "tmux", "gstreamer1.0-plugins-good", "gstreamer1.0-pulseaudio"]
       },
       "appimage": {
         "bundleMediaFramework": true
