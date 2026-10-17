@@ -94,6 +94,7 @@ fun DazeDevMobileApp(viewModel: MainViewModel) {
         viewModel.consumeMessage(message.id)
     }
 
+    val hostActivity = uiState.terminalHostActivity()
     val terminalState =
         remember(
             uiState.selectedTargetHost,
@@ -111,6 +112,8 @@ fun DazeDevMobileApp(viewModel: MainViewModel) {
             uiState.folders,
             uiState.selectedFolder,
             uiState.localGroupId,
+            hostActivity,
+            uiState.extraKeys,
         ) { uiState.terminalScreenState(terminalLink) }
     Scaffold(
         snackbarHost = { SnackbarHost(snackbarHostState) },

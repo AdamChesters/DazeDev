@@ -32,6 +32,11 @@ interface HostLink {
         timeoutMs: Long = 60_000,
     ): Any
 
+    /** Asks the helper to answer at once; throws when it does not answer within [timeoutMs]. */
+    suspend fun probe(timeoutMs: Long) {
+        request("ping", JSONObject(), timeoutMs)
+    }
+
     fun close()
 }
 

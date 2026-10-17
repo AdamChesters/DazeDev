@@ -85,6 +85,7 @@ fun InteractiveTerminal(
     onMessage: (String) -> Unit,
     onRendererGone: () -> Unit,
     modifier: Modifier = Modifier,
+    extraKeys: Boolean = true,
 ) {
     val context = LocalContext.current
     val fontScale = LocalConfiguration.current.fontScale
@@ -263,6 +264,11 @@ fun InteractiveTerminal(
     LaunchedEffect(web, viewport, keyboard) {
         withTimeoutOrNull(15_000) { reply.filterNotNull().first() } ?: return@LaunchedEffect
         if (viewport.width > 0 && viewport.height > 0) controller.call("viewport", "${viewport.width},${viewport.height},$keyboard")
+    }
+    // The extra-keys row shows only while the on-screen keyboard is open, unless turned off in settings.
+    LaunchedEffect(web, extraKeys) {
+        withTimeoutOrNull(15_000) { reply.filterNotNull().first() } ?: return@LaunchedEffect
+        controller.call("extraKeys", extraKeys.toString())
     }
     DisposableEffect(web) {
         onDispose {

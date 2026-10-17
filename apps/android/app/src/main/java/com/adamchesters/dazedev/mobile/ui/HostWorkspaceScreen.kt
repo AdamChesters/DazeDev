@@ -103,7 +103,7 @@ fun HostWorkspaceScreen(
                             Text(host.profile.name.ifBlank { host.profile.host }, style = MaterialTheme.typography.titleMedium, maxLines = 1, overflow = TextOverflow.Ellipsis)
                             Text(host.profile.host, style = MaterialTheme.typography.bodySmall, maxLines = 1, overflow = TextOverflow.Ellipsis, color = MaterialTheme.colorScheme.onSurfaceVariant)
                         }
-                        Text(host.phase.name, style = MaterialTheme.typography.labelMedium)
+                        Text(host.status, style = MaterialTheme.typography.labelMedium)
                     }
                 }
                 item {
@@ -124,6 +124,7 @@ fun HostWorkspaceScreen(
                 TextButton(onClick = viewModel::refreshSessions, enabled = !state.isRefreshing) { Text(if (state.isRefreshing) "Refreshing…" else "Refresh") }
                 TextButton(onClick = viewModel::disconnect) { Text("Disconnect") }
             }
+            if (state.hostChecking) Text("Checking the connection…", modifier = Modifier.padding(horizontal = 16.dp), style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
             if (state.conflict) {
                 Text("Workspace changed on another device. Your unsaved draft is kept on this phone.", modifier = Modifier.padding(horizontal = 16.dp), color = MaterialTheme.colorScheme.error)
                 TextButton(onClick = viewModel::reloadProfile) { Text("Reload host profile; keep draft") }
@@ -172,8 +173,9 @@ fun HostWorkspaceScreen(
             TextButton(onClick = { history = true }) { Text("Changelog") }
             TextButton(onClick = viewModel::openHostKeys) { Text("Host keys") }
             TextButton(onClick = { viewModel.setSecureScreen(!state.secureScreen) }, modifier = Modifier.semantics { contentDescription = if (state.secureScreen) "Private screen is on. Screenshots and the Recents preview are blocked." else "Private screen is off." }) { Text(if (state.secureScreen) "Private screen: on" else "Private screen: off") }
-            KeepConnectedToggle(state.keepConnected, viewModel::setKeepConnected, viewModel::notificationsDenied)
+            BackgroundWindowSetting(state.backgroundWindow, viewModel::setBackgroundWindow, viewModel::notificationsDenied)
             TerminalSizeSetting(state.keepOtherSize, viewModel::setKeepOtherSize)
+            TextButton(onClick = { viewModel.setExtraKeys(!state.extraKeys) }, modifier = Modifier.semantics { contentDescription = if (state.extraKeys) "Extra keys above the keyboard are on." else "Extra keys above the keyboard are off." }) { Text(if (state.extraKeys) "Keys above keyboard: on" else "Keys above keyboard: off") }
             TextButton(onClick = {
                 val assets = context.assets
                 val paths = listOf("moonshine-license.txt", "xterm-license.txt", "addon-fit-license.txt", "addon-unicode11-license.txt", "addon-web-links-license.txt") + assets.list("licenses").orEmpty().map { "licenses/$it" }

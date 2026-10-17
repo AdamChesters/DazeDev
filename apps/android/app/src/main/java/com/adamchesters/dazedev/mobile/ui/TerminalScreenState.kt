@@ -15,6 +15,8 @@ data class TerminalScreenState(
     val staleSession: Boolean,
     val isSending: Boolean,
     val tabs: List<com.adamchesters.dazedev.mobile.host.TerminalRow>,
+    val hostActivity: TerminalHostActivity = TerminalHostActivity.None,
+    val extraKeys: Boolean = true,
 )
 
 fun DazeDevMobileUiState.terminalScreenState(terminal: com.adamchesters.dazedev.mobile.ssh.TerminalLink?) =
@@ -31,4 +33,6 @@ fun DazeDevMobileUiState.terminalScreenState(terminal: com.adamchesters.dazedev.
         staleSession != null,
         isSending,
         terminalTabs(),
+        terminalHostActivity(),
+        extraKeys,
     )

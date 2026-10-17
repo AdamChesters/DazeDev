@@ -2,6 +2,7 @@ package com.adamchesters.dazedev.mobile.ui
 
 import com.adamchesters.dazedev.mobile.host.FakeHostLink
 import com.adamchesters.dazedev.mobile.host.FakeLinkFactory
+import com.adamchesters.dazedev.mobile.host.HostEvent
 import com.adamchesters.dazedev.mobile.host.HostRegistry
 import com.adamchesters.dazedev.mobile.host.fakeRegistry
 import com.adamchesters.dazedev.mobile.host.tailscaleProfile
@@ -18,6 +19,7 @@ import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.cancel
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.emptyFlow
+import kotlinx.coroutines.launch
 import kotlinx.coroutines.test.StandardTestDispatcher
 import kotlinx.coroutines.test.TestScope
 import kotlinx.coroutines.test.advanceTimeBy
@@ -215,6 +217,101 @@ class TerminalControllerTest {
             advanceUntilIdle()
             assertEquals(2, s.opener.requests.size)
             assertSame(s.opener.opened[1], s.terminal.link.value)
+            s.scope.cancel()
+        }
+
+    /** Forwards host events the way MainViewModel does. */
+    private fun Setup.forwardEvents() =
+        scope.launch {
+            registry.events.collect { event ->
+                when (event) {
+                    is HostEvent.Checked -> terminal.reattach(event.hostId)
+                    is HostEvent.Reconnected -> terminal.reattach(event.hostId)
+                    is HostEvent.LinkLost -> terminal.linkLost(event.hostId, event.error)
+                    else -> Unit
+                }
+            }
+        }
+
+    private fun Setup.setForeground(value: Boolean) {
+        registry.setForeground(value)
+        terminal.setForeground(value)
+    }
+
+    @Test fun returningWhileTheHostIsCheckedWaitsForItsAnswerThenReattaches() =
+        runTest {
+            val s = Setup(this)
+            s.forwardEvents()
+            advanceUntilIdle()
+            s.terminal.openSession(s.host, "$1", "s1", "main")
+            s.measure(80, 24)
+            advanceUntilIdle()
+            s.setForeground(false)
+            advanceTimeBy(121_000)
+            runCurrent()
+            assertNull(s.terminal.link.value)
+            s.setForeground(true)
+            assertTrue(s.host.checking)
+            assertEquals(1, s.opener.requests.size)
+            advanceUntilIdle()
+            assertEquals(2, s.opener.requests.size)
+            assertSame(s.opener.opened[1], s.terminal.link.value)
+            s.scope.cancel()
+        }
+
+    @Test fun aFailedCheckClosesTheTerminalWithAReasonAndReattachesAfterReconnecting() =
+        runTest {
+            val s = Setup(this)
+            s.forwardEvents()
+            advanceUntilIdle()
+            s.terminal.openSession(s.host, "$1", "s1", "main")
+            s.measure(80, 24)
+            advanceUntilIdle()
+            val first = s.opener.opened.single()
+            s.setForeground(false)
+            s.link.stalled.add("ping")
+            advanceTimeBy(30_000)
+            s.setForeground(true)
+            // Inside the grace period the stream still looks live until the check fails.
+            assertSame(first, s.terminal.link.value)
+            advanceTimeBy(7_000)
+            runCurrent()
+            assertTrue(first.closed)
+            advanceUntilIdle()
+            assertEquals(
+                2,
+                s.factory.ssh
+                    .single()
+                    .connects,
+            )
+            assertEquals(2, s.opener.requests.size)
+            assertSame(s.opener.opened[1], s.terminal.link.value)
+            assertNull(s.ui.value.terminalError)
+            s.scope.cancel()
+        }
+
+    @Test fun reconnectingAHostThatNeedsATypedSecretOpensItsConnectionForm() =
+        runTest {
+            val s = Setup(this)
+            advanceUntilIdle()
+            val password =
+                com.adamchesters.dazedev.mobile.host
+                    .passwordProfile()
+            s.registry.connect(password, "secret".toCharArray())
+            advanceUntilIdle()
+            val h = s.registry.entry("pw")!!
+            var connected: com.adamchesters.dazedev.mobile.data.ConnectionProfile? = null
+            s.terminal.connect = { connected = it }
+            s.terminal.openSession(h, "$1", "s1", "main")
+            s.measure(80, 24)
+            advanceUntilIdle()
+            s.registry.disconnect("pw")
+            s.terminal.linkLost("pw", "Lost connection to Password host. gone")
+            s.terminal.reconnectTerminal()
+            assertNull(connected)
+            assertEquals("pw", s.ui.value.profile.id)
+            assertFalse(s.ui.value.screen is Screen.Terminal)
+            assertEquals("pw" to Triple("$1", "s1", "main"), s.terminal.resumeAfterConnect)
             s.scope.cancel()
         }
 

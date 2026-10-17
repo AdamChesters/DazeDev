@@ -115,6 +115,16 @@ fun TerminalScreen(
             ?.value == true
     val context = LocalContext.current
     val lifecycleOwner = LocalLifecycleOwner.current
+    // A check that answers at once does not flash over the terminal.
+    var showChecking by remember { mutableStateOf(false) }
+    LaunchedEffect(uiState.hostActivity) {
+        showChecking = false
+        if (uiState.hostActivity == TerminalHostActivity.Checking) {
+            delay(400)
+            showChecking = true
+        }
+    }
+    val activity = if (uiState.hostActivity == TerminalHostActivity.Checking && !showChecking) TerminalHostActivity.None else uiState.hostActivity
     val draftKey = "${uiState.selectedTargetHost}:${uiState.selectedSessionId}:${uiState.selectedStamp}"
     val drafts = remember { context.getSharedPreferences("terminal_drafts", android.content.Context.MODE_PRIVATE) }
     var input by rememberSaveable(draftKey) { mutableStateOf(drafts.getString(draftKey, "").orEmpty()) }
@@ -357,7 +367,13 @@ fun TerminalScreen(
                         shape = RoundedCornerShape(99.dp),
                         modifier =
                             Modifier.semantics {
-                                contentDescription = if (connected) "Terminal connected" else "Terminal disconnected"
+                                contentDescription =
+                                    when {
+                                        activity == TerminalHostActivity.Checking -> "Checking the connection"
+                                        activity != TerminalHostActivity.None -> "Reconnecting"
+                                        connected -> "Terminal connected"
+                                        else -> "Terminal disconnected"
+                                    }
                             },
                     ) {
                         Row(
@@ -371,7 +387,13 @@ fun TerminalScreen(
                                 shape = CircleShape,
                             ) {}
                             Text(
-                                text = if (connected) "Live" else "Disconnected",
+                                text =
+                                    when {
+                                        activity == TerminalHostActivity.Checking -> "Checking"
+                                        activity != TerminalHostActivity.None -> "Reconnecting"
+                                        connected -> "Live"
+                                        else -> "Disconnected"
+                                    },
                                 style = MaterialTheme.typography.labelLarge,
                                 color = MaterialTheme.colorScheme.onPrimaryContainer,
                             )
@@ -415,10 +437,34 @@ fun TerminalScreen(
                     InteractiveTerminal(stream, terminalController, { cols, rows -> onMeasured(uiState.terminalEpoch, cols, rows) }, { scrolledBack = it }, onMessage, {
                         onMessage("The terminal view stopped. Reconnecting.")
                         onReconnect()
-                    }, Modifier.fillMaxSize())
+                    }, Modifier.fillMaxSize(), uiState.extraKeys)
                 }
-                val problem = uiState.terminalError ?: if (stream != null && !connected) "Terminal disconnected." else null
-                if (problem != null) {
+                val problem = uiState.terminalError ?: if (stream != null && !connected) "Terminal disconnected. Input typed now is not sent." else null
+                if (activity != TerminalHostActivity.None) {
+                    Surface(Modifier.fillMaxSize(), color = TerminalBackground.copy(alpha = 0.92f)) {
+                        Column(Modifier.fillMaxSize().padding(24.dp), verticalArrangement = Arrangement.Center, horizontalAlignment = Alignment.CenterHorizontally) {
+                            CircularProgressIndicator(Modifier.size(28.dp), strokeWidth = 3.dp)
+                            Spacer(Modifier.size(12.dp))
+                            Text(
+                                when (activity) {
+                                    TerminalHostActivity.Checking -> "Checking the connection to ${uiState.selectedTargetLabel}…"
+                                    TerminalHostActivity.Waiting -> "Connection lost. Reconnecting to ${uiState.selectedTargetLabel} shortly…"
+                                    else -> "Reconnecting to ${uiState.selectedTargetLabel}…"
+                                },
+                                color = TerminalForeground,
+                                style = MaterialTheme.typography.bodyLarge,
+                            )
+                            uiState.terminalError?.takeIf { activity != TerminalHostActivity.Checking }?.let {
+                                Spacer(Modifier.size(8.dp))
+                                Text(it, color = TerminalMuted, style = MaterialTheme.typography.bodyMedium)
+                            }
+                            if (activity == TerminalHostActivity.Waiting) {
+                                Spacer(Modifier.size(12.dp))
+                                Button(onClick = onReconnect) { Text("Reconnect now") }
+                            }
+                        }
+                    }
+                } else if (problem != null) {
                     Surface(Modifier.fillMaxSize(), color = TerminalBackground.copy(alpha = 0.92f)) {
                         Column(Modifier.fillMaxSize().padding(24.dp), verticalArrangement = Arrangement.Center, horizontalAlignment = Alignment.CenterHorizontally) {
                             Text(problem, color = TerminalForeground, style = MaterialTheme.typography.bodyLarge)

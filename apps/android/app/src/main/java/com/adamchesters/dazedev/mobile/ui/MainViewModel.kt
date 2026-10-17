@@ -9,6 +9,7 @@ import com.adamchesters.dazedev.mobile.BuildConfig
 import com.adamchesters.dazedev.mobile.DazeDevApplication
 import com.adamchesters.dazedev.mobile.data.ConnectionProfile
 import com.adamchesters.dazedev.mobile.data.ProfileStore
+import com.adamchesters.dazedev.mobile.host.BackgroundWindow
 import com.adamchesters.dazedev.mobile.host.BrowserAnswer
 import com.adamchesters.dazedev.mobile.host.ConnectionPhase
 import com.adamchesters.dazedev.mobile.host.HostEvent
@@ -32,7 +33,7 @@ class MainViewModel(
     private val registry = (application as DazeDevApplication).hosts
     private val credentials = (application as DazeDevApplication).credentials
     private val store = ProfileStore(application)
-    private val ui = UiStore(DazeDevMobileUiState(profile = store.load(), secureScreen = store.secureScreen, keepConnected = store.keepConnected, keepOtherSize = store.keepOtherSize))
+    private val ui = UiStore(DazeDevMobileUiState(profile = store.load(), secureScreen = store.secureScreen, backgroundWindow = registry.backgroundWindow.value, keepOtherSize = store.keepOtherSize, extraKeys = store.extraKeys))
     val uiState: StateFlow<DazeDevMobileUiState> = ui.state.asStateFlow()
     private val terminal = TerminalController(ui, registry, viewModelScope)
 
@@ -79,6 +80,7 @@ class MainViewModel(
             is HostEvent.Message -> ui.message(event.text)
             is HostEvent.LinkLost -> terminal.linkLost(event.hostId, event.error)
             is HostEvent.Reconnected -> terminal.reattach(event.hostId)
+            is HostEvent.Checked -> terminal.reattach(event.hostId)
             is HostEvent.Disconnected -> terminal.linkLost(event.hostId, "This host was disconnected. Connect again to continue.")
             is HostEvent.KeyChanged -> ui.update { it.copy(hostKeyChange = event.change) }
         }
@@ -301,8 +303,12 @@ class MainViewModel(
         trust: Boolean,
     ) = hostKeys.answer(hostId, id, trust)
 
-    /** Keeps the terminal through rotation and short app switches; detaches after a grace period. */
+    /**
+     * Keeps the terminal through rotation and short app switches; detaches after a grace period.
+     * The registry goes first, so hosts it checks on return already show Checking to the terminal.
+     */
     fun setForeground(value: Boolean) {
+        registry.setForeground(value)
         registry.prompts.foreground = value
         terminal.setForeground(value)
     }
@@ -319,11 +325,17 @@ class MainViewModel(
         ui.update { it.copy(secureScreen = value) }
     }
 
-    /** Keeps host connections open in the background with a foreground service while hosts are connected. */
-    fun setKeepConnected(value: Boolean) {
-        store.keepConnected = value
-        registry.keepConnected.value = value
-        ui.update { it.copy(keepConnected = value) }
+    /** How long a foreground service keeps host connections open after the app leaves the screen. */
+    fun setBackgroundWindow(value: BackgroundWindow) {
+        store.backgroundWindow = value
+        registry.backgroundWindow.value = value
+        ui.update { it.copy(backgroundWindow = value) }
+    }
+
+    /** Shows or hides the extra-keys row above the on-screen keyboard. */
+    fun setExtraKeys(value: Boolean) {
+        store.extraKeys = value
+        ui.update { it.copy(extraKeys = value) }
     }
 
     /** Applies to terminals opened from now on. */
@@ -333,7 +345,7 @@ class MainViewModel(
     }
 
     fun notificationsDenied() {
-        ui.message("Notifications are off, so the keep-connected notice is hidden. Hosts still stay connected in the background.")
+        ui.message("Notifications are off, so the background connection notice and its timer are hidden. Hosts still stay connected in the background.")
     }
 
     fun closeHostKeys() = hostKeys.closeHostKeys()

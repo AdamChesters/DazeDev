@@ -33,6 +33,16 @@ class HostEntry(
     var watchers: Job? = null
     var reconnect: Job? = null
 
+    /** An automatic reconnect is waiting or running. */
+    var reconnecting = false
+
+    /** A liveness check after the app returned to the screen. The phase stays Connected meanwhile. */
+    var check: Job? = null
+    var checking = false
+
+    /** The link ended while the app was in the background; reconnect when it returns (unattended hosts only). */
+    var resumeOnReturn = false
+
     /** The last connection needed no typed secret, so it can reconnect unattended. */
     var unattended = false
 
@@ -55,6 +65,8 @@ class HostEntry(
             creating = creating,
             ending = ending,
             linkError = linkError,
+            checking = checking,
+            reconnecting = reconnecting,
             recoveryDraft = recoveryDraft,
         )
 }

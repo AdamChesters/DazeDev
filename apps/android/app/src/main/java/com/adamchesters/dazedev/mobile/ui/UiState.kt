@@ -3,6 +3,7 @@ package com.adamchesters.dazedev.mobile.ui
 import com.adamchesters.dazedev.mobile.data.ConnectionProfile
 import com.adamchesters.dazedev.mobile.host.AgentCapability
 import com.adamchesters.dazedev.mobile.host.AuthNotice
+import com.adamchesters.dazedev.mobile.host.BackgroundWindow
 import com.adamchesters.dazedev.mobile.host.BrowserRequest
 import com.adamchesters.dazedev.mobile.host.ConnectionPhase
 import com.adamchesters.dazedev.mobile.host.HostKeyChange
@@ -55,7 +56,18 @@ data class HostSummary(
     val workspaceCount: Int,
     val fingerprint: String = "",
     val folders: List<WorkspaceFolder> = emptyList(),
-)
+    /** Being checked after the app returned to the screen; the phase still says Connected. */
+    val checking: Boolean = false,
+    val reconnecting: Boolean = false,
+) {
+    /** What the host list shows for this host. */
+    val status get() =
+        when {
+            checking -> "Checking"
+            reconnecting && phase != ConnectionPhase.Connected -> "Reconnecting"
+            else -> phase.name
+        }
+}
 
 data class DazeDevMobileUiState(
     val localGroups: List<WorkspaceFolder> = emptyList(),
@@ -108,11 +120,27 @@ data class DazeDevMobileUiState(
     val browserRequest: BrowserRequest? = null,
     val authNotice: AuthNotice? = null,
     val secureScreen: Boolean = false,
-    val keepConnected: Boolean = false,
+    val backgroundWindow: BackgroundWindow = BackgroundWindow.Default,
     val keepOtherSize: Boolean = false,
+    val extraKeys: Boolean = true,
+    /** The selected host is being checked after the app returned to the screen. */
+    val hostChecking: Boolean = false,
 )
 
-fun DazeDevMobileUiState.withHosts(hosts: List<HostSnapshot>) = copy(hosts = hosts.map { HostSummary(it.profile, it.phase, it.folders.size, it.fingerprint, it.folders) })
+fun DazeDevMobileUiState.withHosts(hosts: List<HostSnapshot>) = copy(hosts = hosts.map { HostSummary(it.profile, it.phase, it.folders.size, it.fingerprint, it.folders, it.checking, it.reconnecting) })
+
+/** What the open terminal's host is doing: checked after a return to the screen, connecting, or waiting to retry. */
+enum class TerminalHostActivity { None, Checking, Connecting, Waiting }
+
+fun DazeDevMobileUiState.terminalHostActivity(): TerminalHostActivity {
+    val host = hosts.firstOrNull { it.profile.id == selectedTargetHost } ?: return TerminalHostActivity.None
+    return when {
+        host.checking -> TerminalHostActivity.Checking
+        host.phase == ConnectionPhase.Connecting -> TerminalHostActivity.Connecting
+        host.reconnecting && host.phase == ConnectionPhase.Disconnected -> TerminalHostActivity.Waiting
+        else -> TerminalHostActivity.None
+    }
+}
 
 /** Shows [host]'s details when it is the selected host. */
 fun DazeDevMobileUiState.withHost(host: HostSnapshot?): DazeDevMobileUiState {
@@ -131,6 +159,7 @@ fun DazeDevMobileUiState.withHost(host: HostSnapshot?): DazeDevMobileUiState {
         endingSessionName = host.ending,
         sessionsLoading = host.phase == ConnectionPhase.Connected && !host.sessionsLoaded,
         linkError = if (host.phase == ConnectionPhase.Connected) null else host.linkError,
+        hostChecking = host.checking,
     )
 }
 

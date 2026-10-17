@@ -8,6 +8,7 @@ import com.adamchesters.dazedev.mobile.ssh.HostKeyPromptCoordinator
 import com.adamchesters.dazedev.mobile.ssh.SshLink
 import com.jcraft.jsch.ChannelExec
 import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.awaitCancellation
 import kotlinx.coroutines.flow.MutableSharedFlow
 import kotlinx.coroutines.flow.SharedFlow
 import org.json.JSONArray
@@ -55,10 +56,14 @@ class FakeSsh : SshLink {
     }
 }
 
-/** Answers helper requests from [replies]; a reply may be a value or a function of the arguments. */
+/**
+ * Answers helper requests from [replies]; a reply may be a value or a function of the arguments.
+ * Methods in [stalled] never answer, like a helper behind a dead connection.
+ */
 class FakeHostLink : HostLink {
     val replies = mutableMapOf<String, (JSONObject) -> Any>()
     val requests = mutableListOf<String>()
+    val stalled = mutableSetOf<String>()
     val lost = MutableSharedFlow<HostLinkEvent>(extraBufferCapacity = 8)
     var starts = 0
     override var isOpen = false
@@ -71,6 +76,7 @@ class FakeHostLink : HostLink {
         replies["repositories"] = { JSONObject().put("repos", JSONArray()) }
         replies["session_context"] = { "1:2:3:4" }
         replies["browser_prepare"] = { error("No browser bridge") }
+        replies["ping"] = { JSONObject().put("machine", "machine") }
     }
 
     override suspend fun start(
@@ -91,6 +97,7 @@ class FakeHostLink : HostLink {
     ): Any {
         requests.add(method)
         check(isOpen) { "Reconnect this host first." }
+        if (method in stalled) awaitCancellation()
         val reply = replies[method] ?: error("Unknown method $method")
         return reply(args)
     }
@@ -171,6 +178,7 @@ fun fakeRegistry(
     factory: FakeLinkFactory = FakeLinkFactory(),
     store: FakeHostStore = FakeHostStore(),
     credentials: FakeCredentials = FakeCredentials(),
+    clock: () -> Long = { 0L },
 ) = HostRegistry(
     store = store,
     links = factory,
@@ -178,6 +186,7 @@ fun fakeRegistry(
     credentials = credentials,
     openBrowser = { null },
     scope = scope,
+    clock = clock,
 )
 
 fun tailscaleProfile(id: String = "host-1") = ConnectionProfile(host = "workstation.example", username = "dev", authMethod = com.adamchesters.dazedev.mobile.data.AuthMethod.TailscaleSsh, id = id, name = "Dev")
@@ -213,3 +222,6 @@ class FakeCredentials : Credentials {
         passphrases.remove(hostId)
     }
 }
+
+/** A host that needs its password typed on every connect, so it never reconnects by itself. */
+fun passwordProfile(id: String = "pw") = tailscaleProfile(id).copy(authMethod = com.adamchesters.dazedev.mobile.data.AuthMethod.Password, name = "Password host")
