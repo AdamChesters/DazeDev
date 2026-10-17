@@ -694,6 +694,66 @@ window.daze.clearSelection = () => {
   term.clearSelection();
   handles.forEach((handle) => (handle.hidden = true));
 };
+// Terminal-local find: rows joined where they soft-wrap, as the desktop search reads them.
+// Searching never types into the process; the app searches the returned text.
+function logicalLine(buffer, first, withPoints) {
+  let text = "";
+  const points = [];
+  let row = first;
+  for (;;) {
+    const line = buffer.getLine(row);
+    if (!line) break;
+    const next = buffer.getLine(row + 1);
+    const wrapped = !!next?.isWrapped;
+    // A wide character that did not fit leaves an empty last cell before the wrap.
+    const skipLast = (col) => wrapped && col === line.length - 1 && !line.getCell(col)?.getChars() && next?.getCell(0)?.getWidth() === 2;
+    if (!withPoints) {
+      let rowText = line.translateToString(!wrapped);
+      if (wrapped && rowText.endsWith(" ") && skipLast(line.length - 1)) rowText = rowText.slice(0, -1);
+      text += rowText;
+    } else {
+      const end = wrapped ? line.length : line.translateToString(true).length;
+      let translated = 0;
+      for (let col = 0; col < line.length; col++) {
+        const cell = line.getCell(col);
+        if (!cell || cell.getWidth() === 0 || skipLast(col)) continue;
+        const chars = cell.getChars() || " ";
+        if (!wrapped && translated >= end) break;
+        for (let i = 0; i < chars.length; i++) points.push({ row, col });
+        text += chars;
+        translated += chars.length;
+      }
+    }
+    if (!wrapped) break;
+    row++;
+  }
+  return { text, points, first, last: row };
+}
+window.daze.lines = () => {
+  const buffer = term.buffer.active;
+  const first = [],
+    text = [];
+  for (let row = 0; row < buffer.length; row++) {
+    const line = logicalLine(buffer, row, false);
+    first.push(line.first);
+    text.push(line.text);
+    row = line.last;
+  }
+  return JSON.stringify({ first, text });
+};
+window.daze.reveal = (first, expected, start, end) => {
+  const buffer = term.buffer.active;
+  const line = logicalLine(buffer, first, true);
+  if (line.text !== expected) return false;
+  const from = line.points[start],
+    last = line.points[end - 1];
+  if (!from || !last) return false;
+  const width = buffer.getLine(last.row)?.getCell(last.col)?.getWidth() || 1;
+  term.scrollToLine(Math.max(0, from.row - Math.floor(term.rows / 3)));
+  reportScrolled();
+  term.select(from.col, from.row, (last.row - from.row) * term.cols + last.col + width - from.col);
+  return true;
+};
 window.daze.bottom = () => {
   returnToLive();
   term.scrollToBottom();

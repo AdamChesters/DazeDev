@@ -162,6 +162,7 @@ fun TerminalScreen(
     }
     val uploadPicker = rememberLauncherForActivityResult(ActivityResultContracts.OpenMultipleDocuments()) { uris -> if (uris.isNotEmpty()) tools.uploadFiles(uris) }
     var more by remember { mutableStateOf(false) }
+    var showFind by remember { mutableStateOf(false) }
     var submitting by remember(draftKey) { mutableStateOf(false) }
     var startingVoice by remember(draftKey) { mutableStateOf(false) }
     var voiceStartRequest by remember(draftKey) { mutableStateOf(0L) }
@@ -415,6 +416,10 @@ fun TerminalScreen(
                     Box {
                         IconButton(onClick = { more = true }) { Icon(Icons.Rounded.MoreVert, contentDescription = "More terminal actions") }
                         DropdownMenu(expanded = more, onDismissRequest = { more = false }) {
+                            DropdownMenuItem(text = { Text("Find in terminal") }, onClick = {
+                                more = false
+                                showFind = true
+                            })
                             DropdownMenuItem(text = { Text("Upload file") }, onClick = {
                                 more = false
                                 uploadPicker.launch(arrayOf("*/*"))
@@ -439,6 +444,7 @@ fun TerminalScreen(
                 }
             }
         }
+        if (showFind) key(terminalController) { TerminalFindBar(terminalController) { showFind = false } }
         Surface(
             modifier =
                 Modifier

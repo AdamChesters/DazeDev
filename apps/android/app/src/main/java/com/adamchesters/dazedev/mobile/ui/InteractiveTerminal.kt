@@ -70,6 +70,30 @@ class TerminalPageController {
     fun clear() {
         call("clear")
     }
+
+    /** Evaluates [script] in the page and returns its string result, or null when the page did not answer. */
+    suspend fun evaluate(
+        script: String,
+        timeoutMs: Long = 5_000,
+    ): String? {
+        val page = web ?: return null
+        if (!ready) return null
+        val result = CompletableDeferred<String?>()
+        page.evaluateJavascript(script) { value -> result.complete(value) }
+        val raw = withTimeoutOrNull(timeoutMs) { result.await() } ?: return null
+        return runCatching { JSONTokener(raw).nextValue() }.getOrNull()?.toString()
+    }
+
+    /** The terminal buffer as logical lines (soft-wrapped rows joined), for terminal-local find. */
+    suspend fun lines(): TerminalLines? = evaluate("window.daze?.lines()")?.let { runCatching { TerminalLines.parse(it) }.getOrNull() }
+
+    /** Scrolls to and selects a find match; false when that line changed since the search. */
+    suspend fun reveal(
+        first: Int,
+        text: String,
+        start: Int,
+        end: Int,
+    ): Boolean = evaluate("window.daze?.reveal($first, ${JSONObject.quote(text)}, $start, $end)") == "true"
 }
 
 private fun inputRefused(stream: TerminalLink?) = if (stream?.connected == true) "Input is still being sent. Wait a moment, then try again." else "Input was not sent. Reconnect the terminal."
