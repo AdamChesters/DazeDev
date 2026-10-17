@@ -41,7 +41,7 @@ I got tired of typing The Lord of the Rings into agents [(seriously, I proved it
 ## Coming soon
 
 - **Mobile:** an app with on-device voice input.
-- **Linux Mint:** a packaged desktop release.
+- **Linux Mint:** test .deb and AppImage packages already build and install in clean Mint 21.3 and 22.3 containers. A check on a real Mint machine comes before the first download.
 
 Frontier voice is a later research topic. Provider access, subscription eligibility,
 privacy, latency and cost need to be established before a feature is proposed.
