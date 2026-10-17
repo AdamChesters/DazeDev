@@ -43,6 +43,15 @@ fun DazeDevMobileApp(viewModel: MainViewModel) {
     val coroutineScope = rememberCoroutineScope()
 
     val terminalLink by viewModel.terminalLink.collectAsStateWithLifecycle()
+    val upload by viewModel.uploads.state.collectAsStateWithLifecycle()
+    val terminalTools =
+        remember(viewModel) {
+            TerminalTools(
+                uploadFiles = { uris -> viewModel.shared(uris) },
+                clipboardFile = viewModel::clipboardFile,
+                page = { viewModel.page.value = it },
+            )
+        }
     BackHandler(enabled = uiState.screen != Screen.Hosts, onBack = viewModel::back)
 
     val privateKeyPicker =
@@ -173,6 +182,7 @@ fun DazeDevMobileApp(viewModel: MainViewModel) {
                     onValidateTarget = viewModel::validateInputTarget,
                     onReconnect = viewModel::reconnectTerminal,
                     onMeasured = viewModel::terminalMeasured,
+                    tools = terminalTools,
                     onMessage = { text ->
                         coroutineScope.launch {
                             snackbarHostState.currentSnackbarData?.dismiss()
@@ -207,6 +217,7 @@ fun DazeDevMobileApp(viewModel: MainViewModel) {
             dismissButton = { TextButton(onClick = viewModel::dismissGroupConnect) { Text("Keep disconnected") } },
         )
     }
+    if (upload.open) UploadSheet(upload, uiState.hosts, viewModel)
     uiState.mobileUpdate?.let { update -> UpdateDialog(update, uiState, viewModel) }
     if (uiState.windows.isNotEmpty()) TmuxWindowPicker(uiState.windows, viewModel::selectWindow, viewModel::dismissWindows)
     uiState.draftReview?.let { review -> DraftReview(review, viewModel::applyDraftReview, viewModel::dismissDraftReview) }

@@ -30,11 +30,14 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.rounded.ArrowBack
 import androidx.compose.material.icons.automirrored.rounded.Send
 import androidx.compose.material.icons.rounded.Mic
+import androidx.compose.material.icons.rounded.MoreVert
 import androidx.compose.material.icons.rounded.Refresh
 import androidx.compose.material.icons.rounded.Stop
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
 import androidx.compose.material3.CircularProgressIndicator
+import androidx.compose.material3.DropdownMenu
+import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.FilledIconButton
 import androidx.compose.material3.FilledTonalButton
@@ -107,6 +110,7 @@ fun TerminalScreen(
     onMessage: (String) -> Unit,
     onReconnect: () -> Unit = onRefresh,
     onMeasured: (Long, Int, Int) -> Unit = { _, _, _ -> },
+    tools: TerminalTools = TerminalTools(),
 ) {
     val connected =
         uiState.terminal
@@ -152,6 +156,12 @@ fun TerminalScreen(
     var frozenTarget by rememberSaveable(draftKey) { mutableStateOf(drafts.getString("target:$draftKey", null)) }
     val scope = rememberCoroutineScope()
     val terminalController = remember(uiState.terminalEpoch) { TerminalPageController() }
+    DisposableEffect(terminalController) {
+        tools.page(terminalController)
+        onDispose { tools.page(null) }
+    }
+    val uploadPicker = rememberLauncherForActivityResult(ActivityResultContracts.OpenMultipleDocuments()) { uris -> if (uris.isNotEmpty()) tools.uploadFiles(uris) }
+    var more by remember { mutableStateOf(false) }
     var submitting by remember(draftKey) { mutableStateOf(false) }
     var startingVoice by remember(draftKey) { mutableStateOf(false) }
     var voiceStartRequest by remember(draftKey) { mutableStateOf(0L) }
@@ -402,6 +412,15 @@ fun TerminalScreen(
                     IconButton(onClick = onRefresh) {
                         Icon(Icons.Rounded.Refresh, contentDescription = "Refresh terminal")
                     }
+                    Box {
+                        IconButton(onClick = { more = true }) { Icon(Icons.Rounded.MoreVert, contentDescription = "More terminal actions") }
+                        DropdownMenu(expanded = more, onDismissRequest = { more = false }) {
+                            DropdownMenuItem(text = { Text("Upload file") }, onClick = {
+                                more = false
+                                uploadPicker.launch(arrayOf("*/*"))
+                            })
+                        }
+                    }
                 }
             },
         )
@@ -531,11 +550,19 @@ fun TerminalScreen(
                 TextButton(onClick = { terminalController.call("copy") }) { Text("Copy") }
                 TextButton(onClick = {
                     val clipboard = context.getSystemService(android.content.Context.CLIPBOARD_SERVICE) as android.content.ClipboardManager
-                    clipboard.primaryClip
-                        ?.getItemAt(0)
-                        ?.coerceToText(context)
-                        ?.toString()
-                        ?.let { if (!terminalController.paste(it)) onMessage("Clipboard was not pasted. Wait for the terminal, or choose text smaller than 64 KiB.") }
+                    val clip = clipboard.primaryClip
+                    val uri = clip?.getItemAt(0)?.uri
+                    val description = clip?.description
+                    // A copied image or file is uploaded (after confirmation) and its path pasted; text is pasted as before.
+                    if (uri != null && uri.scheme == "content" && description != null && (0 until description.mimeTypeCount).any { !description.getMimeType(it).startsWith("text/") }) {
+                        tools.clipboardFile(uri)
+                    } else {
+                        clip
+                            ?.getItemAt(0)
+                            ?.coerceToText(context)
+                            ?.toString()
+                            ?.let { if (!terminalController.paste(it)) onMessage("Clipboard was not pasted. Wait for the terminal, or choose text smaller than 64 KiB.") }
+                    }
                 }) { Text("Paste clipboard") }
             }
             FilledTonalButton(onClick = {

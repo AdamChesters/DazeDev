@@ -17,6 +17,7 @@ import com.adamchesters.dazedev.mobile.host.SessionLaunch
 import com.adamchesters.dazedev.mobile.host.TerminalRow
 import com.adamchesters.dazedev.mobile.releases.PublicReleaseCatalog
 import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.distinctUntilChanged
@@ -44,6 +45,11 @@ class MainViewModel(
     private val sessions = SessionController(ui, registry, store, viewModelScope, terminal, workspace)
     private val updates = UpdateController(ui, viewModelScope, store, PublicReleaseCatalog, BuildConfig.VERSION_NAME, downloads = java.io.File(application.cacheDir, "updates"))
     private val hostKeys = HostKeyController(ui, registry, viewModelScope, (application as DazeDevApplication)::knownHosts)
+    private val contentFiles = ContentFiles(application)
+    val uploads = UploadController(registry, terminal, viewModelScope, ui::message) { contentFiles.spool(it) }
+
+    /** The open terminal's page, registered while the terminal screen shows it. */
+    val page = MutableStateFlow<TerminalPageController?>(null)
 
     init {
         connections.workspace = workspace
@@ -84,6 +90,41 @@ class MainViewModel(
             is HostEvent.Disconnected -> terminal.linkLost(event.hostId, "This host was disconnected. Connect again to continue.")
             is HostEvent.KeyChanged -> ui.update { it.copy(hostKeyChange = event.change) }
         }
+    }
+
+    /** Files or text shared to DazeDev, or picked with the document picker: confirm, then upload. */
+    fun shared(
+        uris: List<Uri>,
+        text: String? = null,
+    ) {
+        contentFiles.clearSpool()
+        uploads.offer(uris.map(contentFiles::describe), text)
+    }
+
+    /** A file on the clipboard: quick upload to the host's DazeDev uploads folder, then its path can be pasted. */
+    fun clipboardFile(uri: Uri) {
+        contentFiles.clearSpool()
+        uploads.offer(listOf(contentFiles.describe(uri)), quick = true)
+    }
+
+    fun dismissUpload() {
+        uploads.dismiss()
+        if (!uploads.state.value.open) contentFiles.clearSpool()
+    }
+
+    /** Pastes uploaded paths into the terminal that was open when the upload started, without Return. */
+    fun pasteUploadedPath() {
+        val text = uploads.pathText()
+        if (!uploads.sameTerminal()) return ui.message("The terminal changed. Copy the path instead.")
+        if (page.value?.paste(text) != true) return ui.message("The path was not pasted. Wait for the terminal, then try again.")
+        uploads.dismiss()
+    }
+
+    fun pasteSharedText() {
+        val text = uploads.state.value.text ?: return
+        if (!uploads.sameTerminal()) return ui.message("The terminal changed. Open it again to paste.")
+        if (page.value?.paste(text) != true) return ui.message("Text was not pasted. Wait for the terminal, or share less than 64 KiB.")
+        uploads.dismiss()
     }
 
     fun checkUpdates(manual: Boolean = true) = updates.checkUpdates(manual)

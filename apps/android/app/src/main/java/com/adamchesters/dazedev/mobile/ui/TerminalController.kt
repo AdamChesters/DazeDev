@@ -9,6 +9,7 @@ import com.adamchesters.dazedev.mobile.ssh.AttachRequest
 import com.adamchesters.dazedev.mobile.ssh.SshTerminalOpener
 import com.adamchesters.dazedev.mobile.ssh.TerminalLink
 import com.adamchesters.dazedev.mobile.ssh.TerminalOpener
+import com.adamchesters.dazedev.mobile.tmux.ShellQuoter
 import com.adamchesters.dazedev.mobile.tmux.TmuxSession
 import com.adamchesters.dazedev.mobile.tmux.TmuxVersion
 import kotlinx.coroutines.CancellationException
@@ -57,6 +58,34 @@ class TerminalController(
     val generation get() = attachmentGeneration
 
     private fun target(): HostEntry? = registry.entry(ui.value.selectedTargetHost)
+
+    /** The open terminal's host while it is connected. */
+    fun openHost(): HostEntry? = target()?.takeIf { it.phase == ConnectionPhase.Connected && ui.value.selectedSessionId != null }
+
+    /** Names the open terminal (host, session and stamp), or null when none is open. */
+    fun terminalKey(): String? {
+        val s = ui.value
+        return if (s.selectedTargetHost == null || s.selectedSessionId == null || s.selectedStamp == null) null else "${s.selectedTargetHost}:${s.selectedSessionId}:${s.selectedStamp}"
+    }
+
+    /** The open terminal's current folder on its host (tmux pane_current_path), or null when unknown. */
+    suspend fun currentDirectory(): String? {
+        val h = openHost() ?: return null
+        val session = ui.value.selectedSessionId ?: return null
+        val socket = h.profile.socket
+        val command = "tmux ${if (socket.isBlank()) "" else "-L ${ShellQuoter.quote(socket)} "}display-message -p -t ${ShellQuoter.quote(session)} ${ShellQuoter.quote("#{pane_current_path}")}"
+        return try {
+            h.ssh
+                .execute(command, 5_000)
+                .stdout
+                .trim()
+                .takeIf { it.startsWith("/") && it.none { c -> c.code < 32 } }
+        } catch (e: CancellationException) {
+            throw e
+        } catch (_: Exception) {
+            null
+        }
+    }
 
     fun openSession(
         h: HostEntry,
