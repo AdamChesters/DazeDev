@@ -44,12 +44,14 @@ fun DazeDevMobileApp(viewModel: MainViewModel) {
 
     val terminalLink by viewModel.terminalLink.collectAsStateWithLifecycle()
     val upload by viewModel.uploads.state.collectAsStateWithLifecycle()
+    val preview by viewModel.previews.state.collectAsStateWithLifecycle()
     val terminalTools =
         remember(viewModel) {
             TerminalTools(
                 uploadFiles = { uris -> viewModel.shared(uris) },
                 clipboardFile = viewModel::clipboardFile,
                 page = { viewModel.page.value = it },
+                link = viewModel.previews::showLink,
             )
         }
     BackHandler(enabled = uiState.screen != Screen.Hosts, onBack = viewModel::back)
@@ -218,6 +220,9 @@ fun DazeDevMobileApp(viewModel: MainViewModel) {
         )
     }
     if (upload.open) UploadSheet(upload, uiState.hosts, viewModel)
+    val showMessage: (String) -> Unit = { text -> coroutineScope.launch { snackbarHostState.showSnackbar(text) } }
+    preview.link?.let { link -> LinkSheet(link, preview.linkHost, viewModel.previews::open, viewModel.previews::dismissLink, showMessage) }
+    if (preview.path != null) PreviewDialog(preview, viewModel.previews::toggleSource, viewModel.previews::close, showMessage)
     uiState.mobileUpdate?.let { update -> UpdateDialog(update, uiState, viewModel) }
     if (uiState.windows.isNotEmpty()) TmuxWindowPicker(uiState.windows, viewModel::selectWindow, viewModel::dismissWindows)
     uiState.draftReview?.let { review -> DraftReview(review, viewModel::applyDraftReview, viewModel::dismissDraftReview) }

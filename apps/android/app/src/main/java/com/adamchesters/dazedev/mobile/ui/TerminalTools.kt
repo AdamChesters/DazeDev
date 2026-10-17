@@ -10,4 +10,6 @@ class TerminalTools(
     val clipboardFile: (Uri) -> Unit = {},
     /** The terminal page now shown, or null when it goes away. */
     val page: (TerminalPageController?) -> Unit = {},
+    /** A tapped web address or file path; shows the link sheet. */
+    val link: (TerminalTarget) -> Unit = {},
 )

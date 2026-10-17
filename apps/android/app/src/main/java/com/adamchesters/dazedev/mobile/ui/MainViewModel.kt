@@ -48,6 +48,8 @@ class MainViewModel(
     private val contentFiles = ContentFiles(application)
     val uploads = UploadController(registry, terminal, viewModelScope, ui::message) { contentFiles.spool(it) }
 
+    val previews = PreviewController(terminal, viewModelScope)
+
     /** The open terminal's page, registered while the terminal screen shows it. */
     val page = MutableStateFlow<TerminalPageController?>(null)
 

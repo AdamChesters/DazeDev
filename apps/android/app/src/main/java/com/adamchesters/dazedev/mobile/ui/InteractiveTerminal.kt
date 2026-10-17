@@ -86,6 +86,7 @@ fun InteractiveTerminal(
     onRendererGone: () -> Unit,
     modifier: Modifier = Modifier,
     extraKeys: Boolean = true,
+    onLink: (TerminalTarget) -> Unit = {},
 ) {
     val context = LocalContext.current
     val fontScale = LocalConfiguration.current.fontScale
@@ -199,8 +200,18 @@ fun InteractiveTerminal(
                                     }
                                 }
 
-                                "openUrl" -> {
-                                    BrowserLauncher.open(context, event.getString("value"))?.let(onMessage)
+                                // Remote output never opens a browser by itself: taps show the link sheet.
+                                "link" -> {
+                                    val uri = event.getString("value")
+                                    if (uri.length <= 8192) onLink(TerminalTarget(TerminalTarget.Kind.Url, uri, 0, uri.length))
+                                }
+
+                                "tap" -> {
+                                    val tap = event.getJSONObject("value")
+                                    TerminalLinks.at(tap.getString("text"), tap.getInt("index"))?.let { target ->
+                                        if (tap.optBoolean("long")) controller.call("clearSelection")
+                                        onLink(target)
+                                    }
                                 }
 
                                 "copy" -> {

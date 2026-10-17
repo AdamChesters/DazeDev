@@ -18,9 +18,9 @@ const term = new Terminal({
     cursor: DAZEDEV_COLORS.accent,
   },
   allowProposedApi: true,
-  // OSC 8 links open through the app's checked browser path.
+  // OSC 8 links open the app's link sheet; nothing opens until the user chooses Open.
   linkHandler: {
-    activate: (_event, uri) => bridge("openUrl", uri),
+    activate: (_event, uri) => linkActivated(uri),
     allowNonHttpProtocols: false,
   },
 });
@@ -43,6 +43,12 @@ try {
 function bridge(kind, value) {
   window.DazeBridge?.postMessage(JSON.stringify({ kind, value }));
 }
+// A tap on an xterm link reports it once; the app finds plain links and paths in tapped rows itself.
+let linkAt = 0;
+function linkActivated(uri) {
+  linkAt = performance.now();
+  bridge("link", uri);
+}
 // Output arrives as ArrayBuffers (or base64 text on older WebViews). Each write
 // is acknowledged by byte count so the app can keep several chunks in flight.
 if (window.DazeBridge)
@@ -55,7 +61,7 @@ if (window.DazeBridge)
     const size = data.length;
     term.write(data, () => bridge("ack", size));
   };
-term.loadAddon(new WebLinksAddon((_event, url) => bridge("openUrl", url)));
+term.loadAddon(new WebLinksAddon((_event, url) => linkActivated(url)));
 const mods = { Control: 0, Alt: 0, Shift: 0 };
 let ready = false,
   repeat = null,
@@ -579,6 +585,65 @@ function returnToLive() {
   reportScrolled();
 }
 term.onScroll(reportScrolled);
+// The rows around a cell, joined where they wrap (soft wrap, or a full row that tmux redrew),
+// so a link that spans rows is found whole. Returns the text and the cell's index in it.
+function rowsAround(row, col) {
+  const buffer = term.buffer.active;
+  const full = (y) => {
+    const line = buffer.getLine(y);
+    return !!line && line.translateToString(true).length >= term.cols;
+  };
+  const joins = (y) => !!buffer.getLine(y)?.isWrapped || full(y - 1);
+  let first = row;
+  while (first > 0 && row - first < 16 && joins(first)) first--;
+  let last = row;
+  while (last - row < 16 && buffer.getLine(last + 1) && joins(last + 1)) last++;
+  let text = "",
+    index = -1;
+  for (let y = first; y <= last; y++) {
+    const line = buffer.getLine(y);
+    if (!line) break;
+    const end = y === last ? line.translateToString(true).length : line.length;
+    for (let x = 0; x < Math.max(end, y === row ? col + 1 : 0); x++) {
+      const cell = line.getCell(x);
+      if (!cell || cell.getWidth() === 0) continue;
+      if (y === row && x === col) index = text.length;
+      text += cell.getChars() || " ";
+    }
+  }
+  return { text, index };
+}
+function cellAt(event) {
+  const box = screen.getBoundingClientRect();
+  const row =
+    term.buffer.active.viewportY +
+    Math.min(term.rows - 1, Math.max(0, Math.floor((event.clientY - box.top) / (box.height / term.rows))));
+  const col = Math.min(term.cols - 1, Math.max(0, Math.floor((event.clientX - box.left) / (box.width / term.cols))));
+  return { row, col };
+}
+function reportTap(event, long) {
+  const at = performance.now();
+  const { row, col } = cellAt(event);
+  const found = rowsAround(row, col);
+  if (found.index < 0) return;
+  // An xterm link activation for the same tap arrives after pointerup; it wins.
+  setTimeout(() => {
+    if (linkAt >= at - 50) return;
+    bridge("tap", { text: found.text, index: found.index, long });
+  }, long ? 0 : 350);
+}
+let tapStart = null;
+screen.addEventListener("pointerdown", (event) => {
+  tapStart = event.pointerType === "touch" ? { x: event.clientX, y: event.clientY, at: performance.now(), id: event.pointerId } : null;
+});
+screen.addEventListener("pointermove", (event) => {
+  if (tapStart && event.pointerId === tapStart.id && Math.hypot(event.clientX - tapStart.x, event.clientY - tapStart.y) > 8) tapStart = null;
+});
+screen.addEventListener("pointerup", (event) => {
+  if (tapStart && event.pointerId === tapStart.id && performance.now() - tapStart.at < 450) reportTap(event, false);
+  tapStart = null;
+});
+screen.addEventListener("pointercancel", () => (tapStart = null));
 const disposeTouchScroll = installTouchScroll(screen, {
   lineHeight: () => screen.getBoundingClientRect().height / term.rows,
   scroll: (lines, event) => {
@@ -600,8 +665,11 @@ const disposeTouchScroll = installTouchScroll(screen, {
     }
   },
   select: (event) => {
+    tapStart = null;
     selectionStart = selectionEnd = cell(event);
     selectRange();
+    // A long press on a link also offers the link sheet; the app clears the selection if it shows.
+    reportTap(event, true);
   },
 });
 screen.addEventListener("contextmenu", (event) => {
