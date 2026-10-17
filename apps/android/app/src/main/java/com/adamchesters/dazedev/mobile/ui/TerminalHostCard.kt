@@ -33,6 +33,15 @@ fun TerminalHostCard(
                 }
             }
             Text(row.name, style = MaterialTheme.typography.titleMedium, maxLines = 2, overflow = TextOverflow.Ellipsis, color = colors.onSurface)
+            target.host
+                ?.profile
+                ?.id
+                ?.let { state.alerts[TerminalAlertCenter.key(it, row.sessionId)] }
+                ?.let { alert ->
+                    Surface(color = colors.tertiaryContainer, contentColor = colors.onTertiaryContainer, shape = RoundedCornerShape(3.dp)) {
+                        Text("● $alert", style = MaterialTheme.typography.labelMedium, modifier = Modifier.padding(horizontal = 8.dp, vertical = 4.dp), maxLines = 2, overflow = TextOverflow.Ellipsis)
+                    }
+                }
             if (workspace.isNotBlank()) Text(workspace, style = MaterialTheme.typography.bodySmall, color = colors.onSurfaceVariant)
             Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
                 Text(target.status, style = MaterialTheme.typography.bodySmall, color = colors.onSurfaceVariant)

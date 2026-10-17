@@ -220,6 +220,26 @@ class TerminalControllerTest {
             s.scope.cancel()
         }
 
+    @Test fun completionNotificationsKeepTheTerminalAttachedInTheBackground() =
+        runTest {
+            val s = Setup(this)
+            s.terminal.keepAttachedInBackground = { true }
+            val wrapped = mutableListOf<String>()
+            s.terminal.wrapStream = { _, id, name, stream -> stream.also { wrapped.add("$id $name") } }
+            advanceUntilIdle()
+            s.terminal.openSession(s.host, "$1", "s1", "main")
+            s.measure(80, 24)
+            advanceUntilIdle()
+            val first = s.opener.opened.single()
+            assertEquals(listOf("$1 main"), wrapped)
+            s.terminal.setForeground(false)
+            advanceTimeBy(600_000)
+            runCurrent()
+            assertSame(first, s.terminal.link.value)
+            assertFalse(first.closed)
+            s.scope.cancel()
+        }
+
     /** Forwards host events the way MainViewModel does. */
     private fun Setup.forwardEvents() =
         scope.launch {

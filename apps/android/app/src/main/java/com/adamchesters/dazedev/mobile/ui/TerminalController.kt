@@ -55,6 +55,15 @@ class TerminalController(
     /** Points the selected saved terminal at a replacement session. */
     var rebindPane: (String, TmuxSession) -> Unit = { _, _ -> }
 
+    /** Wraps a newly attached stream, for example to read completion alerts from its output. */
+    var wrapStream: (HostEntry, String, String, TerminalLink) -> TerminalLink = { _, _, _, stream -> stream }
+
+    /** A terminal is being opened (host id, session id). */
+    var opened: (String, String) -> Unit = { _, _ -> }
+
+    /** True to keep the terminal attached for the whole background window, so its alerts keep arriving. */
+    var keepAttachedInBackground: () -> Boolean = { false }
+
     val generation get() = attachmentGeneration
 
     private fun target(): HostEntry? = registry.entry(ui.value.selectedTargetHost)
@@ -108,6 +117,7 @@ class TerminalController(
                 staleSession = null,
             )
         }
+        opened(h.profile.id, id)
         if (!foreground) return
         val generation = attachmentGeneration
         attachment = scope.launch { attach(h, id, stamp, name, generation) }
@@ -148,7 +158,7 @@ class TerminalController(
                 return
             }
             terminalSize.value?.let { stream.resize(it.first, it.second) }
-            openLink.value = stream
+            openLink.value = wrapStream(h, id, name, stream)
         } catch (e: TimeoutCancellationException) {
             stream?.close()
             if (generation == attachmentGeneration) ui.update { it.copy(terminalError = "The terminal did not connect in time. Try again.") }
@@ -354,6 +364,8 @@ class TerminalController(
         backgroundDetach?.cancel()
         backgroundDetach = null
         if (!value) {
+            // With completion notifications on, the terminal stays attached while its host stays connected.
+            if (keepAttachedInBackground()) return
             backgroundDetach =
                 scope.launch {
                     delay(BACKGROUND_GRACE_MS)

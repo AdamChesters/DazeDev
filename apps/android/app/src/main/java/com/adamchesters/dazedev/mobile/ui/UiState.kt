@@ -125,6 +125,10 @@ data class DazeDevMobileUiState(
     val extraKeys: Boolean = true,
     /** The selected host is being checked after the app returned to the screen. */
     val hostChecking: Boolean = false,
+    /** Unseen completion alerts by "host id|session id" (TerminalAlertCenter.key), with the latest text. */
+    val alerts: Map<String, String> = emptyMap(),
+    /** Local notifications for completion alerts while the app is in the background. Off by default. */
+    val alertNotifications: Boolean = false,
 )
 
 fun DazeDevMobileUiState.withHosts(hosts: List<HostSnapshot>) = copy(hosts = hosts.map { HostSummary(it.profile, it.phase, it.folders.size, it.fingerprint, it.folders, it.checking, it.reconnecting) })

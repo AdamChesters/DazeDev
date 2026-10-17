@@ -16,6 +16,7 @@ import com.adamchesters.dazedev.mobile.host.HostEvent
 import com.adamchesters.dazedev.mobile.host.SessionLaunch
 import com.adamchesters.dazedev.mobile.host.TerminalRow
 import com.adamchesters.dazedev.mobile.releases.PublicReleaseCatalog
+import com.adamchesters.dazedev.mobile.service.AlertNotifier
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
@@ -34,7 +35,7 @@ class MainViewModel(
     private val registry = (application as DazeDevApplication).hosts
     private val credentials = (application as DazeDevApplication).credentials
     private val store = ProfileStore(application)
-    private val ui = UiStore(DazeDevMobileUiState(profile = store.load(), secureScreen = store.secureScreen, backgroundWindow = registry.backgroundWindow.value, keepOtherSize = store.keepOtherSize, extraKeys = store.extraKeys))
+    private val ui = UiStore(DazeDevMobileUiState(profile = store.load(), secureScreen = store.secureScreen, backgroundWindow = registry.backgroundWindow.value, keepOtherSize = store.keepOtherSize, extraKeys = store.extraKeys, alertNotifications = store.alertNotifications))
     val uiState: StateFlow<DazeDevMobileUiState> = ui.state.asStateFlow()
     private val terminal = TerminalController(ui, registry, viewModelScope)
 
@@ -49,6 +50,7 @@ class MainViewModel(
     val uploads = UploadController(registry, terminal, viewModelScope, ui::message) { contentFiles.spool(it) }
 
     val previews = PreviewController(terminal, viewModelScope)
+    private val alerts = TerminalAlertCenter(ui, registry, { ui.value.alertNotifications }, { key, title, text -> AlertNotifier.notify(application, key, title, text) })
 
     /** The open terminal's page, registered while the terminal screen shows it. */
     val page = MutableStateFlow<TerminalPageController?>(null)
@@ -58,6 +60,9 @@ class MainViewModel(
         terminal.connect = { connections.connect(it, "") }
         terminal.rebindPane = workspace::rebindPane
         terminal.keepOtherSize = { ui.value.keepOtherSize }
+        terminal.wrapStream = { h, id, name, stream -> AlertingTerminal(stream, alerts.watcher(h, id, name)) }
+        terminal.opened = alerts::clear
+        terminal.keepAttachedInBackground = { ui.value.alertNotifications && AlertNotifier.allowed(application) }
         viewModelScope.launch { registry.hosts.collect { connections.sync(it) } }
         viewModelScope.launch { registry.events.collect(::onHostEvent) }
         viewModelScope.launch { registry.prompts.authNotice.collect { notice -> ui.update { it.copy(authNotice = notice) } } }
@@ -354,6 +359,7 @@ class MainViewModel(
         registry.setForeground(value)
         registry.prompts.foreground = value
         terminal.setForeground(value)
+        if (value) alerts.returned()
     }
 
     fun dismissAuthNotice() = registry.prompts.dismissAuthNotice()
@@ -381,6 +387,12 @@ class MainViewModel(
         ui.update { it.copy(extraKeys = value) }
     }
 
+    /** Local notifications for completion alerts while the app is in the background. */
+    fun setAlertNotifications(value: Boolean) {
+        store.alertNotifications = value
+        ui.update { it.copy(alertNotifications = value) }
+    }
+
     /** Applies to terminals opened from now on. */
     fun setKeepOtherSize(value: Boolean) {
         store.keepOtherSize = value
@@ -389,6 +401,10 @@ class MainViewModel(
 
     fun notificationsDenied() {
         ui.message("Notifications are off, so the background connection notice and its timer are hidden. Hosts still stay connected in the background.")
+    }
+
+    fun alertNotificationsDenied() {
+        ui.message("Notifications are not allowed, so completion notifications stay off. Alerts still show as badges in the app.")
     }
 
     fun closeHostKeys() = hostKeys.closeHostKeys()
