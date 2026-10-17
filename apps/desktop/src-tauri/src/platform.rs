@@ -32,6 +32,19 @@ pub fn installed_linux_data_dir(exe: &Path) -> Option<PathBuf> {
     }
     dirs::data_dir().map(|dir| dir.join("DazeDev"))
 }
+/// The data folder `storage::prepare` will use, for code that runs before it
+/// (the panic hook): `DAZEDEV_DATA_DIR`, the XDG folder for installed Linux
+/// packages, otherwise `data/` beside the portable app.
+pub fn data_dir(exe: &Path) -> PathBuf {
+    if let Some(dir) = std::env::var_os("DAZEDEV_DATA_DIR") {
+        return PathBuf::from(dir);
+    }
+    #[cfg(target_os = "linux")]
+    if let Some(dir) = installed_linux_data_dir(exe) {
+        return dir;
+    }
+    portable_root(exe).join("data")
+}
 /// WebKitGTK leaves media capture off by default. Enable it for the bundled
 /// interface and grant microphone-only requests from it; camera, screen and
 /// any other origin are denied.

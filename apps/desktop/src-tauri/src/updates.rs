@@ -15,6 +15,8 @@ const GITHUB_RELEASES: &str =
     "https://api.github.com/repos/AdamChesters/DazeDev/releases?per_page=100";
 const GITHUB_DOWNLOAD: &str = "https://github.com/AdamChesters/DazeDev/releases/download/";
 const MAX_ZIP: u64 = 256 * 1024 * 1024;
+/// Linux .deb/AppImage and macOS copies cannot replace themselves; nothing is downloaded.
+pub const MANUAL_UPDATES: &str = "Automatic updates are Windows-only. Download the new DazeDev package for this system and install or extract it over the old one. Settings are kept.";
 pub fn changelog() -> Result<serde_json::Value, String> {
     let bytes = fetch("https://raw.githubusercontent.com/AdamChesters/DazeDev/main/shared/releases/changelog.json", 1024 * 1024)?;
     serde_json::from_slice(&bytes).map_err(|e| e.to_string())
@@ -417,6 +419,12 @@ pub fn download(
     expected: &Release,
     progress: impl Fn(u64, u64),
 ) -> Result<PathBuf, String> {
+    // Installing is Windows-only, and an installed Linux copy's folder is read-only:
+    // fail before writing anything rather than after a large download.
+    if !cfg!(windows) {
+        let _ = (root, expected, &progress);
+        return Err(MANUAL_UPDATES.into());
+    }
     // Recheck signed metadata before download; a newer release needs fresh consent.
     // Pin the source the user approved, even if another source changes meanwhile.
     let metadata_url = if github_asset(&expected.url) {
@@ -670,6 +678,23 @@ mod tests {
             serde_json::to_vec(&Signed { payload, signature }).unwrap(),
             STANDARD.encode(key.verifying_key().to_bytes()),
         )
+    }
+    #[cfg(not(windows))]
+    #[test]
+    fn non_windows_update_download_writes_nothing() {
+        let root = std::env::temp_dir().join(format!("dazedev-manual-{}", std::process::id()));
+        let release = Release {
+            version: "9.9.9".into(),
+            notes: String::new(),
+            url: format!("{GITHUB_DOWNLOAD}v9.9.9/test.zip"),
+            sha256: "a".repeat(64),
+            size: 12,
+        };
+        assert_eq!(
+            download(&root, &release, |_, _| {}),
+            Err(MANUAL_UPDATES.into())
+        );
+        assert!(!root.exists());
     }
     #[test]
     fn release_series_orders_for_existing_alpha_and_stable_clients() {

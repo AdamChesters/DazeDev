@@ -3,8 +3,8 @@ fn main() {
     std::panic::set_hook(Box::new(|panic| {
         if let Ok(exe) = std::env::current_exe() {
             {
-                let root = dazedev::platform::portable_root(&exe);
-                let data = root.join("data");
+                // Same folder as the app's settings; installed Linux copies use XDG.
+                let data = dazedev::platform::data_dir(&exe);
                 let _ = std::fs::create_dir_all(&data);
                 let _ = std::fs::write(data.join("startup-error.txt"), panic.to_string());
             }
