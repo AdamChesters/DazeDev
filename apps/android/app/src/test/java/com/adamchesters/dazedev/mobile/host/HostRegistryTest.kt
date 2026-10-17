@@ -205,7 +205,7 @@ class HostRegistryTest {
             assertTrue(saved.keyStored)
             assertNull(saved.privateKeyUri)
             assertEquals("typed", credentials.passphrases["host-1"])
-            assertTrue(typed.all { it == ' ' })
+            assertTrue(typed.all { it == '\u0000' })
             registry.disconnect("host-1")
             registry.connect(saved, CharArray(0))
             advanceUntilIdle()
