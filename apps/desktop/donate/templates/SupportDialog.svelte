@@ -59,39 +59,28 @@
       <span class="support-status">{status}</span>
     </p>
     <div class="support-actions">
-      <button class="support-discord" onclick={() => void visit(content.links.discord)}>
-        {content.actions.discord}
-      </button>
       <button disabled={updateBusy || !updateSupported} onclick={checkForUpdates}
         >{updateAvailable ? `Update to ${updateAvailable}` : content.actions.update}</button
       >
       <button onclick={onfeedback}>{content.actions.feedback}</button>
     </div>
+    <div class="support-socials">
+      {#each content.socials as social (social.id)}
+        <button
+          class="social-button"
+          style:background={social.color}
+          style:border-color={social.color}
+          title={social.label}
+          aria-label={social.label}
+          onclick={() => void visit(social.url)}
+        >
+          <img src={artwork[social.icon]} alt="" aria-hidden="true" />
+        </button>
+      {/each}
+    </div>
   </header>
   <div class="support-intro">
     <p>{appText(content.intro, appName)}</p>
-    <p class="support-projects">
-      {content.projectsText}
-      <a
-        href={content.links.github}
-        target="_blank"
-        rel="noopener noreferrer"
-        onclick={(e) => {
-          e.preventDefault();
-          void visit(e.currentTarget.href);
-        }}>GitHub</a
-      >
-      <span aria-hidden="true"> | </span>
-      <a
-        href={content.links.website}
-        target="_blank"
-        rel="noopener noreferrer"
-        onclick={(e) => {
-          e.preventDefault();
-          void visit(e.currentTarget.href);
-        }}>AdamCh.com</a
-      >
-    </p>
   </div>
   <section aria-label={content.donationTitle} class="support-donations">
     <h3>{content.donationTitle}</h3>
@@ -152,7 +141,7 @@
   .support-dialog {
     display: flex;
     flex-direction: column;
-    gap: 24px;
+    gap: 14px;
     line-height: 1.6;
   }
   .support-dialog p {
@@ -166,7 +155,7 @@
     display: flex;
     flex-direction: column;
     align-items: center;
-    gap: 12px;
+    gap: 6px;
     text-align: center;
     margin: 0;
   }
@@ -208,14 +197,34 @@
   .support-actions button {
     min-height: 44px;
   }
-  .support-actions .support-discord {
-    background: #5865f2;
-    color: #fff;
-    border-color: #5865f2;
+  .support-socials {
+    display: flex;
+    justify-content: center;
+    flex-wrap: wrap;
+    gap: 8px;
+    margin-top: 4px;
   }
-  .support-actions .support-discord:hover {
-    background: #4752c4;
-    border-color: #4752c4;
+  .support-socials .social-button {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    width: 38px;
+    height: 38px;
+    min-height: 38px;
+    padding: 0;
+    border: 1px solid transparent;
+    border-radius: 8px;
+  }
+  .support-socials .social-button:hover {
+    filter: brightness(0.92);
+  }
+  .support-socials .social-button:focus-visible {
+    outline: 2px solid var(--accent);
+    outline-offset: 3px;
+  }
+  .social-button img {
+    width: 19px;
+    height: 19px;
   }
   .support-dialog .support-glow-toggle {
     display: flex;
@@ -232,27 +241,19 @@
     font-size: 13px;
     color: var(--muted);
   }
-  .support-projects a {
-    display: inline;
-  }
-  a {
-    color: var(--accent);
-    width: fit-content;
-    overflow-wrap: anywhere;
-  }
   .support-donations {
     display: grid;
-    gap: 16px;
+    gap: 10px;
     margin: 0;
-    padding-top: 24px;
+    padding-top: 14px;
     border-top: 1px solid var(--border);
   }
   .support-donations h3 {
     display: block;
     text-align: center;
     padding: 0;
-    font-size: 22px;
-    line-height: 1.3;
+    font-size: 20px;
+    line-height: 1.2;
     margin: 0;
   }
   .support-buttons {
@@ -260,16 +261,19 @@
     grid-template-columns: repeat(3, minmax(0, 1fr));
     gap: 10px;
   }
+  /* Each option spans a button row and a notes row, so every button in a row
+     gets the same height even when one label wraps. */
   .donation-option {
     min-width: 0;
-    display: flex;
-    flex-direction: column;
-    gap: 8px;
+    display: grid;
+    grid-row: span 2;
+    grid-template-rows: subgrid;
+    gap: 6px;
     text-align: center;
   }
   .donation-notes {
     display: grid;
-    gap: 4px;
+    gap: 2px;
   }
   .support-buttons .donation-button {
     width: 100%;
@@ -278,8 +282,8 @@
     justify-content: center;
     gap: 8px;
     min-width: 0;
-    min-height: 64px;
-    padding: 10px;
+    min-height: 44px;
+    padding: 6px 10px;
     border-radius: 8px;
     font-size: 14px;
     font-weight: 600;
@@ -290,8 +294,8 @@
   }
   .donation-button img,
   .paypal-mark {
-    width: 25px;
-    height: 28px;
+    width: 20px;
+    height: 20px;
     object-fit: contain;
     flex-shrink: 0;
   }
