@@ -34,7 +34,7 @@ class LaneTests(unittest.TestCase):
                        'upload_finish', 'upload_abort', 'document_save', 'dictionary_write', 'tmux_settings_apply',
                        'tmux_window_select', 'terminal_recover']:
             self.assertEqual(host.lane_for(method), 'mutation', method)
-        for method in ['ping', 'browser_prepare', 'browser_result']:
+        for method in ['ping', 'browser_prepare', 'browser_result', 'editor_shown', 'editor_done']:
             self.assertEqual(host.lane_for(method), 'inline', method)
 
     def test_repositories_gets_short_deadline(self):

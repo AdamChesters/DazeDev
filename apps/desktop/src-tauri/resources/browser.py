@@ -1,7 +1,21 @@
-"""Private, per-connection desktop browser bridge and its scoped command shim."""
-import contextlib, fcntl, hashlib, hmac, json, os, pathlib, re, socket, stat, subprocess, sys, tempfile, threading, time, urllib.parse, uuid
+"""Private, per-connection desktop bridge and its scoped command shims.
+
+`xdg-open` sends web links to the attached DazeDev desktop. `dazedev-editor`
+is $VISUAL/$EDITOR for programs in DazeDev sessions: it sends the file to a
+desktop that can edit (DAZED_EDITOR=1), waits for the user to save or
+cancel there, and otherwise runs a terminal editor on the same file."""
+import contextlib, fcntl, hashlib, hmac, json, os, pathlib, re, select, shlex, shutil, socket, stat, subprocess, sys, tempfile, threading, time, urllib.parse, uuid
 P = pathlib.Path
 MAX_REQUEST = 16384
+# Largest file the desktop edits, and the largest edit packet: JSON escapes
+# can make control characters six bytes each.
+MAX_EDIT = 8 * 1024 * 1024
+MAX_EDIT_PACKET = MAX_EDIT * 6 + 65536
+EDITOR_NAME = 'dazedev-editor'
+# How long the editor shim waits for the desktop to show the file.
+EDIT_SHOWN_TIMEOUT = 10
+MAX_EDITS = 8
+FALLBACK_EDITORS = ('nano', 'vi', 'vim')
 
 def validate_url(value):
     if not isinstance(value, str) or not value or len(value) > 8192 or any(ord(c) <= 32 or ord(c) == 127 for c in value):
@@ -34,7 +48,8 @@ def install_shim(root, source):
     # Each helper version gets its own shim, so versions never overwrite each other.
     folder = private_dir(private_root(root) / ('shim-' + hashlib.sha256(source.encode()).hexdigest()[:12]))
     path = folder / 'xdg-open'
-    if not path.is_file(): atomic_file(path, '#!/usr/bin/env python3\n' + source, 0o700)
+    for shim in (path, folder / EDITOR_NAME):
+        if not shim.is_file(): atomic_file(shim, '#!/usr/bin/env python3\n' + source, 0o700)
     return path
 
 @contextlib.contextmanager
@@ -81,21 +96,36 @@ def endpoint_path(root, endpoint):
     if not re.fullmatch('[a-f0-9]{32}', endpoint or ''): raise ValueError('Invalid browser connection')
     return root / ('endpoint-' + endpoint + '.json')
 
-def read_packet(client):
+def read_packet(client, limit=MAX_REQUEST):
     data = bytearray()
-    while len(data) <= MAX_REQUEST:
-        chunk = client.recv(min(4096, MAX_REQUEST + 1 - len(data)))
+    while len(data) <= limit:
+        chunk = client.recv(min(65536, limit + 1 - len(data)))
         if not chunk: break
         data.extend(chunk)
         if b'\n' in chunk: break
-    if len(data) > MAX_REQUEST or not data.endswith(b'\n'):
+    if len(data) > limit or not data.endswith(b'\n'):
         raise ValueError('Browser request is too large or incomplete')
     return json.loads(data)
 
-def request(root, endpoint, value):
-    meta = read_private(endpoint_path(root, endpoint))
+def send_packet(client, value):
+    try: client.sendall((json.dumps(value, ensure_ascii=False) + '\n').encode())
+    except OSError: pass
+
+def hung_up(client):
+    # The waiting program went away: its socket reads as closed.
+    try:
+        if not select.select([client], [], [], 0)[0]: return False
+        return client.recv(1, socket.MSG_PEEK) == b''
+    except OSError: return True
+
+def endpoint_socket(root, meta):
     target = root / meta['socket']
     if target.parent != root or not re.fullmatch(r'socket-[a-f0-9]{32}', target.name): raise ValueError('Invalid browser socket')
+    return target
+
+def request(root, endpoint, value):
+    meta = read_private(endpoint_path(root, endpoint))
+    target = endpoint_socket(root, meta)
     with socket.socket(socket.AF_UNIX, socket.SOCK_STREAM) as client:
         client.settimeout(12)
         try: client.connect(str(target))
@@ -106,10 +136,15 @@ def request(root, endpoint, value):
         return reply
 
 class Bridge:
-    def __init__(self, source, endpoint, desktop, opened, root=None, start=True):
+    """`edited` sends an editor request to the desktop; `editor` says the
+    connected app can show it. Without both, this endpoint never edits."""
+    def __init__(self, source, endpoint, desktop, opened, root=None, start=True, edited=None, editor=False):
         self.root = private_root(root)
         self.endpoint = endpoint
         self.desktop = desktop
+        self.edited = edited
+        self.can_edit = bool(editor and edited)
+        self.edits = {}
         with registry_lock(self.root):
             self.metadata = endpoint_path(self.root, endpoint)
             previous = None
@@ -141,7 +176,7 @@ class Bridge:
             self.server.listen(4); self.server.settimeout(.5)
             self.source = source
             self.shim = install_shim(self.root, source)
-            atomic_file(self.metadata, json.dumps(dict(socket=self.path.name, token=self.token, desktop=desktop, generation=self.generation, pid=os.getpid(), stamp=process_stamp(os.getpid()))))
+            atomic_file(self.metadata, json.dumps(dict(socket=self.path.name, token=self.token, desktop=desktop, generation=self.generation, pid=os.getpid(), stamp=process_stamp(os.getpid()), editor=self.can_edit)))
             if previous and re.fullmatch(r'socket-[a-f0-9]{32}', previous.get('socket', '')):
                 (self.root / previous['socket']).unlink(missing_ok=True)
         # Remove only stale registrations; surviving shell registrations are kept
@@ -161,7 +196,7 @@ class Bridge:
     def environment(self):
         # Recreate the shim if something removed it since the bridge started.
         self.shim = install_shim(self.root, self.source)
-        return dict(command=str(self.shim), endpoint=self.endpoint)
+        return dict(command=str(self.shim), endpoint=self.endpoint, editor=str(self.shim.parent / EDITOR_NAME))
     def launch(self, operation):
         self.launches = {key: until for key, until in self.launches.items() if until > time.monotonic()}
         if len(self.launches) >= 32: raise RuntimeError('Too many pending browser launch registrations')
@@ -173,9 +208,15 @@ class Bridge:
                 pending['error'] = value.get('error')
                 pending['event'].set()
         return True
-    def handle(self, value):
+    def authenticate(self, value):
         if not isinstance(value, dict) or not isinstance(value.get('token'), str) or not hmac.compare_digest(value['token'], self.token):
             raise ValueError('Browser connection authentication failed')
+    def route(self, tty, expired):
+        route = read_private(route_path(self.root, tty))
+        if route['endpoint'] != self.endpoint or process_stamp(route['pid']) != route['stamp']: raise ValueError(expired)
+        return route
+    def handle(self, value):
+        self.authenticate(value)
         if value.get('kind') == 'register':
             tty = value['tty']; pid = int(value['pid'])
             record = dict(endpoint=self.endpoint, pid=pid, stamp=process_stamp(pid), tty=tty)
@@ -187,10 +228,7 @@ class Bridge:
         if value.get('launch'):
             if self.launches.get(value['launch'], 0) <= time.monotonic():
                 raise ValueError('Startup browser registration expired. Attach this session in DazeDev and try again.')
-        else:
-            route = read_private(route_path(self.root, value['tty']))
-            if route['endpoint'] != self.endpoint or process_stamp(route['pid']) != route['stamp']:
-                raise ValueError('Terminal browser registration expired. Reconnect the terminal.')
+        else: self.route(value['tty'], 'Terminal browser registration expired. Reconnect the terminal.')
         now = time.monotonic(); self.recent = [stamp for stamp in self.recent if now - stamp < 60]
         if len(self.recent) >= 8: raise ValueError('Too many browser requests. Wait a minute and try again.')
         self.recent.append(now)
@@ -208,13 +246,65 @@ class Bridge:
             try: client, _ = self.server.accept()
             except socket.timeout: continue
             except OSError: break
-            with client:
-                client.settimeout(2)
-                try:
-                    self.handle(read_packet(client)); reply = dict(ok=True)
-                except Exception as error: reply = dict(ok=False, error=str(error))
-                try: client.sendall((json.dumps(reply) + '\n').encode())
-                except OSError: pass
+            client.settimeout(2)
+            try:
+                value = read_packet(client, MAX_EDIT_PACKET)
+                if isinstance(value, dict) and value.get('kind') == 'edit':
+                    # An edit waits for the user, so it gets its own thread.
+                    self.authenticate(value)
+                    threading.Thread(target=self.edit, args=(client, value), daemon=True).start()
+                    continue
+                self.handle(value); reply = dict(ok=True)
+            except Exception as error: reply = dict(ok=False, error=str(error))
+            send_packet(client, reply); client.close()
+    def edit(self, client, value):
+        """Show one file on the desktop. Replies `shown`, then `done` with
+        the saved text (no text for cancel), or an error at any point so the
+        shim opens a terminal editor instead."""
+        identifier = None
+        try:
+            client.settimeout(10)
+            if not self.can_edit: raise RuntimeError('This DazeDev app cannot edit files')
+            text = value.get('text')
+            if not isinstance(text, str) or len(text.encode()) > MAX_EDIT: raise ValueError('The file is too large for the DazeDev editor')
+            route = self.route(value.get('tty'), 'Terminal registration expired. Reconnect the terminal.')
+            name = ''.join(c for c in str(value.get('name') or '') if c.isprintable())[:120] or 'Editor'
+            with self.pending_lock:
+                if len(self.edits) >= MAX_EDITS: raise RuntimeError('Too many files are open in DazeDev')
+                identifier = uuid.uuid4().hex
+                edit = self.edits[identifier] = dict(shown=threading.Event(), done=threading.Event(), text=None, error=None)
+            self.edited(dict(id=identifier, pid=route['pid'], name=name, text=text))
+            deadline = time.monotonic() + EDIT_SHOWN_TIMEOUT
+            while not (edit['shown'].wait(.1) or edit['done'].is_set()):
+                if self.closed.is_set(): raise RuntimeError('DazeDev disconnected')
+                if time.monotonic() > deadline: raise RuntimeError('DazeDev did not open the editor')
+            if not edit['done'].is_set(): send_packet(client, dict(ok=True, state='shown'))
+            while not edit['done'].wait(.5):
+                if self.closed.is_set(): raise RuntimeError('DazeDev disconnected before the file was saved')
+                if hung_up(client): return
+            if edit['error']: raise RuntimeError(edit['error'])
+            reply = dict(ok=True, state='done')
+            if edit['text'] is not None: reply['text'] = edit['text']
+            client.settimeout(30); send_packet(client, reply)
+        except Exception as error: send_packet(client, dict(ok=False, error=str(error)))
+        finally:
+            if identifier:
+                with self.pending_lock: self.edits.pop(identifier, None)
+            client.close()
+    def editor_shown(self, value):
+        with self.pending_lock: edit = self.edits.get(value.get('id'))
+        if edit: edit['shown'].set()
+        return bool(edit)
+    def editor_done(self, value):
+        """The desktop's answer: `text` saves it, `error` hands the file to a
+        terminal editor, neither cancels."""
+        with self.pending_lock: edit = self.edits.get(value.get('id'))
+        if not edit or edit['done'].is_set(): raise ValueError('This edit request has ended')
+        text = value.get('text'); error = value.get('error')
+        if text is not None and (not isinstance(text, str) or len(text.encode()) > MAX_EDIT): raise ValueError('The edited text is too large')
+        edit['text'] = text; edit['error'] = str(error) if error else None
+        edit['done'].set()
+        return True
     def close(self):
         self.closed.set(); self.server.close()
         with self.pending_lock:
@@ -247,9 +337,14 @@ def attached_ttys():
         if not re.fullmatch(r'%[0-9]+', pane): raise RuntimeError('Cannot identify this tmux pane')
         prefix = ['tmux', '-S', socket_path]
         session = subprocess.run(prefix + ['display-message', '-p', '-t', pane, '#{session_id}'], capture_output=True, text=True, timeout=2, check=True).stdout.strip()
-        clients = subprocess.run(prefix + ['list-clients', '-t', session, '-F', '#{client_tty}'], capture_output=True, text=True, timeout=2, check=True).stdout.splitlines()
-        if len(clients) > 64: raise RuntimeError('Too many tmux clients to identify the desktop safely. Open the displayed link yourself.')
-        return clients, True
+        lines = subprocess.run(prefix + ['list-clients', '-t', session, '-F', '#{client_activity} #{client_tty}'], capture_output=True, text=True, timeout=2, check=True).stdout.splitlines()
+        if len(lines) > 64: raise RuntimeError('Too many tmux clients to identify the desktop safely. Open the displayed link yourself.')
+        # Most recently used client first.
+        clients = []
+        for line in lines:
+            activity, _, tty = line.partition(' ')
+            clients.append((int(activity), tty) if activity.isdigit() and tty else (0, line))
+        return [tty for _, tty in sorted(clients, key=lambda c: -c[0])], True
     tty = os.environ.get('DAZEDEV_BROWSER_TTY')
     if not tty:
         try: tty = os.ttyname(0)
@@ -279,10 +374,100 @@ def open_url(root, url):
     endpoint, tty = next(iter(choices.values()))
     request(root, endpoint, dict(kind='open', tty=tty, url=url))
 
-def main():
+def editor_route(root):
+    """The first attached desktop that can edit, most recent client first."""
+    clients, tmux = attached_ttys()
+    for tty in clients:
+        try:
+            route = read_private(route_path(root, tty))
+            if process_stamp(route['pid']) != route['stamp']: continue
+            if not tmux and os.environ.get('DAZEDEV_BROWSER_PID') and str(route['pid']) != os.environ['DAZEDEV_BROWSER_PID']: continue
+            meta = read_private(endpoint_path(root, route['endpoint']))
+            if meta.get('editor') is True and endpoint_socket(root, meta).exists(): return meta, tty
+        except (OSError, ValueError, KeyError, RuntimeError): continue
+    raise RuntimeError('No DazeDev desktop that can edit is attached to this terminal.')
+
+def caller_name():
+    # The program that asked, such as codex or claude, for the pane title.
+    parent = os.getppid()
+    try: return (P('/proc') / str(parent) / 'comm').read_text().strip()
+    except OSError: pass
+    try: return P(subprocess.run(['ps', '-p', str(parent), '-o', 'comm='], capture_output=True, text=True, timeout=2).stdout.strip()).name
+    except (OSError, subprocess.SubprocessError): return ''
+
+def edit_on_desktop(root, path):
+    """Edit `path` on the desktop. Returns once saved (file rewritten) or
+    cancelled (file untouched); raises when the desktop cannot take it."""
+    data = P(path).read_bytes()
+    if len(data) > MAX_EDIT: raise RuntimeError('The file is too large for the DazeDev editor.')
+    try: text = data.decode('utf-8')
+    except UnicodeDecodeError: raise RuntimeError('The file is not UTF-8 text.') from None
+    meta, tty = editor_route(root)
+    with socket.socket(socket.AF_UNIX, socket.SOCK_STREAM) as client:
+        client.settimeout(EDIT_SHOWN_TIMEOUT + 5)
+        try: client.connect(str(endpoint_socket(root, meta)))
+        except OSError: raise RuntimeError('DazeDev is disconnected.') from None
+        send_packet(client, dict(kind='edit', token=meta['token'], tty=tty, name=caller_name(), text=text))
+        try:
+            reply = read_packet(client, MAX_EDIT_PACKET)
+            if reply.get('ok') and reply.get('state') == 'shown':
+                # The user is editing: wait as long as they take.
+                client.settimeout(None)
+                reply = read_packet(client, MAX_EDIT_PACKET)
+        except (OSError, ValueError): raise RuntimeError('DazeDev disconnected.') from None
+    if not reply.get('ok'): raise RuntimeError(reply.get('error') or 'DazeDev could not open the editor.')
+    if reply.get('state') != 'done': raise RuntimeError('Unexpected reply from DazeDev.')
+    if 'text' in reply:
+        if not isinstance(reply['text'], str): raise RuntimeError('Invalid text from DazeDev.')
+        with open(path, 'wb') as out: out.write(reply['text'].encode())
+
+def is_editor_shim(command):
+    found = shutil.which(command) or command
+    try: own = os.path.realpath(sys.argv[0])
+    except OSError: own = ''
+    return P(found).name == EDITOR_NAME or os.path.realpath(found) == own
+
+def fallback_editor(path, reason):
+    """Open `path` in the user's own editor (DAZEDEV_EDITOR_FALLBACK), else
+    nano or vi. Never this shim again, so it cannot call itself."""
+    print('DazeDev editor: ' + reason + ' Opening the terminal editor.', file=sys.stderr, flush=True)
+    choice = None
+    if not os.environ.get('DAZEDEV_EDITOR_ACTIVE'):
+        try: words = shlex.split(os.environ.get('DAZEDEV_EDITOR_FALLBACK', ''))
+        except ValueError: words = []
+        if words and not is_editor_shim(words[0]): choice = words
+    for name in FALLBACK_EDITORS:
+        if choice: break
+        found = shutil.which(name)
+        if found and not is_editor_shim(found): choice = [found]
+    if not choice:
+        print('DazeDev editor: no terminal editor found. Install nano or set DAZEDEV_EDITOR_FALLBACK.', file=sys.stderr)
+        return 1
+    try: os.execvpe(choice[0], choice + [path], dict(os.environ, DAZEDEV_EDITOR_ACTIVE='1'))
+    except OSError as error:
+        print('DazeDev editor: could not start ' + choice[0] + ': ' + str(error), file=sys.stderr)
+        return 1
+
+def edit_main(root, args):
+    # Programs run `$VISUAL [options] FILE`; the file is the last argument.
+    if not args:
+        print('Usage: ' + EDITOR_NAME + ' FILE', file=sys.stderr)
+        return 2
+    path = args[-1]
     try:
-        here = P(__file__).resolve().parent
-        root = private_root(here.parent if SHIM_DIR.fullmatch(here.name) else here)
+        if os.environ.get('DAZEDEV_EDITOR_ACTIVE'): raise RuntimeError('The terminal editor is already running from DazeDev.')
+        edit_on_desktop(root(), path)
+        return 0
+    except Exception as error: return fallback_editor(path, str(error).rstrip('.') + '.')
+
+def shim_root():
+    here = P(__file__).resolve().parent
+    return private_root(here.parent if SHIM_DIR.fullmatch(here.name) else here)
+
+def main():
+    if P(sys.argv[0]).name == EDITOR_NAME: return edit_main(shim_root, sys.argv[1:])
+    try:
+        root = shim_root()
         if len(sys.argv) == 5 and sys.argv[1] == '--dazedev-register':
             request(root, sys.argv[2], dict(kind='register', pid=int(sys.argv[3]), tty=sys.argv[4]))
         elif len(sys.argv) == 2: open_url(root, sys.argv[1])

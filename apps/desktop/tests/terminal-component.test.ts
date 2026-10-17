@@ -252,7 +252,7 @@ describe('Terminal editor requests', () => {
     emit('host-editor-open', request({ hostId: 'h2' }));
     await waitFor(() => expect(replies('editor_done')).toHaveLength(2));
     for (const reply of replies('editor_done'))
-      expect(reply).toEqual({ id, error: expect.stringContaining('terminal editor') });
+      expect(reply).toEqual({ id, error: expect.stringContaining('No DazeDev terminal') });
     expect(calls('host_rpc').map((args) => args.hostId)).toContain('h2');
     expect(screen.queryByRole('dialog')).toBeNull();
   });
@@ -263,7 +263,7 @@ describe('Terminal editor requests', () => {
     await rerender({ ...props, floating: true, visible: false });
     await waitFor(() =>
       expect(replies('editor_done')).toEqual([
-        { id, error: expect.stringContaining('terminal editor') },
+        { id, error: 'The terminal moved to its own window.' },
       ]),
     );
     expect(screen.queryByRole('dialog')).toBeNull();
@@ -274,7 +274,7 @@ describe('Terminal editor requests', () => {
     await screen.findByRole('dialog');
     await fireEvent.click(screen.getByRole('button', { name: 'Terminal editor' }));
     await waitFor(() =>
-      expect(replies('editor_done')).toEqual([{ id, error: 'Opening the terminal editor.' }]),
+      expect(replies('editor_done')).toEqual([{ id, error: 'You chose the terminal editor.' }]),
     );
     expect(screen.queryByRole('dialog')).toBeNull();
   });
