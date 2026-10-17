@@ -1013,6 +1013,11 @@ pub fn run() {
         })
         .setup(|app| {
             let root = crate::platform::portable_root(&std::env::current_exe()?);
+            #[cfg(target_os = "linux")]
+            if let Some(dir) = crate::platform::installed_linux_data_dir(&std::env::current_exe()?)
+            {
+                std::env::set_var("DAZEDEV_DATA_DIR", dir);
+            }
             let (data, instance_lock) = crate::storage::prepare(&root, &app.path().app_data_dir()?)
                 .map_err(std::io::Error::other)?;
             let resources = app.path().resource_dir()?;
@@ -1058,9 +1063,11 @@ pub fn run() {
                 links: Default::default(),
             });
             let config = app.config().app.windows[0].clone();
-            tauri::WebviewWindowBuilder::from_config(app, &config)?
+            let _main = tauri::WebviewWindowBuilder::from_config(app, &config)?
                 .data_directory(data.join("webview"))
                 .build()?;
+            #[cfg(target_os = "linux")]
+            crate::platform::enable_linux_microphone(&_main);
             Ok(())
         })
         .invoke_handler(|invoke| {

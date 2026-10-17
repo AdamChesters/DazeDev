@@ -13,7 +13,7 @@ path = "src/main.rs"
 required-features = ["desktop"]
 [features]
 default = ["desktop", "voice"]
-desktop = ["dep:tauri", "dep:tauri-build", "dep:tauri-plugin-opener"]
+desktop = ["dep:tauri", "dep:tauri-build", "dep:tauri-plugin-opener", "dep:webkit2gtk"]
 custom-protocol = ["tauri/custom-protocol"]
 voice = ["dep:transcribe-cpp", "dep:ort", "dep:ndarray"]
 vulkan = ["transcribe-cpp/vulkan", "transcribe-cpp/dynamic-backends"]
@@ -53,6 +53,10 @@ required-features = ["voice"]
 
 [target."cfg(unix)".dependencies]
 libc = "0.2"
+
+# Same WebKitGTK binding as Tauri/wry; used only to enable microphone capture.
+[target."cfg(target_os = \"linux\")".dependencies]
+webkit2gtk = { version = "=2.0.2", optional = true, features = ["v2_40"] }
 
 [target."cfg(windows)".dependencies]
 windows-sys = { version = "0.61", features = ["Win32_System_JobObjects", "Win32_System_Console", "Win32_System_Pipes", "Win32_Security", "Win32_Security_Authorization", "Win32_Storage_FileSystem", "Win32_System_IO", "Win32_System_Threading", "Win32_System_SystemInformation", "Win32_Foundation", "Win32_UI_WindowsAndMessaging", "Win32_UI_Shell", "Win32_System_Com", "Win32_System_Registry", "Win32_UI_Input_KeyboardAndMouse"] }
