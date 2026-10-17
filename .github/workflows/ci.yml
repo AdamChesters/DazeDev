@@ -17,6 +17,9 @@ jobs:
   desktop:
     runs-on: [self-hosted, linux, dazedev]
     timeout-minutes: 60
+    env:
+      # Devbox keeps Rust builds in one shared folder that a daily job caps.
+      CARGO_TARGET_DIR: /home/ubuntu/.cache/dazedev-cargo-target
     steps:
       - uses: actions/checkout@v4
       - name: Keep tests away from live sessions
