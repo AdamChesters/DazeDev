@@ -754,6 +754,25 @@ window.daze.reveal = (first, expected, start, end) => {
   term.select(from.col, from.row, (last.row - from.row) * term.cols + last.col + width - from.col);
   return true;
 };
+// Export: the terminal's text with soft-wrapped rows joined and trailing spaces removed.
+window.daze.text = () => {
+  const buffer = term.buffer.active;
+  const lines = [];
+  for (let row = 0; row < buffer.length; row++) {
+    const line = logicalLine(buffer, row, false);
+    lines.push(line.text.replace(/\s+$/, ""));
+    row = line.last;
+  }
+  while (lines.length && !lines[lines.length - 1]) lines.pop();
+  return lines.join("\n") + "\n";
+};
+// Clears only this phone's copy of the scrollback; nothing is sent to the host.
+window.daze.clearScrollback = () => {
+  if (term.buffer.active.type !== "normal") return false;
+  term.clear();
+  reportScrolled();
+  return true;
+};
 window.daze.bottom = () => {
   returnToLive();
   term.scrollToBottom();

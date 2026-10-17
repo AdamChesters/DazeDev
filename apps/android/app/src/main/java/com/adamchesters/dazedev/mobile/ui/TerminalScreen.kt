@@ -163,6 +163,20 @@ fun TerminalScreen(
     val uploadPicker = rememberLauncherForActivityResult(ActivityResultContracts.OpenMultipleDocuments()) { uris -> if (uris.isNotEmpty()) tools.uploadFiles(uris) }
     var more by remember { mutableStateOf(false) }
     var showFind by remember { mutableStateOf(false) }
+    var exportText by remember { mutableStateOf<String?>(null) }
+
+    suspend fun terminalText(): String? = terminalController.evaluate("window.daze?.text()", 10_000).also { if (it == null) onMessage("The terminal did not answer. Try again.") }
+    val saveExport =
+        rememberLauncherForActivityResult(ActivityResultContracts.CreateDocument("text/plain")) { uri ->
+            val text = exportText
+            exportText = null
+            if (uri != null && text != null) {
+                scope.launch {
+                    val failed = withContext(Dispatchers.IO) { runCatching { TerminalExport.save(context, uri, text) }.exceptionOrNull() }
+                    onMessage(if (failed == null) "Saved the terminal output." else failed.message ?: "Could not save the terminal output.")
+                }
+            }
+        }
     var submitting by remember(draftKey) { mutableStateOf(false) }
     var startingVoice by remember(draftKey) { mutableStateOf(false) }
     var voiceStartRequest by remember(draftKey) { mutableStateOf(0L) }
@@ -419,6 +433,31 @@ fun TerminalScreen(
                             DropdownMenuItem(text = { Text("Find in terminal") }, onClick = {
                                 more = false
                                 showFind = true
+                            })
+                            DropdownMenuItem(text = { Text("Share output") }, onClick = {
+                                more = false
+                                scope.launch {
+                                    val text = terminalText() ?: return@launch
+                                    val name = TerminalExport.fileName(uiState.selectedSessionName.orEmpty(), java.time.LocalDateTime.now())
+                                    runCatching { withContext(Dispatchers.IO) { TerminalExport.share(context, name, text) } }.onFailure { onMessage("Could not share the terminal output.") }
+                                }
+                            })
+                            DropdownMenuItem(text = { Text("Save output…") }, onClick = {
+                                more = false
+                                scope.launch {
+                                    exportText = terminalText() ?: return@launch
+                                    saveExport.launch(TerminalExport.fileName(uiState.selectedSessionName.orEmpty(), java.time.LocalDateTime.now()))
+                                }
+                            })
+                            DropdownMenuItem(text = { Text("Clear local scrollback") }, onClick = {
+                                more = false
+                                scope.launch {
+                                    when (terminalController.evaluate("window.daze?.clearScrollback()")) {
+                                        "true" -> onMessage("Cleared this phone's copy of the scrollback. Nothing was sent to the host.")
+                                        "false" -> onMessage("This program uses the full screen, so the phone keeps no scrollback for it.")
+                                        else -> onMessage("The terminal did not answer. Try again.")
+                                    }
+                                }
                             })
                             DropdownMenuItem(text = { Text("Broadcast") }, onClick = {
                                 more = false
