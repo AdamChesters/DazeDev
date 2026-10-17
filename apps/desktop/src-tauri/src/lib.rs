@@ -31,6 +31,7 @@ pub mod app_identity;
 pub mod pin;
 
 pub mod browser;
+pub mod editor;
 
 pub mod local_sessions;
 

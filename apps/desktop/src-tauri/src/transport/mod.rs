@@ -109,6 +109,8 @@ struct Connection {
     pending: Mutex<HashMap<String, mpsc::Sender<Result<Value, String>>>>,
     ready: Mutex<bool>,
     browser: crate::browser::Requests,
+    /// Editor requests shown on the desktop and not yet answered.
+    editors: crate::editor::Pending,
     /// Set for built-in SSH: authentication prompts are answered here.
     prompts: Option<Arc<crate::ssh::Prompts>>,
     /// Protocol 2 binary frames (built-in SSH); otherwise protocol 1 lines.
@@ -416,6 +418,7 @@ impl Transport {
             pending: Mutex::new(HashMap::new()),
             ready: Mutex::new(false),
             browser: crate::browser::Requests::new(nonce.clone()),
+            editors: Default::default(),
             prompts: None,
             binary: piped,
         });
@@ -465,6 +468,7 @@ impl Transport {
             pending: Mutex::new(HashMap::new()),
             ready: Mutex::new(false),
             browser: crate::browser::Requests::new(nonce.clone()),
+            editors: Default::default(),
             prompts: Some(prompts.clone()),
             binary: true,
         });
@@ -623,6 +627,11 @@ impl Transport {
             (STANDARD.encode(serde_json::to_vec(&message).map_err(|e| e.to_string())?) + "\n")
                 .into_bytes()
         };
+        if method == "editor_done" {
+            // Once answered, the request no longer counts against the limit,
+            // even if the reply is lost: the helper stops waiting either way.
+            c.editors.release(args["id"].as_str().unwrap_or(""));
+        }
         if let Err(e) = write(&c.pty, &payload) {
             lock(&c.pending).remove(&request);
             return Err(e);
@@ -631,7 +640,12 @@ impl Transport {
             .recv_timeout(Duration::from_secs(
                 if matches!(
                     method,
-                    "ping" | "sessions" | "browser_prepare" | "browser_result"
+                    "ping"
+                        | "sessions"
+                        | "browser_prepare"
+                        | "browser_result"
+                        | "editor_shown"
+                        | "editor_done"
                 ) {
                     15
                 } else {

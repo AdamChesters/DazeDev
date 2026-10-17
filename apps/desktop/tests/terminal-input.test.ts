@@ -106,20 +106,33 @@ describe('paste', () => {
     const dontAsk = vi.fn();
     const done = vi.fn();
     const confirmation = new PasteConfirmation(() => true, dontAsk, done);
-    expect(await confirmation.confirm('one line')).toBe(true);
+    expect(await confirmation.confirm('one line')).toBe('one line');
     const answer = confirmation.confirm('a\nb');
     expect(confirmation.request?.text).toBe('a\nb');
-    confirmation.answer(true, true);
-    expect(await answer).toBe(true);
+    expect(confirmation.request?.preview).toBe(false);
+    confirmation.answer('a\nb', true);
+    expect(await answer).toBe('a\nb');
     expect(dontAsk).toHaveBeenCalledOnce();
     expect(done).toHaveBeenCalledOnce();
     expect(confirmation.request).toBeNull();
   });
-  it('declines a waiting paste when the view closes', async () => {
+  it('previews long text, even on one line, and pastes the edited text', async () => {
     const confirmation = new PasteConfirmation(() => true, vi.fn(), vi.fn());
-    const answer = confirmation.confirm('a\nb');
+    expect(await confirmation.confirm('x'.repeat(2000))).toBe('x'.repeat(2000));
+    const answer = confirmation.confirm('y'.repeat(2001));
+    expect(confirmation.request?.preview).toBe(true);
+    confirmation.answer('edited');
+    expect(await answer).toBe('edited');
+    const off = new PasteConfirmation(() => false, vi.fn(), vi.fn());
+    expect(await off.confirm('z\n'.repeat(3000))).toBe('z\n'.repeat(3000));
+  });
+  it('declines a waiting paste when the view closes or another paste replaces it', async () => {
+    const confirmation = new PasteConfirmation(() => true, vi.fn(), vi.fn());
+    const first = confirmation.confirm('a\nb');
+    const second = confirmation.confirm('c\nd');
+    expect(await first).toBeNull();
     confirmation.cancel();
-    expect(await answer).toBe(false);
+    expect(await second).toBeNull();
   });
   it('pastes clipboard text only into the terminal that asked', async () => {
     const clipboard = { readText: async () => 'hello' } as unknown as Clipboard;
@@ -135,7 +148,7 @@ describe('paste', () => {
     await expect(pasteFromClipboard(() => '', { files, text }, clipboard)).rejects.toThrow();
     expect(text).toHaveBeenCalledOnce();
   });
-  it('leaves single-line paste events to xterm and takes multi-line text', () => {
+  it('leaves short single-line paste events to xterm and takes the rest', () => {
     const text = vi.fn(async () => {});
     const handle = pasteEventHandler(() => true, { files: vi.fn(async () => {}), text }, vi.fn());
     const event = (value: string) => {
@@ -146,8 +159,12 @@ describe('paste', () => {
       return paste;
     };
     expect(event('one').defaultPrevented).toBe(false);
+    expect(event('x'.repeat(1000)).defaultPrevented).toBe(false);
     expect(event('one\ntwo').defaultPrevented).toBe(true);
     expect(text).toHaveBeenCalledWith('one\ntwo');
+    // Text Codex would collapse goes through the app's paste path.
+    expect(event('x'.repeat(1001)).defaultPrevented).toBe(true);
+    expect(text).toHaveBeenLastCalledWith('x'.repeat(1001));
   });
 });
 

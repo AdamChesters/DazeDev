@@ -1,7 +1,7 @@
 // @vitest-environment jsdom
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { fireEvent, render, screen, waitFor } from '@testing-library/svelte';
-import { calls, emit, frame, resetTauri } from './support/tauri';
+import { calls, emit, frame, handlers, resetTauri } from './support/tauri';
 import { Terminal as FakeTerminal } from './support/xterm';
 import { clipboard, installDom, pasteEvent } from './support/dom';
 import Terminal from '../src/components/Terminal.svelte';
@@ -16,6 +16,10 @@ vi.mock('@xterm/addon-fit', () => import('./support/addons'));
 vi.mock('@xterm/addon-webgl', () => import('./support/addons'));
 vi.mock('@xterm/addon-image', () => import('./support/addons'));
 vi.mock('@xterm/addon-ligatures', () => import('./support/addons'));
+// Monaco does not run in jsdom; the editor panes fall back to a textarea.
+vi.mock('../src/lib/monaco', () => {
+  throw new Error('Monaco is not loaded in component tests');
+});
 
 const host: Host = {
   id: 'h1',
@@ -41,10 +45,10 @@ const pane: Pane = {
   operation: '',
 };
 
-async function attached(settings: Partial<TerminalSettings> = {}) {
+async function attached(settings: Partial<TerminalSettings> = {}, paneFields: Partial<Pane> = {}) {
   const props = {
     theme: 'blue' as const,
-    pane,
+    pane: { ...pane, ...paneFields },
     host,
     active: true,
     visible: true,
@@ -54,6 +58,7 @@ async function attached(settings: Partial<TerminalSettings> = {}) {
     onshell: vi.fn(),
     onclipboard: vi.fn(),
     onpastesetting: vi.fn(),
+    onmetadata: vi.fn(),
     settings: { ...terminalDefaults, ...settings },
   };
   const view = render(Terminal, { props });
@@ -141,6 +146,153 @@ describe('Terminal paste confirmation', () => {
   });
 });
 
+describe('Terminal long pastes', () => {
+  const editor = () => screen.getByRole<HTMLTextAreaElement>('textbox', { name: /Paste/ });
+  it('sends text Codex would collapse as pieces it shows inline', async () => {
+    const { root, write } = await attached({}, { agent: 'codex' });
+    await write('\x1b[?2004h');
+    const text = 'x'.repeat(1500);
+    root.dispatchEvent(pasteEvent(text));
+    await waitFor(() => expect(typed()).toHaveLength(2));
+    const pieces = typed().map((value) => {
+      const data = String(value);
+      expect(data.startsWith('\x1b[200~') && data.endsWith('\x1b[201~')).toBe(true);
+      return data.slice(6, -6);
+    });
+    expect(pieces.join('')).toBe(text);
+    expect(pieces.every((piece) => piece.length <= 1000)).toBe(true);
+  });
+  it('sends the same text to other programs as one paste', async () => {
+    const { root, write } = await attached();
+    await write('\x1b[?2004h');
+    root.dispatchEvent(pasteEvent('y'.repeat(1500)));
+    await waitFor(() => expect(typed()).toEqual([`\x1b[200~${'y'.repeat(1500)}\x1b[201~`]));
+  });
+  it('opens long text in the editable preview and pastes it unchanged', async () => {
+    const { root } = await attached({}, { agent: 'codex' });
+    // CRLF counts as one character, as agents count it.
+    const text = 'line\r\n'.repeat(500);
+    root.dispatchEvent(pasteEvent(text));
+    await screen.findByRole('dialog', { name: 'Paste 2,500 characters?' });
+    await waitFor(() => expect(editor().value).toContain('line'));
+    expect(typed()).toEqual([]);
+    await fireEvent.click(screen.getByRole('button', { name: 'Paste' }));
+    await waitFor(() => expect(typed()).toEqual(['line\r'.repeat(500)]));
+    expect(screen.queryByRole('dialog')).toBeNull();
+  });
+  it('pastes the edited text, or nothing when cancelled', async () => {
+    const { root } = await attached();
+    root.dispatchEvent(pasteEvent('z'.repeat(2500)));
+    await screen.findByRole('dialog');
+    await waitFor(() => editor());
+    await fireEvent.input(editor(), { target: { value: 'short edit' } });
+    expect(screen.getByText(/10 characters · edited/)).toBeTruthy();
+    await fireEvent.click(screen.getByRole('button', { name: 'Paste' }));
+    await waitFor(() => expect(typed()).toEqual(['short edit']));
+    root.dispatchEvent(pasteEvent('q'.repeat(2500)));
+    await screen.findByRole('dialog');
+    await waitFor(() => editor());
+    await fireEvent.keyDown(editor(), { key: 'Escape' });
+    expect(screen.queryByRole('dialog')).toBeNull();
+    await new Promise((resolve) => setTimeout(resolve, 20));
+    expect(typed()).toEqual(['short edit']);
+  });
+});
+
+describe('Terminal editor requests', () => {
+  const id = '0123456789abcdef0123456789abcdef';
+  const request = (fields: Record<string, unknown> = {}) => ({
+    hostId: 'h1',
+    id,
+    pid: 4242,
+    name: 'codex',
+    text: 'Fix the bug.\n' + 'pasted '.repeat(400),
+    ...fields,
+  });
+  const replies = (method: string) =>
+    calls('host_rpc')
+      .filter((args) => args.method === method)
+      .map((args) => args.args);
+  it('edits the file text in a pane and returns it to the waiting program', async () => {
+    await attached();
+    emit('host-editor-open', request());
+    await screen.findByRole('dialog', { name: 'Edit for codex' });
+    expect(replies('editor_shown')).toEqual([{ id }]);
+    const field = await screen.findByRole<HTMLTextAreaElement>('textbox', { name: /Edit for/ });
+    expect(field.value).toBe(request().text);
+    await fireEvent.input(field, { target: { value: 'Rewritten prompt' } });
+    await fireEvent.click(screen.getByRole('button', { name: 'Save' }));
+    await waitFor(() => expect(replies('editor_done')).toEqual([{ id, text: 'Rewritten prompt' }]));
+    expect(screen.queryByRole('dialog')).toBeNull();
+    expect(typed()).toEqual([]);
+  });
+  it('returns the original text unchanged when saved without edits', async () => {
+    await attached();
+    const text = 'crlf\r\nkept\r\n';
+    emit('host-editor-open', request({ text }));
+    await screen.findByRole('dialog');
+    await fireEvent.click(screen.getByRole('button', { name: 'Save' }));
+    await waitFor(() => expect(replies('editor_done')).toEqual([{ id, text }]));
+  });
+  it('cancels without text, and cancels when the view closes', async () => {
+    const { unmount } = await attached();
+    emit('host-editor-open', request());
+    await screen.findByRole('dialog');
+    await fireEvent.click(screen.getByRole('button', { name: 'Cancel' }));
+    await waitFor(() => expect(replies('editor_done')).toEqual([{ id }]));
+    const second = 'fedcba9876543210fedcba9876543210';
+    emit('host-editor-open', request({ id: second }));
+    await screen.findByRole('dialog');
+    unmount();
+    await waitFor(() => expect(replies('editor_done')).toEqual([{ id }, { id: second }]));
+  });
+  it('refuses requests for other terminals so the host uses its terminal editor', async () => {
+    await attached();
+    emit('host-editor-open', request({ pid: 999 }));
+    emit('host-editor-open', request({ hostId: 'h2' }));
+    await waitFor(() => expect(replies('editor_done')).toHaveLength(2));
+    for (const reply of replies('editor_done'))
+      expect(reply).toEqual({ id, error: expect.stringContaining('terminal editor') });
+    expect(calls('host_rpc').map((args) => args.hostId)).toContain('h2');
+    expect(screen.queryByRole('dialog')).toBeNull();
+  });
+  it('hands an open edit to the terminal editor when the pane moves to its own window', async () => {
+    const { rerender, props } = await attached();
+    emit('host-editor-open', request());
+    await screen.findByRole('dialog');
+    await rerender({ ...props, floating: true, visible: false });
+    await waitFor(() =>
+      expect(replies('editor_done')).toEqual([
+        { id, error: expect.stringContaining('terminal editor') },
+      ]),
+    );
+    expect(screen.queryByRole('dialog')).toBeNull();
+  });
+  it('lets the user continue in the terminal editor instead', async () => {
+    await attached();
+    emit('host-editor-open', request());
+    await screen.findByRole('dialog');
+    await fireEvent.click(screen.getByRole('button', { name: 'Terminal editor' }));
+    await waitFor(() =>
+      expect(replies('editor_done')).toEqual([{ id, error: 'Opening the terminal editor.' }]),
+    );
+    expect(screen.queryByRole('dialog')).toBeNull();
+  });
+  it('keeps the edit open with a warning when the text could not be returned', async () => {
+    handlers.set('host_rpc', (args) => {
+      if (args.method === 'editor_done' && (args.args as { text?: string }).text)
+        throw new Error('Unknown editor request');
+    });
+    await attached();
+    emit('host-editor-open', request());
+    await screen.findByRole('dialog');
+    await fireEvent.click(screen.getByRole('button', { name: 'Save' }));
+    expect((await screen.findByRole('alert')).textContent).toContain('Copy your text');
+    await fireEvent.click(screen.getByRole('button', { name: 'Cancel' }));
+    await waitFor(() => expect(screen.queryByRole('dialog')).toBeNull());
+  });
+});
+
 describe('Terminal OSC 52 clipboard writes', () => {
   const osc52 = (text: string) => `\x1b]52;c;${btoa(text)}\x07`;
   it('copies and notifies with the default "notify" setting', async () => {
@@ -161,6 +313,27 @@ describe('Terminal OSC 52 clipboard writes', () => {
     await new Promise((resolve) => setTimeout(resolve, 20));
     expect(clipboard.writeText).not.toHaveBeenCalled();
     expect(props.onclipboard).not.toHaveBeenCalled();
+  });
+});
+
+describe('Terminal status polling', () => {
+  const statusPolls = () =>
+    calls('host_rpc').filter((args) => args.method === 'terminal_status').length;
+  it('treats a reply that is not a status object as unknown status', async () => {
+    // The first poll runs 500 ms after mounting. A missing reply used to
+    // become the pane status and throw in the ended-session banner.
+    handlers.set('host_rpc', () => undefined);
+    const { props } = await attached();
+    await waitFor(() => expect(statusPolls()).toBeGreaterThan(0), { timeout: 3000 });
+    await new Promise((resolve) => setTimeout(resolve, 20));
+    expect(props.onmetadata).not.toHaveBeenCalledWith(undefined);
+    expect(screen.queryByLabelText('Session ended')).toBeNull();
+  });
+  it('reports a real status reply', async () => {
+    const status = { attachment: 'tmux', nestedSsh: false, hostname: 'build', paneDead: false };
+    handlers.set('host_rpc', (args) => (args.method === 'terminal_status' ? status : undefined));
+    const { props } = await attached();
+    await waitFor(() => expect(props.onmetadata).toHaveBeenCalledWith(status), { timeout: 3000 });
   });
 });
 

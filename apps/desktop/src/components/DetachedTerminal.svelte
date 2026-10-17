@@ -53,6 +53,8 @@
   import { terminalDefaults } from '../lib/terminals';
   import { appShortcut, matchesAppShortcut } from '../lib/app-shortcuts';
   import PasteConfirm from './PasteConfirm.svelte';
+  import EditPane from './EditPane.svelte';
+  import { pasteLength } from '../lib/paste';
   import '@xterm/xterm/css/xterm.css';
 
   const paneId = new URLSearchParams(location.search).get('terminal') || '';
@@ -268,9 +270,11 @@
     () => void request('paste-confirm-off').catch(fail),
     () => terminal.focus(),
   );
-  // Clipboard text: multi-line text asks first, then follows normal paste rules.
-  async function pasteText(text: string, destination = context) {
-    if (!(await confirmation.confirm(text))) return;
+  // Clipboard text: multi-line text asks first and long text opens the
+  // editable preview, then it follows normal paste rules.
+  async function pasteText(original: string, destination = context) {
+    const text = await confirmation.confirm(original);
+    if (text === null) return;
     if (!destination || context !== destination)
       throw new Error('Terminal changed while pasting. Paste again.');
     context = await request<string>('paste', { text, context: destination });
@@ -604,11 +608,21 @@
         menu = true;
       }}
     ></div>
-    {#if confirmation.request}<PasteConfirm
-        text={confirmation.request.text}
-        onpaste={(dontAsk) => confirmation.answer(true, dontAsk)}
-        oncancel={() => confirmation.answer(false)}
-      />{/if}
+    {#key confirmation.request}
+      {#if confirmation.request?.preview}<EditPane
+          title={`Paste ${pasteLength(confirmation.request.text).toLocaleString()} characters?`}
+          hint="Long text opens here first. Review or edit it; nothing is sent until you choose Paste."
+          text={confirmation.request.text}
+          submitLabel="Paste"
+          dontAsk={false}
+          onsubmit={(text, dontAsk) => confirmation.answer(text, dontAsk)}
+          oncancel={() => confirmation.answer(null)}
+        />{:else if confirmation.request}<PasteConfirm
+          text={confirmation.request.text}
+          onpaste={(dontAsk) => confirmation.answer(confirmation.request?.text ?? null, dontAsk)}
+          oncancel={() => confirmation.answer(null)}
+        />{/if}
+    {/key}
   </div>
 </div>
 

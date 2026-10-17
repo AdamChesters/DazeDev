@@ -154,6 +154,13 @@ pub(super) fn request_frame(request: &Value) -> Result<Vec<u8>, String> {
 pub(super) enum HostMessage {
     /// The helper asks the desktop to open a link.
     BrowserOpen { id: String, url: Value },
+    /// A program ran the editor helper; the desktop may edit the file text.
+    EditorOpen {
+        id: String,
+        pid: Value,
+        name: Value,
+        text: Value,
+    },
     /// The helper started; carries its identity and protocol version.
     Ready(Value),
     /// The answer to one request.
@@ -171,6 +178,12 @@ struct Envelope {
     #[serde(default)]
     url: Value,
     #[serde(default)]
+    pid: Value,
+    #[serde(default)]
+    name: Value,
+    #[serde(default)]
+    text: Value,
+    #[serde(default)]
     result: Value,
     #[serde(default)]
     error: Value,
@@ -183,6 +196,12 @@ impl HostMessage {
             Some("browser-open") => Some(Self::BrowserOpen {
                 id: envelope.id,
                 url: envelope.url,
+            }),
+            Some("editor-open") => Some(Self::EditorOpen {
+                id: envelope.id,
+                pid: envelope.pid,
+                name: envelope.name,
+                text: envelope.text,
             }),
             Some(_) => None,
             None if envelope.id == "ready" => Some(Self::Ready(envelope.result)),

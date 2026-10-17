@@ -20,6 +20,9 @@
     terminalTheme,
   } from '../lib/terminal-setup';
   import PasteConfirm from './PasteConfirm.svelte';
+  import EditPane from './EditPane.svelte';
+  import { pastePieces, pasteLength } from '../lib/paste';
+  import { editorRequests, type EditRequest, type EditorResult } from '../lib/editor-requests';
   import { onMount, tick } from 'svelte';
   import { AckBatcher, outputChannel } from '../lib/terminal-bytes';
   import { terminalBudget, type BudgetMember } from '../lib/terminal-budget';
@@ -141,6 +144,14 @@
       onstate(pane.shell ? 'Shell' : 'Attached');
     }
   }
+  // A status reply that is not a status object (an older or failing helper)
+  // counts as a failed poll, so the pane keeps a valid status.
+  async function paneStatus(pid: number): Promise<PaneStatus> {
+    const value = await rpc<PaneStatus | null>(pane.hostId, 'terminal_status', { pid });
+    if (!value || typeof value !== 'object' || typeof value.attachment !== 'string')
+      throw new Error('Invalid terminal status reply');
+    return value;
+  }
   function recover(): Promise<void> {
     if (recoveryPending) return recoveryPending;
     const target = observedStatus;
@@ -153,7 +164,7 @@
       try {
         await recoverDeadPane(target, (args) => rpc(pane.hostId, 'terminal_recover', args));
         if (dead || current !== generation) return;
-        const value = await rpc<PaneStatus>(pane.hostId, 'terminal_status', { pid: remotePid });
+        const value = await paneStatus(remotePid);
         if (dead || current !== generation) return;
         if (value.paneDead) throw Error('The terminal is still ended. Try Open terminal again.');
         if (
@@ -337,10 +348,47 @@
     () => onpastesetting(false),
     () => term.focus(),
   );
-  // Clipboard text typed by the user: multi-line text asks first.
+  // Clipboard text typed by the user: multi-line text asks first and long
+  // text opens the editable preview.
   async function pasteUserText(text: string) {
-    if (await confirmation.confirm(text)) await paste(text);
+    const accepted = await confirmation.confirm(text);
+    if (accepted !== null) await paste(accepted);
   }
+  // The program in this terminal, for paste handling: the host's view of the
+  // tmux pane when known, otherwise the agent DazeDev started here.
+  function agent() {
+    return observedStatus.attachment === 'tmux' && observedStatus.agent
+      ? observedStatus.agent
+      : pane.agent;
+  }
+  // A file a program here opened with DazeDev's $VISUAL/$EDITOR helper.
+  let editing = $state<{ request: EditRequest; busy: boolean; error: string } | null>(null);
+  async function finishEdit(result: EditorResult) {
+    const current = editing;
+    if (!current || current.busy) return;
+    current.busy = true;
+    current.error = '';
+    try {
+      await editorRequests.finish(current.request, result);
+    } catch (e) {
+      // A lost cancel needs no answer: the request is gone either way.
+      if ('text' in result && editing === current) {
+        current.busy = false;
+        current.error = `Could not return the text: ${e}. The program may have opened a terminal editor instead. Copy your text before cancelling.`;
+        return;
+      }
+    }
+    if (editing === current) editing = null;
+    if (!dead) term.focus();
+  }
+  // A detached pane's workspace view is hidden: hand an open edit back so
+  // the helper opens the terminal editor, which the terminal window shows.
+  $effect(() => {
+    if (floating && editing && !editing.busy)
+      void finishEdit({
+        error: 'The terminal moved to its own window. Using the terminal editor.',
+      });
+  });
   function uploadDestination() {
     return !dead && opened && remoteReady && !detached
       ? JSON.stringify([generation, pane.hostId, pane.sessionId, pane.stamp || ''])
@@ -369,9 +417,13 @@
     // A line break may execute immediately in applications without bracketed paste.
     if (source === 'review') text = reviewPasteText(text, term.modes.bracketedPasteMode);
     if (source === 'command') checkCommandText(text);
+    // Codex shows clipboard text inline when it arrives in pieces under its
+    // collapse threshold; the pieces join back to exactly this text.
+    const pieces =
+      source === 'clipboard' ? pastePieces(text, agent(), term.modes.bracketedPasteMode) : [text];
     explicitPaste = true;
     try {
-      term.paste(text);
+      for (const piece of pieces) term.paste(piece);
     } finally {
       explicitPaste = false;
     }
@@ -525,7 +577,7 @@
       const epoch = recoveryEpoch;
       try {
         if (opened && remoteReady && connected && (visible || floating)) {
-          const value = await rpc<PaneStatus>(pane.hostId, 'terminal_status', { pid: remotePid });
+          const value = await paneStatus(remotePid);
           if (
             !disposed &&
             current === generation &&
@@ -715,6 +767,19 @@
     disposers.push(() => liveSearch.release());
     const searchOutput = term.onWriteParsed(() => notifySearchUpdate(pane.id));
     disposers.push(() => searchOutput.dispose());
+    disposers.push(
+      editorRequests.register({
+        hostId: () => pane.hostId,
+        // A hidden view of a detached pane cannot show the editor; the
+        // helper then uses the terminal editor in that window instead.
+        pid: () => (opened && remoteReady && !detached && !floating && !dead ? remotePid : 0),
+        open: (request) => {
+          if (editing) return false;
+          editing = { request, busy: false, error: '' };
+          return true;
+        },
+      }),
+    );
     terminals.set(pane.id, {
       recover,
       focus: () => {
@@ -869,6 +934,9 @@
       cancelAnimationFrame(fitFrame);
       resizer.dispose();
       confirmation.cancel();
+      // Closing the view cancels an open edit; the program keeps its file.
+      if (editing && !editing.busy)
+        void editorRequests.finish(editing.request, { cancelled: true }).catch(() => {});
       notifySearchUpdate(pane.id, true);
       terminals.delete(pane.id);
       binary.dispose();
@@ -945,11 +1013,37 @@
       >
     </button>
   {/if}
-  {#if confirmation.request}<PasteConfirm
-      text={confirmation.request.text}
-      onpaste={(dontAsk) => confirmation.answer(true, dontAsk)}
-      oncancel={() => confirmation.answer(false)}
-    />{/if}
+  {#key confirmation.request}
+    {#if confirmation.request?.preview}<EditPane
+        title={`Paste ${pasteLength(confirmation.request.text).toLocaleString()} characters?`}
+        hint="Long text opens here first. Review or edit it; nothing is sent until you choose Paste."
+        text={confirmation.request.text}
+        submitLabel="Paste"
+        dontAsk={false}
+        onsubmit={(text, dontAsk) => confirmation.answer(text, dontAsk)}
+        oncancel={() => confirmation.answer(null)}
+      />{:else if confirmation.request}<PasteConfirm
+        text={confirmation.request.text}
+        onpaste={(dontAsk) => confirmation.answer(confirmation.request?.text ?? null, dontAsk)}
+        oncancel={() => confirmation.answer(null)}
+      />{/if}
+  {/key}
+  {#key editing?.request.id}
+    {#if editing}<EditPane
+        title={`Edit for ${editing.request.name}`}
+        hint="The program is waiting for this text. Save returns it; Cancel leaves the file as it was."
+        text={editing.request.text}
+        submitLabel="Save"
+        busy={editing.busy}
+        error={editing.error}
+        onsubmit={(text) => void finishEdit({ text })}
+        oncancel={() => void finishEdit({ cancelled: true })}
+        alternate={{
+          label: 'Terminal editor',
+          run: () => void finishEdit({ error: 'Opening the terminal editor.' }),
+        }}
+      />{/if}
+  {/key}
   {#if transcript}<div class="live-transcript" aria-live="off">
       <span>Transcribing</span>
       {transcript}
