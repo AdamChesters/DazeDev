@@ -116,9 +116,9 @@ def verify(package=None, binary=None, microphone=False, screenshot=None):
                     # Wait for native initialization before replacing the first-run dialog.
                     wait_for(lambda: js("return !!document.querySelector('.modal')"), "voice setup dialog")
                     js("document.querySelector('button[aria-label=\"Settings\"]').click()")
-                    wait_for(lambda: js("return document.body.innerText.includes('Portable data:')"),
+                    wait_for(lambda: js("return document.body.textContent.includes('Portable data:')"),
                              "native client information")
-                    assert str(data) in js("return document.body.innerText")
+                    assert str(data) in js("return document.body.textContent")  # inside a closed <details>
                     theme = "[...document.querySelectorAll('select')].find(s=>[...s.options].some(o=>o.value==='charcoal'))"
                     if launch == 0:
                         assert js(f"return {theme}.value") == "blue"
