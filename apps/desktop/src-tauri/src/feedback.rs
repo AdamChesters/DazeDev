@@ -176,7 +176,7 @@ mod tests {
     #[test]
     fn bundled_content_matches_native_feedback_contract() {
         let content: serde_json::Value = serde_json::from_str(SUPPORT_CONTENT).unwrap();
-        assert_eq!(content["schemaVersion"], 1);
+        assert_eq!(content["schemaVersion"], 2);
         assert_eq!(content["feedback"]["ack"]["maxBytes"], MAX_ACK_BYTES);
         assert_eq!(content["feedback"]["ack"]["httpStatus"], 200);
         assert_eq!(
