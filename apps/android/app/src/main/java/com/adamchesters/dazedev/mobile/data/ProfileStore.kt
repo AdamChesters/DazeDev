@@ -1,6 +1,7 @@
 package com.adamchesters.dazedev.mobile.data
 
 import android.content.Context
+import com.adamchesters.dazedev.mobile.host.BackgroundWindow
 import com.adamchesters.dazedev.mobile.releases.UpdateStore
 import org.json.JSONArray
 import org.json.JSONObject
@@ -46,10 +47,15 @@ class ProfileStore(
             prefs.edit().putBoolean("keep_other_size", value).apply()
         }
 
-    var keepConnected: Boolean
-        get() = prefs.getBoolean("keep_connected", false)
+    /** Replaces the former on/off "keep_connected" switch, which is read once and then removed. */
+    var backgroundWindow: BackgroundWindow
+        get() = BackgroundWindow.stored(prefs.getString("background_window", null), prefs.getBoolean("keep_connected", false))
         set(value) {
-            prefs.edit().putBoolean("keep_connected", value).apply()
+            prefs
+                .edit()
+                .putString("background_window", value.name)
+                .remove("keep_connected")
+                .apply()
         }
 
     fun load(): ConnectionProfile = loadAll().firstOrNull() ?: ConnectionProfile()

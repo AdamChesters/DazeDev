@@ -9,8 +9,11 @@ import com.adamchesters.dazedev.mobile.ssh.HostKeyPromptCoordinator
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.Job
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.TimeoutCancellationException
+import kotlinx.coroutines.async
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableSharedFlow
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharedFlow
@@ -19,6 +22,7 @@ import kotlinx.coroutines.flow.asSharedFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.sync.withLock
+import kotlinx.coroutines.withTimeoutOrNull
 import org.json.JSONArray
 import org.json.JSONObject
 
@@ -33,6 +37,8 @@ class HostRegistry(
     private val credentials: Credentials,
     private val openBrowser: (String) -> String?,
     val scope: CoroutineScope = CoroutineScope(SupervisorJob() + Dispatchers.Main.immediate),
+    /** Milliseconds that keep counting while the phone sleeps (elapsedRealtime in the app). */
+    private val clock: () -> Long = { System.nanoTime() / 1_000_000 },
 ) {
     private val entries = linkedMapOf<String, HostEntry>()
     private val hostList = MutableStateFlow<List<HostSnapshot>>(emptyList())
@@ -46,9 +52,23 @@ class HostRegistry(
 
     val all: Collection<HostEntry> get() = entries.values
 
-    /** The "Keep hosts connected in the background" setting. */
-    val keepConnected = MutableStateFlow(false)
+    /** The "Stay connected in the background" setting. */
+    val backgroundWindow = MutableStateFlow(BackgroundWindow.Default)
     private val reconnects = AutoReconnect(this)
+
+    private val visible = MutableStateFlow(true)
+
+    /** Whether the app is on screen (between ON_START and ON_STOP). */
+    val foreground: StateFlow<Boolean> = visible.asStateFlow()
+    private val windowEnd = MutableStateFlow<Long?>(null)
+
+    /** When the running background window closes, in [clock] time; null in the foreground or without a limit. */
+    val backgroundEndsAt: StateFlow<Long?> = windowEnd.asStateFlow()
+    private var backgroundSince = 0L
+    private var windowTimer: Job? = null
+
+    /** Why connections closed in the background, shown once on return. */
+    private var closedInBackground: String? = null
 
     /** Hosts to reconnect when the phone's network returns. */
     private val waitingForNetwork = linkedSetOf<String>()
@@ -117,6 +137,7 @@ class HostRegistry(
         h.profile = normalized
         h.phase = ConnectionPhase.Connecting
         h.linkError = null
+        h.resumeOnReturn = false
         publish()
         h.connectJob = scope.launch { runConnect(h, normalized, secret, verify, onConnected) { if (!quiet) message(it) } }
         return true
@@ -196,8 +217,10 @@ class HostRegistry(
     /** Stops a connection attempt or an open connection without a link error. */
     fun cancel(id: String?) {
         val h = entry(id) ?: return
-        h.reconnect?.cancel()
+        stopReconnect(h)
         h.connectJob?.cancel()
+        stopCheck(h)
+        h.resumeOnReturn = false
         h.link.close()
         h.ssh.disconnectNow()
         h.phase = ConnectionPhase.Disconnected
@@ -207,9 +230,11 @@ class HostRegistry(
     fun disconnect(id: String?) {
         val h = entry(id) ?: return
         waitingForNetwork.remove(h.profile.id)
-        h.reconnect?.cancel()
+        stopReconnect(h)
         h.connectJob?.cancel()
         h.background?.cancel()
+        stopCheck(h)
+        h.resumeOnReturn = false
         h.link.close()
         h.ssh.disconnectNow()
         h.phase = ConnectionPhase.Disconnected
@@ -227,21 +252,24 @@ class HostRegistry(
 
     /**
      * The phone has no network, so every open connection is gone. Hosts that can reconnect without
-     * a secret wait for the network (keep connected on); the others show Disconnected.
+     * a secret wait for the network (on screen or inside the background window); the others show
+     * Disconnected.
      */
     fun networkLost() {
         entries.values.forEach { h ->
             val reconnecting = h.reconnect?.isActive == true
             // Attempts without a network only fail; they start again when it returns.
-            h.reconnect?.cancel()
+            stopReconnect(h)
             if (h.phase == ConnectionPhase.Connected) {
                 linkLost(h, "The phone lost its network connection.", retry = false)
             } else if (!reconnecting) {
                 return@forEach
             }
-            if (keepConnected.value && h.unattended) {
+            if (h.unattended && mayReconnect()) {
                 waitingForNetwork.add(h.profile.id)
                 h.linkError = "Waiting for the network to reconnect ${h.label}."
+            } else if (h.unattended) {
+                h.resumeOnReturn = true
             }
         }
         publish()
@@ -252,17 +280,25 @@ class HostRegistry(
         val waiting = waitingForNetwork.mapNotNull(::entry)
         waitingForNetwork.clear()
         waiting
-            .filter { keepConnected.value && it.unattended && it.phase == ConnectionPhase.Disconnected }
-            .forEach { reconnects.start(it, "Lost connection to ${it.label}. The network changed.") }
+            .filter { it.unattended && it.phase == ConnectionPhase.Disconnected }
+            .forEach {
+                if (mayReconnect()) {
+                    reconnects.start(it, "Lost connection to ${it.label}. The network changed.")
+                } else {
+                    it.resumeOnReturn = true
+                }
+            }
     }
 
     private fun linkLost(
         h: HostEntry,
         reason: String,
         retry: Boolean = true,
+        waits: List<Long>? = null,
     ) {
         if (h.phase != ConnectionPhase.Connected) return
         h.background?.cancel()
+        stopCheck(h)
         h.link.close()
         h.ssh.disconnectNow()
         h.phase = ConnectionPhase.Disconnected
@@ -270,20 +306,133 @@ class HostRegistry(
         h.linkError = error
         hostEvents.tryEmit(HostEvent.LinkLost(h.profile.id, error))
         publish()
-        if (retry && keepConnected.value && h.unattended) reconnects.start(h, error)
+        if (!retry || !h.unattended) return
+        if (mayReconnect()) reconnects.start(h, error, waits) else h.resumeOnReturn = true
     }
 
     internal fun reconnected(h: HostEntry) {
         hostEvents.tryEmit(HostEvent.Reconnected(h.profile.id))
     }
 
+    /** Automatic reconnects run while the app is on screen, or in the background inside the window. */
+    internal fun mayReconnect(): Boolean = visible.value || (backgroundWindow.value.keepsConnections && windowEnd.value.let { it == null || clock() < it })
+
+    /**
+     * Called on ON_START and ON_STOP. Leaving starts the background window; returning closes it,
+     * checks every connected host and reconnects unattended hosts that closed meanwhile.
+     */
+    fun setForeground(value: Boolean) {
+        if (visible.value == value) return
+        visible.value = value
+        windowTimer?.cancel()
+        windowTimer = null
+        if (!value) {
+            backgroundSince = clock()
+            val limit = backgroundWindow.value.millis?.takeIf { it > 0 }
+            windowEnd.value = limit?.let { backgroundSince + it }
+            if (limit != null) {
+                windowTimer =
+                    scope.launch {
+                        delay(limit)
+                        closeBackgroundConnections()
+                    }
+            }
+            return
+        }
+        // The timer may not have run if the phone slept or Android paused the app.
+        val end = windowEnd.value
+        windowEnd.value = null
+        if (end != null && clock() >= end) closeBackgroundConnections()
+        closedInBackground?.let { reason ->
+            closedInBackground = null
+            message(reason)
+        }
+        entries.values.forEach { h ->
+            when {
+                h.phase == ConnectionPhase.Connected -> {
+                    check(h)
+                }
+
+                h.resumeOnReturn && h.unattended && h.phase == ConnectionPhase.Disconnected && !h.reconnecting -> {
+                    reconnects.start(h, h.linkError ?: "Lost connection to ${h.label}.", reconnects.onReturn)
+                }
+            }
+        }
+        publish()
+    }
+
+    /** The background window ended: disconnect cleanly and record why. */
+    private fun closeBackgroundConnections() {
+        windowTimer = null
+        val reason = "Disconnected after ${backgroundWindow.value.label} in the background."
+        var closed = false
+        entries.values
+            .filter { it.phase != ConnectionPhase.Disconnected || it.reconnecting || it.profile.id in waitingForNetwork || it.resumeOnReturn }
+            .forEach { h ->
+                val resume = h.unattended
+                disconnect(h.profile.id)
+                h.linkError = reason
+                h.resumeOnReturn = resume
+                hostEvents.tryEmit(HostEvent.LinkLost(h.profile.id, reason))
+                closed = true
+            }
+        if (closed) closedInBackground = reason
+        publish()
+    }
+
+    /** Asks a connected host to answer within a few seconds; a dead link goes through the lost-link path. */
+    private fun check(h: HostEntry) {
+        stopCheck(h)
+        h.checking = true
+        h.check =
+            scope.launch {
+                val alive = answers(h)
+                h.checking = false
+                h.check = null
+                when {
+                    h.phase != ConnectionPhase.Connected -> {
+                        publish()
+                    }
+
+                    alive -> {
+                        publish()
+                        hostEvents.tryEmit(HostEvent.Checked(h.profile.id))
+                    }
+
+                    else -> {
+                        linkLost(h, "It did not answer after the app returned to the screen.", waits = reconnects.onReturn)
+                    }
+                }
+            }
+    }
+
+    private suspend fun answers(h: HostEntry): Boolean {
+        if (!h.ssh.isConnected || !h.link.isOpen) return false
+        // A write to a dead connection can block, so the wait does not depend on the probe returning.
+        val ping = scope.async { runCatching { h.link.probe(PROBE_TIMEOUT_MS) }.isSuccess }
+        return withTimeoutOrNull(PROBE_TIMEOUT_MS + 500) { ping.await() } ?: false.also { ping.cancel() }
+    }
+
+    private fun stopReconnect(h: HostEntry) {
+        h.reconnect?.cancel()
+        h.reconnect = null
+        h.reconnecting = false
+    }
+
+    private fun stopCheck(h: HostEntry) {
+        h.check?.cancel()
+        h.check = null
+        h.checking = false
+    }
+
     /** Forgets a saved host: its connection, profile, stored key, passphrase and host key. */
     suspend fun remove(id: String) {
         val h = entries.remove(id) ?: return
-        h.reconnect?.cancel()
+        stopReconnect(h)
         h.connectJob?.cancel()
         h.background?.cancel()
         h.watchers?.cancel()
+        stopCheck(h)
         h.link.close()
         h.ssh.disconnectNow()
         prompts.challengeChanged(h, null)
@@ -376,5 +525,10 @@ class HostRegistry(
         trust: Boolean,
     ) {
         prompts.answerChallenge(entry(hostId) ?: return, id, trust)
+    }
+
+    private companion object {
+        /** Long enough for a phone radio and a Tailscale path to wake, short enough to feel immediate. */
+        const val PROBE_TIMEOUT_MS = 6_000L
     }
 }

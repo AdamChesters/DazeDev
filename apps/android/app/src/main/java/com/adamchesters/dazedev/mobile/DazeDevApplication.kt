@@ -1,6 +1,7 @@
 package com.adamchesters.dazedev.mobile
 
 import android.app.Application
+import android.os.SystemClock
 import com.adamchesters.dazedev.mobile.data.ProfileStore
 import com.adamchesters.dazedev.mobile.data.StoredCredentials
 import com.adamchesters.dazedev.mobile.host.HelperSources
@@ -32,9 +33,12 @@ class DazeDevApplication : Application() {
                 helpers = ::helperSources,
                 credentials = credentials,
                 openBrowser = { url -> BrowserLauncher.open(this, url) },
+                clock = SystemClock::elapsedRealtime,
             )
-        hosts.keepConnected.value = store.keepConnected
-        KeepConnected(this, hosts, hosts.keepConnected).start()
+        // Saving the migrated value removes the former on/off setting.
+        store.backgroundWindow = store.backgroundWindow
+        hosts.backgroundWindow.value = store.backgroundWindow
+        KeepConnected(this, hosts).start()
         NetworkWatcher(this, hosts).start()
         val saved = store.loadAll().map { it.id }.toSet()
         hosts.scope.launch { runCatching { credentials.prune(saved) } }

@@ -16,7 +16,7 @@ import com.adamchesters.dazedev.mobile.DazeDevApplication
 import com.adamchesters.dazedev.mobile.MainActivity
 import com.adamchesters.dazedev.mobile.R
 
-/** Keeps the app process, and so its host connections, alive while the app is in the background. */
+/** Keeps the app process, and so its host connections, alive during the background window. */
 class KeepConnectedService : Service() {
     override fun onBind(intent: Intent?): IBinder? = null
 
@@ -50,9 +50,11 @@ class KeepConnectedService : Service() {
             context.getSystemService(NotificationManager::class.java).createNotificationChannel(channel)
         }
 
+        /** [endsAt] is the wall-clock time the background window closes, or null without a limit. */
         fun notification(
             context: Context,
             count: Int,
+            endsAt: Long? = null,
         ): Notification {
             val open =
                 PendingIntent.getActivity(
@@ -68,11 +70,29 @@ class KeepConnectedService : Service() {
                     Intent(context, KeepConnectedService::class.java).setAction(ACTION_DISCONNECT_ALL),
                     PendingIntent.FLAG_IMMUTABLE or PendingIntent.FLAG_UPDATE_CURRENT,
                 )
-            return NotificationCompat
-                .Builder(context, CHANNEL)
-                .setSmallIcon(R.drawable.ic_stat_connected)
-                .setContentTitle(if (count == 1) "1 host connected" else "$count hosts connected")
-                .setContentText("DazeDev keeps your SSH connections open in the background.")
+            val builder =
+                NotificationCompat
+                    .Builder(context, CHANNEL)
+                    .setSmallIcon(R.drawable.ic_stat_connected)
+                    .setContentTitle(
+                        when (count) {
+                            0 -> "Reconnecting hosts"
+                            1 -> "1 host connected"
+                            else -> "$count hosts connected"
+                        },
+                    )
+            if (endsAt == null) {
+                builder.setContentText("DazeDev keeps your SSH connections open in the background.").setShowWhen(false)
+            } else {
+                // The chronometer counts down to the end of the background window without further updates.
+                builder
+                    .setContentText("DazeDev disconnects when the timer ends.")
+                    .setWhen(endsAt)
+                    .setShowWhen(true)
+                    .setUsesChronometer(true)
+                    .setChronometerCountDown(true)
+            }
+            return builder
                 .setOngoing(true)
                 .setOnlyAlertOnce(true)
                 .setSilent(true)

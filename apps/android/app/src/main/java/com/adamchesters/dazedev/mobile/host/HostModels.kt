@@ -50,6 +50,8 @@ data class HostSnapshot(
     val ending: String?,
     val linkError: String?,
     val recoveryDraft: Boolean,
+    val checking: Boolean = false,
+    val reconnecting: Boolean = false,
 )
 
 sealed interface HostEvent {
@@ -63,6 +65,11 @@ sealed interface HostEvent {
     ) : HostEvent
 
     data class Reconnected(
+        val hostId: String,
+    ) : HostEvent
+
+    /** The host answered the check after the app returned to the screen. */
+    data class Checked(
         val hostId: String,
     ) : HostEvent
 

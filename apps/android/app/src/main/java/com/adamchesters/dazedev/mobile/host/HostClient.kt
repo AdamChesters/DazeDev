@@ -197,9 +197,21 @@ class HostClient(
         method: String,
         args: JSONObject,
         timeoutMs: Long,
+    ): Any = send(method, args, timeoutMs, limited = true)
+
+    // The liveness check skips the request limit: requests stuck on a dead link must not hide it.
+    override suspend fun probe(timeoutMs: Long) {
+        send("ping", JSONObject(), timeoutMs, limited = false)
+    }
+
+    private suspend fun send(
+        method: String,
+        args: JSONObject,
+        timeoutMs: Long,
+        limited: Boolean,
     ): Any {
         val active = channel?.takeIf { it.isConnected } ?: error("Reconnect this host first.")
-        require(requests.tryAcquire()) { "Host is busy. Wait for the current operation." }
+        require(!limited || requests.tryAcquire()) { "Host is busy. Wait for the current operation." }
         val id = ids.incrementAndGet().toString()
         val deferred = CompletableDeferred<JSONObject>()
         pending[id] = deferred
@@ -226,7 +238,7 @@ class HostClient(
         } finally {
             pending.remove(id)
             deferred.cancel()
-            requests.release()
+            if (limited) requests.release()
         }
     }
 

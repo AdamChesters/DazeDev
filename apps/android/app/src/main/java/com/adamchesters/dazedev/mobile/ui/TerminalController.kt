@@ -45,7 +45,7 @@ class TerminalController(
     /** The session to reopen once its host reconnects: host id to (session id, stamp, name). */
     var resumeAfterConnect: Pair<String, Triple<String, String, String>>? = null
 
-    /** Connects a host without a secret (Tailscale SSH). */
+    /** Connects a host without a typed secret (Tailscale SSH, or a stored key needing no typed passphrase). */
     var connect: (ConnectionProfile) -> Unit = {}
 
     /** The "Keep the other devices' size" setting. */
@@ -212,7 +212,7 @@ class TerminalController(
         if (h.phase == ConnectionPhase.Connecting) return
         val session = Triple(s.selectedSessionId ?: return, s.selectedStamp ?: return, s.selectedSessionName.orEmpty())
         resumeAfterConnect = h.profile.id to session
-        if (h.profile.authMethod == AuthMethod.TailscaleSsh) {
+        if (h.unattended || h.profile.authMethod == AuthMethod.TailscaleSsh) {
             ui.update { it.copy(terminalError = null) }
             connect(h.profile)
             return
@@ -240,10 +240,10 @@ class TerminalController(
         return true
     }
 
-    /** Opens the shown terminal again after its host reconnected by itself. */
+    /** Opens the shown terminal again after its host reconnected by itself or answered the return check. */
     fun reattach(hostId: String) {
         val s = ui.value
-        if (foreground && s.selectedTargetHost == hostId && s.selectedSessionId != null && openLink.value == null && s.staleSession == null) refreshTerminal()
+        if (foreground && s.selectedTargetHost == hostId && s.selectedSessionId != null && openLink.value?.connected != true && attachment?.isActive != true && s.staleSession == null) refreshTerminal()
     }
 
     /** Closes the terminal when its host link is lost. */
@@ -316,7 +316,10 @@ class TerminalController(
         if (openLink.value?.send(input.toByteArray()) != true) ui.message("Input was not sent. Reconnect the terminal; input is never replayed.")
     }
 
-    /** Keeps the terminal through rotation and short app switches; detaches after a grace period. */
+    /**
+     * Keeps the terminal through rotation and short app switches; detaches after [BACKGROUND_GRACE_MS].
+     * The host link itself follows the background window, so a later return reattaches over it quickly.
+     */
     fun setForeground(value: Boolean) {
         foreground = value
         backgroundDetach?.cancel()
@@ -329,8 +332,10 @@ class TerminalController(
                 }
             return
         }
+        // A host being checked reattaches when it answers (HostEvent.Checked).
+        val h = target()
         val s = ui.value
-        if (s.selectedSessionId != null && s.staleSession == null && attachment?.isActive != true && openLink.value?.connected != true && target()?.phase == ConnectionPhase.Connected) {
+        if (s.selectedSessionId != null && s.staleSession == null && attachment?.isActive != true && openLink.value?.connected != true && h?.phase == ConnectionPhase.Connected && !h.checking) {
             refreshTerminal()
         }
     }
