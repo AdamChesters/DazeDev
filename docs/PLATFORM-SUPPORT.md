@@ -1,9 +1,9 @@
 # Platform support
 
-| Application | Code and build                                         | Current boundary                                                                                                                           |
-| ----------- | ------------------------------------------------------ | ------------------------------------------------------------------------------------------------------------------------------------------ |
+| Application | Code and build                                         | Current boundary                                                                                                                                                        |
+| ----------- | ------------------------------------------------------ | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | Desktop     | `apps/desktop`, Svelte and Tauri                       | Windows is the qualified platform. Linux x64 test packages (.deb, AppImage, portable archive) are CI-verified in Mint containers; see below. macOS remains unvalidated. |
-| Android     | `apps/android`, Kotlin and Compose, Android 9 or newer | SSH/tmux companion with host/workspace folders and one interactive terminal at a time. Separate application ID and device settings.        |
+| Android     | `apps/android`, Kotlin and Compose, Android 9 or newer | SSH/tmux companion with host/workspace folders and one interactive terminal at a time. Separate application ID and device settings.                                     |
 
 Android uses the desktop host helper over authenticated SSH. Hosts need Python 3 and tmux. Saved workspace layouts stay intact; the phone uses them to order terminal rows. Credentials stay on the device. A changed workspace revision keeps an unsaved draft locally. Reload the host profile, then review and reapply edits that do not conflict with newer changes. Windows-local broker sessions are not available through this SSH transport.
 
@@ -19,7 +19,17 @@ Android and desktop releases are independent. Android tags use `android/v…`; d
 
 Build and verification steps are in [building](BUILDING.md#linux-packages). Status as of 0.3.9-alpha.0:
 
-@@LINUX_RESULTS@@
+| Check (CI run 39013076056, 17 October 2026)                                                                     | Mint 21.3 container | Mint 22.3 container |
+| --------------------------------------------------------------------------------------------------------------- | ------------------- | ------------------- |
+| `apt install ./DazeDev_…_amd64.deb` resolves all dependencies from Mint/Ubuntu repositories                     | Pass                | Pass                |
+| Every installed binary and bundled runtime library resolves (`ldd`)                                             | Pass                | Pass                |
+| Installed app starts under Xvfb, interface loads, settings written to `~/.local/share/DazeDev`, kept on restart | Pass                | Pass                |
+| WebKit microphone stream (`getUserMedia`) from a PulseAudio test source                                         | Pass                | Pass                |
+| Installed voice runtime: Parakeet transcription, Silero and S1-mini cleanup on a sample recording               | Pass                | Pass                |
+| AppImage starts, window maps and the interface paints; settings in the XDG folder                               | Pass                | Pass                |
+| Package removal                                                                                                 | Pass                | Pass                |
+
+The build job also passes the frontend gate, Rust tests, transport smoke test, Parakeet and Whisper Small voice checks, and the portable-archive startup check on Ubuntu 22.04. These are containers with a virtual display and a virtual audio source, run as an ordinary user with the WebKit sandbox enabled. They are not physical machines. The `linuxmintd/mint22.3-amd64` image reports Ubuntu 24.04 in `/etc/os-release`; its apt sources are Mint 22.3 (zena).
 
 Linux behaviour that differs from Windows:
 
