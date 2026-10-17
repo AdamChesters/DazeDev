@@ -15,6 +15,13 @@
   },
   {
     "platform": "desktop",
+    "version": "0.3.10-alpha.0",
+    "date": "2026-10-17",
+    "channel": "development",
+    "notes": "New Feedback / Support pane\n\n• Feedback / Support has a tidier layout: Check for updates and Feedback form sit on one line, with Discord, Reddit, GitHub, LinkedIn and AdamCh.com buttons below and the GitHub Sponsors, Buy Me a Coffee and PayPal buttons in a Support section."
+  },
+  {
+    "platform": "desktop",
     "version": "0.3.9-alpha.0",
     "date": "2026-10-17",
     "channel": "development",
