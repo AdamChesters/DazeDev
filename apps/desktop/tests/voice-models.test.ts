@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from 'vitest';
-import { VoiceModels, type VoiceModelsDeps } from '../src/lib/state/voice.svelte';
+import { microphoneHelp, VoiceModels, type VoiceModelsDeps } from '../src/lib/state/voice.svelte';
 import { defaults, type ModelInfo } from '../src/lib/types';
 
 const model = (id: string, installed: boolean, family = 'asr'): ModelInfo => ({
@@ -122,6 +122,12 @@ describe('VoiceModels', () => {
     expect(names().at(-1)).toBe('voice_cache');
   });
 
+  it('gives platform-specific microphone help', () => {
+    expect(microphoneHelp('Win32')).toContain('Windows privacy settings');
+    expect(microphoneHelp('MacIntel')).toContain('Privacy & Security > Microphone');
+    expect(microphoneHelp('Linux x86_64')).toContain('Sound settings');
+    expect(microphoneHelp('Linux x86_64')).not.toContain('Windows');
+  });
   it('reports microphones that cannot be listed', async () => {
     const { voice } = setup(stack());
     await voice.refreshMicrophones();

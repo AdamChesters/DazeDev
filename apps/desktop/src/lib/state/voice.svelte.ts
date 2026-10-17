@@ -14,6 +14,17 @@ export interface VoiceModelsDeps {
   mediaDevices: () => MediaDevices | undefined;
 }
 
+/** Where to grant microphone access on this desktop platform. */
+export function microphoneHelp(
+  platform = typeof navigator === 'undefined' ? '' : navigator.platform,
+) {
+  if (/^Mac/i.test(platform))
+    return 'Allow DazeDev under System Settings > Privacy & Security > Microphone, then refresh.';
+  if (/Linux|X11/i.test(platform))
+    return 'Check that a microphone is connected and enabled in Sound settings, then refresh.';
+  return 'Allow microphone access in Windows privacy settings, then refresh.';
+}
+
 // Voice models, the preloaded model cache, hardware advice and microphones.
 // Recording itself stays in App.svelte.
 export class VoiceModels {
@@ -170,7 +181,7 @@ export class VoiceModels {
       if (!media) throw new Error('Microphone access is unavailable in this window.');
       this.microphones = await listMicrophones(media, requestPermission);
     } catch (e) {
-      this.microphoneError = `Microphone access: ${String(e)}. Allow microphone access in Windows privacy settings, then refresh.`;
+      this.microphoneError = `Microphone access: ${String(e)}. ${microphoneHelp()}`;
     } finally {
       this.microphoneLoading = false;
     }
