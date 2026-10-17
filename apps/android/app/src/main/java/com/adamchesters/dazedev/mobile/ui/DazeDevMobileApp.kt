@@ -47,6 +47,11 @@ fun DazeDevMobileApp(viewModel: MainViewModel) {
     val preview by viewModel.previews.state.collectAsStateWithLifecycle()
     val broadcast by viewModel.broadcasts.state.collectAsStateWithLifecycle()
     val repositories by viewModel.repositories.state.collectAsStateWithLifecycle()
+    val dictionaryOpen by viewModel.dictionary.isOpen.collectAsStateWithLifecycle()
+    val dictionaryView by viewModel.dictionary.store.view
+        .collectAsStateWithLifecycle()
+    val dictionaryBusy by viewModel.dictionary.busy.collectAsStateWithLifecycle()
+    val dictionaryError by viewModel.dictionary.error.collectAsStateWithLifecycle()
     val terminalTools =
         remember(viewModel) {
             TerminalTools(
@@ -55,6 +60,8 @@ fun DazeDevMobileApp(viewModel: MainViewModel) {
                 page = { viewModel.page.value = it },
                 link = viewModel.previews::showLink,
                 broadcast = viewModel.broadcasts::open,
+                applyDictionary = viewModel.dictionary::apply,
+                openDictionary = viewModel.dictionary::show,
             )
         }
     BackHandler(enabled = uiState.screen != Screen.Hosts, onBack = viewModel::back)
@@ -225,6 +232,7 @@ fun DazeDevMobileApp(viewModel: MainViewModel) {
     if (upload.open) UploadSheet(upload, uiState.hosts, viewModel)
     if (broadcast.open) BroadcastSheet(broadcast, viewModel.broadcasts)
     if (repositories.open) RepositoriesDialog(repositories, viewModel.repositories)
+    if (dictionaryOpen) DictionaryDialog(dictionaryView, uiState.hosts, dictionaryBusy, dictionaryError, viewModel.dictionary)
     val showMessage: (String) -> Unit = { text -> coroutineScope.launch { snackbarHostState.showSnackbar(text) } }
     preview.link?.let { link -> LinkSheet(link, preview.linkHost, viewModel.previews::open, viewModel.previews::dismissLink, showMessage) }
     if (preview.path != null) PreviewDialog(preview, viewModel.previews::toggleSource, viewModel.previews::close, showMessage)

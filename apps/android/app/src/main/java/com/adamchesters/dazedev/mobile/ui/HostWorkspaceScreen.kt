@@ -173,6 +173,7 @@ fun HostWorkspaceScreen(
         Row(Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()), horizontalArrangement = Arrangement.Center) {
             TextButton(onClick = { history = true }) { Text("Changelog") }
             TextButton(onClick = viewModel::openHostKeys) { Text("Host keys") }
+            TextButton(onClick = viewModel.dictionary::show) { Text("Dictionary") }
             TextButton(onClick = { viewModel.setSecureScreen(!state.secureScreen) }, modifier = Modifier.semantics { contentDescription = if (state.secureScreen) "Private screen is on. Screenshots and the Recents preview are blocked." else "Private screen is off." }) { Text(if (state.secureScreen) "Private screen: on" else "Private screen: off") }
             BackgroundWindowSetting(state.backgroundWindow, viewModel::setBackgroundWindow, viewModel::notificationsDenied)
             TerminalSizeSetting(state.keepOtherSize, viewModel::setKeepOtherSize)

@@ -205,8 +205,9 @@ fun TerminalScreen(
                         .putString("original:$draftKey", transcript)
                         .putLong("saved:$draftKey", System.currentTimeMillis())
                         .apply()
+                    // The original keeps what was heard; the draft gets the dictionary's spellings.
                     input =
-                        listOf(voicePrefix, transcript)
+                        listOf(voicePrefix, tools.applyDictionary(transcript))
                             .filter(String::isNotBlank)
                             .joinToString(" ")
                 },
@@ -724,6 +725,7 @@ fun TerminalScreen(
                         }
                     }
                     Text("Moonshine Medium runs on this phone. Installed models work offline.", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                    TextButton(onClick = tools.openDictionary) { Text("Dictionary: preferred spellings") }
                     Spacer(Modifier.size(8.dp))
                 }
             }

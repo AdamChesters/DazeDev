@@ -14,4 +14,8 @@ class TerminalTools(
     val link: (TerminalTarget) -> Unit = {},
     /** Opens Broadcast with this text (empty, or the voice draft). */
     val broadcast: (String) -> Unit = {},
+    /** Applies the dictation dictionary to a voice transcript. */
+    val applyDictionary: (String) -> String = { it },
+    /** Opens the dictionary. */
+    val openDictionary: () -> Unit = {},
 )
