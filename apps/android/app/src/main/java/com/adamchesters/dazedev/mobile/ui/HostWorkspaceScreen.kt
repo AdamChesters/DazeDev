@@ -122,6 +122,7 @@ fun HostWorkspaceScreen(
             }
             Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.Center) {
                 TextButton(onClick = viewModel::refreshSessions, enabled = !state.isRefreshing) { Text(if (state.isRefreshing) "Refreshing…" else "Refresh") }
+                TextButton(onClick = { viewModel.repositories.open(state.profile.id) }) { Text("Repositories") }
                 TextButton(onClick = viewModel::disconnect) { Text("Disconnect") }
             }
             if (state.hostChecking) Text("Checking the connection…", modifier = Modifier.padding(horizontal = 16.dp), style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)

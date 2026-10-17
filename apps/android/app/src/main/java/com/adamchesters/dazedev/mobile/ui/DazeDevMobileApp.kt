@@ -46,6 +46,7 @@ fun DazeDevMobileApp(viewModel: MainViewModel) {
     val upload by viewModel.uploads.state.collectAsStateWithLifecycle()
     val preview by viewModel.previews.state.collectAsStateWithLifecycle()
     val broadcast by viewModel.broadcasts.state.collectAsStateWithLifecycle()
+    val repositories by viewModel.repositories.state.collectAsStateWithLifecycle()
     val terminalTools =
         remember(viewModel) {
             TerminalTools(
@@ -223,6 +224,7 @@ fun DazeDevMobileApp(viewModel: MainViewModel) {
     }
     if (upload.open) UploadSheet(upload, uiState.hosts, viewModel)
     if (broadcast.open) BroadcastSheet(broadcast, viewModel.broadcasts)
+    if (repositories.open) RepositoriesDialog(repositories, viewModel.repositories)
     val showMessage: (String) -> Unit = { text -> coroutineScope.launch { snackbarHostState.showSnackbar(text) } }
     preview.link?.let { link -> LinkSheet(link, preview.linkHost, viewModel.previews::open, viewModel.previews::dismissLink, showMessage) }
     if (preview.path != null) PreviewDialog(preview, viewModel.previews::toggleSource, viewModel.previews::close, showMessage)

@@ -51,6 +51,7 @@ class MainViewModel(
 
     val previews = PreviewController(terminal, viewModelScope)
     val broadcasts = BroadcastController(ui, registry, viewModelScope)
+    val repositories = RepositoryController(registry, viewModelScope)
     private val alerts = TerminalAlertCenter(ui, registry, { ui.value.alertNotifications }, { key, title, text -> AlertNotifier.notify(application, key, title, text) })
 
     /** The open terminal's page, registered while the terminal screen shows it. */
