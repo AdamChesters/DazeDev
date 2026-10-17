@@ -20,6 +20,8 @@
     terminalTheme,
   } from '../lib/terminal-setup';
   import PasteConfirm from './PasteConfirm.svelte';
+  import EditPane from './EditPane.svelte';
+  import { pastePieces, pasteLength } from '../lib/paste';
   import { onMount, tick } from 'svelte';
   import { AckBatcher, outputChannel } from '../lib/terminal-bytes';
   import { terminalBudget, type BudgetMember } from '../lib/terminal-budget';
@@ -345,9 +347,18 @@
     () => onpastesetting(false),
     () => term.focus(),
   );
-  // Clipboard text typed by the user: multi-line text asks first.
+  // Clipboard text typed by the user: multi-line text asks first and long
+  // text opens the editable preview.
   async function pasteUserText(text: string) {
-    if (await confirmation.confirm(text)) await paste(text);
+    const accepted = await confirmation.confirm(text);
+    if (accepted !== null) await paste(accepted);
+  }
+  // The program in this terminal, for paste handling: the host's view of the
+  // tmux pane when known, otherwise the agent DazeDev started here.
+  function agent() {
+    return observedStatus.attachment === 'tmux' && observedStatus.agent
+      ? observedStatus.agent
+      : pane.agent;
   }
   function uploadDestination() {
     return !dead && opened && remoteReady && !detached
@@ -377,9 +388,13 @@
     // A line break may execute immediately in applications without bracketed paste.
     if (source === 'review') text = reviewPasteText(text, term.modes.bracketedPasteMode);
     if (source === 'command') checkCommandText(text);
+    // Codex shows clipboard text inline when it arrives in pieces under its
+    // collapse threshold; the pieces join back to exactly this text.
+    const pieces =
+      source === 'clipboard' ? pastePieces(text, agent(), term.modes.bracketedPasteMode) : [text];
     explicitPaste = true;
     try {
-      term.paste(text);
+      for (const piece of pieces) term.paste(piece);
     } finally {
       explicitPaste = false;
     }
@@ -953,11 +968,21 @@
       >
     </button>
   {/if}
-  {#if confirmation.request}<PasteConfirm
-      text={confirmation.request.text}
-      onpaste={(dontAsk) => confirmation.answer(true, dontAsk)}
-      oncancel={() => confirmation.answer(false)}
-    />{/if}
+  {#key confirmation.request}
+    {#if confirmation.request?.preview}<EditPane
+        title={`Paste ${pasteLength(confirmation.request.text).toLocaleString()} characters?`}
+        hint="Long text opens here first. Review or edit it; nothing is sent until you choose Paste."
+        text={confirmation.request.text}
+        submitLabel="Paste"
+        dontAsk={false}
+        onsubmit={(text, dontAsk) => confirmation.answer(text, dontAsk)}
+        oncancel={() => confirmation.answer(null)}
+      />{:else if confirmation.request}<PasteConfirm
+        text={confirmation.request.text}
+        onpaste={(dontAsk) => confirmation.answer(confirmation.request?.text ?? null, dontAsk)}
+        oncancel={() => confirmation.answer(null)}
+      />{/if}
+  {/key}
   {#if transcript}<div class="live-transcript" aria-live="off">
       <span>Transcribing</span>
       {transcript}

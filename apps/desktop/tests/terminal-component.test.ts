@@ -16,6 +16,10 @@ vi.mock('@xterm/addon-fit', () => import('./support/addons'));
 vi.mock('@xterm/addon-webgl', () => import('./support/addons'));
 vi.mock('@xterm/addon-image', () => import('./support/addons'));
 vi.mock('@xterm/addon-ligatures', () => import('./support/addons'));
+// Monaco does not run in jsdom; the editor panes fall back to a textarea.
+vi.mock('../src/lib/monaco', () => {
+  throw new Error('Monaco is not loaded in component tests');
+});
 
 const host: Host = {
   id: 'h1',
@@ -41,10 +45,10 @@ const pane: Pane = {
   operation: '',
 };
 
-async function attached(settings: Partial<TerminalSettings> = {}) {
+async function attached(settings: Partial<TerminalSettings> = {}, paneFields: Partial<Pane> = {}) {
   const props = {
     theme: 'blue' as const,
-    pane,
+    pane: { ...pane, ...paneFields },
     host,
     active: true,
     visible: true,
@@ -139,6 +143,59 @@ describe('Terminal paste confirmation', () => {
     root.dispatchEvent(pasteEvent('a\nb'));
     await fireEvent.click(await screen.findByRole('button', { name: 'Paste' }));
     await waitFor(() => expect(typed()).toEqual(['\x1b[200~a\rb\x1b[201~']));
+  });
+});
+
+describe('Terminal long pastes', () => {
+  const editor = () => screen.getByRole<HTMLTextAreaElement>('textbox', { name: /Paste/ });
+  it('sends text Codex would collapse as pieces it shows inline', async () => {
+    const { root, write } = await attached({}, { agent: 'codex' });
+    await write('\x1b[?2004h');
+    const text = 'x'.repeat(1500);
+    root.dispatchEvent(pasteEvent(text));
+    await waitFor(() => expect(typed()).toHaveLength(2));
+    const pieces = typed().map((value) => {
+      const data = String(value);
+      expect(data.startsWith('\x1b[200~') && data.endsWith('\x1b[201~')).toBe(true);
+      return data.slice(6, -6);
+    });
+    expect(pieces.join('')).toBe(text);
+    expect(pieces.every((piece) => piece.length <= 1000)).toBe(true);
+  });
+  it('sends the same text to other programs as one paste', async () => {
+    const { root, write } = await attached();
+    await write('\x1b[?2004h');
+    root.dispatchEvent(pasteEvent('y'.repeat(1500)));
+    await waitFor(() => expect(typed()).toEqual([`\x1b[200~${'y'.repeat(1500)}\x1b[201~`]));
+  });
+  it('opens long text in the editable preview and pastes it unchanged', async () => {
+    const { root } = await attached({}, { agent: 'codex' });
+    // CRLF counts as one character, as agents count it.
+    const text = 'line\r\n'.repeat(500);
+    root.dispatchEvent(pasteEvent(text));
+    await screen.findByRole('dialog', { name: 'Paste 2,500 characters?' });
+    await waitFor(() => expect(editor().value).toContain('line'));
+    expect(typed()).toEqual([]);
+    await fireEvent.click(screen.getByRole('button', { name: 'Paste' }));
+    await waitFor(() => expect(typed()).toEqual(['line\r'.repeat(500)]));
+    expect(screen.queryByRole('dialog')).toBeNull();
+  });
+  it('pastes the edited text, or nothing when cancelled', async () => {
+    const { root } = await attached();
+    root.dispatchEvent(pasteEvent('z'.repeat(2500)));
+    await screen.findByRole('dialog');
+    await waitFor(() => editor());
+    await fireEvent.input(editor(), { target: { value: 'short edit' } });
+    expect(screen.getByText(/10 characters · edited/)).toBeTruthy();
+    await fireEvent.click(screen.getByRole('button', { name: 'Paste' }));
+    await waitFor(() => expect(typed()).toEqual(['short edit']));
+    root.dispatchEvent(pasteEvent('q'.repeat(2500)));
+    await screen.findByRole('dialog');
+    await waitFor(() => editor());
+    await fireEvent.keyDown(editor(), { key: 'Escape' });
+    expect(screen.queryByRole('dialog')).toBeNull();
+    await new Promise((resolve) => setTimeout(resolve, 20));
+    expect(typed()).toEqual(['short edit']);
   });
 });
 
