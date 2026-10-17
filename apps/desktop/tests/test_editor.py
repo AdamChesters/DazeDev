@@ -71,6 +71,27 @@ class EditorTests(unittest.TestCase):
   self.assertRegex(request['id'], '^[0-9a-f]{32}$'); self.assertTrue(request['name'])
   self.assertIsNone(self.ran()); self.assertEqual(server.edits, {})
 
+ def test_shown_and_done_arriving_together_still_save(self):
+  # A busy shim may read both replies in one recv; the second must not be
+  # lost or break the first (seen in CI as a fallback with the file unchanged).
+  server = self.server(); self.register(server); self.file.write_text('seed\r\ntext')
+  def both(client, value):
+   client.sendall(b'{"ok": true, "state": "shown"}\n{"ok": true, "state": "done", "text": "edited\\n"}\n'); client.close()
+  server.edit = both
+  result = self.run_shim()
+  self.assertEqual(result.returncode, 0, result.stderr); self.assertNotIn('DazeDev editor:', result.stderr)
+  self.assertEqual(self.file.read_text(), 'edited\n'); self.assertIsNone(self.ran())
+ def test_packets_sent_back_to_back_are_read_one_at_a_time(self):
+  left, right = socket.socketpair()
+  with left, right:
+   right.sendall(b'{"a": 1}\n{"b": 2}\n{"c"'); right.sendall(b': 3}\n'); right.shutdown(socket.SHUT_WR)
+   packets = bridge.Packets(left)
+   self.assertEqual([packets.read(), packets.read(), packets.read()], [{'a': 1}, {'b': 2}, {'c': 3}])
+   with self.assertRaisesRegex(ValueError, 'incomplete'): packets.read()
+  left, right = socket.socketpair()
+  with left, right:
+   right.sendall(b'x' * 64 + b'\n')
+   with self.assertRaisesRegex(ValueError, 'too large'): bridge.Packets(left).read(32)
  def test_cancel_leaves_the_file_unchanged(self):
   server = self.server(); self.register(server)
   original = b'keep\r\nthis\n'; self.file.write_bytes(original); before = self.file.stat().st_mtime_ns

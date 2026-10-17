@@ -96,16 +96,28 @@ def endpoint_path(root, endpoint):
     if not re.fullmatch('[a-f0-9]{32}', endpoint or ''): raise ValueError('Invalid browser connection')
     return root / ('endpoint-' + endpoint + '.json')
 
+class Packets:
+    """Newline-ended JSON packets from one socket. Bytes after a newline are
+    kept for the next read: the bridge may send `shown` and `done` back to
+    back, and one recv can return both."""
+    def __init__(self, client):
+        self.client = client
+        self.buffer = bytearray()
+    def read(self, limit=MAX_REQUEST):
+        while b'\n' not in self.buffer:
+            if len(self.buffer) > limit: break
+            chunk = self.client.recv(65536)
+            if not chunk: raise ValueError('Browser request is incomplete')
+            self.buffer.extend(chunk)
+        end = self.buffer.find(b'\n') + 1
+        if not end or end > limit: raise ValueError('Browser request is too large')
+        packet = bytes(self.buffer[:end])
+        del self.buffer[:end]
+        return json.loads(packet)
+
 def read_packet(client, limit=MAX_REQUEST):
-    data = bytearray()
-    while len(data) <= limit:
-        chunk = client.recv(min(65536, limit + 1 - len(data)))
-        if not chunk: break
-        data.extend(chunk)
-        if b'\n' in chunk: break
-    if len(data) > limit or not data.endswith(b'\n'):
-        raise ValueError('Browser request is too large or incomplete')
-    return json.loads(data)
+    # For sockets that carry one packet each way.
+    return Packets(client).read(limit)
 
 def send_packet(client, value):
     try: client.sendall((json.dumps(value, ensure_ascii=False) + '\n').encode())
@@ -408,12 +420,15 @@ def edit_on_desktop(root, path):
         try: client.connect(str(endpoint_socket(root, meta)))
         except OSError: raise RuntimeError('DazeDev is disconnected.') from None
         send_packet(client, dict(kind='edit', token=meta['token'], tty=tty, name=caller_name(), text=text))
+        # One reader for both replies, so a `done` that arrives with `shown`
+        # is not dropped.
+        packets = Packets(client)
         try:
-            reply = read_packet(client, MAX_EDIT_PACKET)
+            reply = packets.read(MAX_EDIT_PACKET)
             if reply.get('ok') and reply.get('state') == 'shown':
                 # The user is editing: wait as long as they take.
                 client.settimeout(None)
-                reply = read_packet(client, MAX_EDIT_PACKET)
+                reply = packets.read(MAX_EDIT_PACKET)
         except (OSError, ValueError): raise RuntimeError('DazeDev disconnected.') from None
     if not reply.get('ok'): raise RuntimeError(reply.get('error') or 'DazeDev could not open the editor.')
     if reply.get('state') != 'done': raise RuntimeError('Unexpected reply from DazeDev.')

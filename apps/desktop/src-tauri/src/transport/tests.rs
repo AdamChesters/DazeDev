@@ -302,6 +302,12 @@ fn remote_browser_program_routes_over_authenticated_protocol_after_reconnect() {
     while !done.exists() && std::time::Instant::now() < deadline {
         std::thread::sleep(Duration::from_millis(50));
     }
+    // No marker means the shim did not return 0: it may have fallen back to
+    // a terminal editor, which then waits in the pane.
+    assert!(
+        done.exists(),
+        "the editor shim did not return the saved text"
+    );
     assert_eq!(std::fs::read_to_string(&file).unwrap(), "edited\n");
     assert!(transport
         .rpc(&host.id, "editor_done", json!({"id":id,"text":"late"}))
