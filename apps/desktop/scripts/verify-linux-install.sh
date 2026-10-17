@@ -16,6 +16,8 @@ step "System"
   cat /etc/linuxmint/info 2>/dev/null || true
   grep -E '^(PRETTY_NAME|VERSION_CODENAME|UBUNTU_CODENAME)=' /etc/os-release
   ldd --version | sed -n 1p
+  echo "Packages before install: $(dpkg-query -f '.\n' -W | wc -l)"
+  grep -hv '^#' /etc/apt/sources.list.d/*.list /etc/apt/sources.list 2>/dev/null | grep . || true
 } | tee "$results/os.txt"
 
 deb=$(ls "$artifacts"/*.deb)
@@ -36,10 +38,11 @@ test -f "$runtime/libonnxruntime.so"
 grep -l '^Exec=DazeDev' /usr/share/applications/*.desktop | tee -a "$results/deb-control.txt"
 
 step "Shared libraries"
-for f in /usr/bin/DazeDev "$runtime/llama-server" "$runtime"/*.so*; do
-  if ldd "$f" | grep 'not found'; then echo "Missing library for $f" >&2; exit 1; fi
+missing=0
+for f in /usr/bin/DazeDev /usr/bin/DazeDevSession "$runtime/llama-server" "$runtime"/*.so*; do
+  if ldd "$f" | grep 'not found'; then echo "Missing library for $f" | tee -a "$results/ldd.txt"; missing=1; fi
 done
-echo "All installed ELF files resolve their libraries." | tee "$results/ldd.txt"
+(( missing == 0 )) && echo "All installed ELF files resolve their libraries." | tee "$results/ldd.txt"
 "$runtime/llama-server" --version 2>&1 | tail -2 | tee -a "$results/ldd.txt"
 
 step "Test-only tools (not package dependencies)"
@@ -77,6 +80,7 @@ SH
 chmod +x "$work/as-tester.sh"
 as_tester() { runuser -u tester -- env -C "$work" HOME=/home/tester $sandbox "$work/as-tester.sh" "$@"; }
 failed=()
+(( missing == 0 )) || failed+=("shared libraries")
 check() { # name logfile command...: record PASS/FAIL and keep going
   local name=$1 log=$2; shift 2
   step "$name"
@@ -114,6 +118,9 @@ for _ in $(seq 60); do
   sleep 1
 done
 [[ -n "$window" ]] || { cat appimage.log; echo "No DazeDev window" >&2; exit 1; }
+[[ -f "$XDG_DATA_HOME/DazeDev/device.json" ]] || {
+  cat appimage.log; find / -xdev -name device.json -path '*DazeDev*' 2>/dev/null
+  echo "Settings were not written to $XDG_DATA_HOME/DazeDev" >&2; exit 1; }
 sleep 10 # let the interface paint
 kill -0 "$pid" || { cat appimage.log; echo "AppImage exited after mapping" >&2; exit 1; }
 import -window root appimage-window.png

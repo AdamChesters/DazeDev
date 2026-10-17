@@ -30,13 +30,13 @@ cat > "$root/README.txt" <<'TXT'
 DazeDev cross-platform test build
 Extract the entire folder to a writable location. Keep the folder together.
 macOS: open DazeDev.app. Linux: run ./Start\ DazeDev.sh
-Settings, models and recovery files are in data/ beside the app. Do not install
+Settings, models and recovery files are in data/ beside the app (the .deb and\nAppImage use ~/.local/share/DazeDev instead). Do not install
 into /usr/bin or move only the .app into a read-only Applications directory.
 Mac builds are ad-hoc signed, not Apple-notarized. macOS may require approval
 under System Settings > Privacy & Security > Open Anyway. Do not disable Gatekeeper.
-Linux target: Mint 22.x x64 (Ubuntu 24.04), with WebKitGTK 4.1, GTK3 and libgomp.
-Install missing runtime packages with:
-sudo apt install libwebkit2gtk-4.1-0 libgtk-3-0t64 libgomp1
+Linux target: Mint 21.x/22.x x64 (Ubuntu 22.04/24.04), with WebKitGTK 4.1, GTK3,
+BLAS and libgomp. The .deb installs these itself. For this folder, install them with:
+sudo apt install libwebkit2gtk-4.1-0 libgtk-3-0 libblas3 libgomp1
 Local sessions need python3 and tmux; remote SSH targets need them on the host.
 Voice: Parakeet or Whisper, Silero and S1-mini run locally. Models download in app.
 These first test builds use CPU voice inference. No GPU performance claim is made.
