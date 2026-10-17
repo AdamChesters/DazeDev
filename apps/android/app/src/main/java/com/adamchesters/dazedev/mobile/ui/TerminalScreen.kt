@@ -440,7 +440,7 @@ fun TerminalScreen(
                                 scope.launch {
                                     val text = terminalText() ?: return@launch
                                     val name = TerminalExport.fileName(uiState.selectedSessionName.orEmpty(), java.time.LocalDateTime.now())
-                                    runCatching { withContext(Dispatchers.IO) { TerminalExport.share(context, name, text) } }.onFailure { onMessage("Could not share the terminal output.") }
+                                    runCatching { context.startActivity(withContext(Dispatchers.IO) { TerminalExport.share(context, name, text) }) }.onFailure { onMessage("Could not share the terminal output.") }
                                 }
                             })
                             DropdownMenuItem(text = { Text("Save output…") }, onClick = {

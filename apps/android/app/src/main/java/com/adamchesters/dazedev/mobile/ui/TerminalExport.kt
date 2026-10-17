@@ -25,12 +25,12 @@ object TerminalExport {
         return "$base-${time.format(DateTimeFormatter.ofPattern("yyyyMMdd-HHmm"))}.txt"
     }
 
-    /** Writes [text] to private cache and offers it to other apps; earlier exports over an hour old are removed. */
+    /** Writes [text] to private cache and returns the share sheet for it; exports over an hour old are removed. */
     fun share(
         context: Context,
         name: String,
         text: String,
-    ) {
+    ): Intent {
         val folder = File(context.cacheDir, "exports").apply { mkdirs() }
         folder.listFiles()?.filter { System.currentTimeMillis() - it.lastModified() > 3_600_000 }?.forEach { it.delete() }
         val file = File(folder, name)
@@ -43,7 +43,7 @@ object TerminalExport {
                 .putExtra(Intent.EXTRA_SUBJECT, name)
                 .addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
         send.clipData = ClipData.newRawUri(name, uri)
-        context.startActivity(Intent.createChooser(send, "Share terminal output").addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION))
+        return Intent.createChooser(send, "Share terminal output").addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
     }
 
     fun save(

@@ -107,13 +107,14 @@ class MainViewModel(
         uris: List<Uri>,
         text: String? = null,
     ) {
-        contentFiles.clearSpool()
+        // A running upload may read a spooled copy; offer() refuses a new one meanwhile.
+        if (!uploads.state.value.uploading) contentFiles.clearSpool()
         uploads.offer(uris.map(contentFiles::describe), text)
     }
 
     /** A file on the clipboard: quick upload to the host's DazeDev uploads folder, then its path can be pasted. */
     fun clipboardFile(uri: Uri) {
-        contentFiles.clearSpool()
+        if (!uploads.state.value.uploading) contentFiles.clearSpool()
         uploads.offer(listOf(contentFiles.describe(uri)), quick = true)
     }
 
