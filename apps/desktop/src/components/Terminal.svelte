@@ -22,6 +22,7 @@
   import PasteConfirm from './PasteConfirm.svelte';
   import EditPane from './EditPane.svelte';
   import { pastePieces, pasteLength } from '../lib/paste';
+  import { editorRequests, type EditRequest, type EditorResult } from '../lib/editor-requests';
   import { onMount, tick } from 'svelte';
   import { AckBatcher, outputChannel } from '../lib/terminal-bytes';
   import { terminalBudget, type BudgetMember } from '../lib/terminal-budget';
@@ -360,6 +361,34 @@
       ? observedStatus.agent
       : pane.agent;
   }
+  // A file a program here opened with DazeDev's $VISUAL/$EDITOR helper.
+  let editing = $state<{ request: EditRequest; busy: boolean; error: string } | null>(null);
+  async function finishEdit(result: EditorResult) {
+    const current = editing;
+    if (!current || current.busy) return;
+    current.busy = true;
+    current.error = '';
+    try {
+      await editorRequests.finish(current.request, result);
+    } catch (e) {
+      // A lost cancel needs no answer: the request is gone either way.
+      if ('text' in result && editing === current) {
+        current.busy = false;
+        current.error = `Could not return the text: ${e}. The program may have opened a terminal editor instead. Copy your text before cancelling.`;
+        return;
+      }
+    }
+    if (editing === current) editing = null;
+    if (!dead) term.focus();
+  }
+  // A detached pane's workspace view is hidden: hand an open edit back so
+  // the helper opens the terminal editor, which the terminal window shows.
+  $effect(() => {
+    if (floating && editing && !editing.busy)
+      void finishEdit({
+        error: 'The terminal moved to its own window. Using the terminal editor.',
+      });
+  });
   function uploadDestination() {
     return !dead && opened && remoteReady && !detached
       ? JSON.stringify([generation, pane.hostId, pane.sessionId, pane.stamp || ''])
@@ -738,6 +767,19 @@
     disposers.push(() => liveSearch.release());
     const searchOutput = term.onWriteParsed(() => notifySearchUpdate(pane.id));
     disposers.push(() => searchOutput.dispose());
+    disposers.push(
+      editorRequests.register({
+        hostId: () => pane.hostId,
+        // A hidden view of a detached pane cannot show the editor; the
+        // helper then uses the terminal editor in that window instead.
+        pid: () => (opened && remoteReady && !detached && !floating && !dead ? remotePid : 0),
+        open: (request) => {
+          if (editing) return false;
+          editing = { request, busy: false, error: '' };
+          return true;
+        },
+      }),
+    );
     terminals.set(pane.id, {
       recover,
       focus: () => {
@@ -892,6 +934,9 @@
       cancelAnimationFrame(fitFrame);
       resizer.dispose();
       confirmation.cancel();
+      // Closing the view cancels an open edit; the program keeps its file.
+      if (editing && !editing.busy)
+        void editorRequests.finish(editing.request, { cancelled: true }).catch(() => {});
       notifySearchUpdate(pane.id, true);
       terminals.delete(pane.id);
       binary.dispose();
@@ -981,6 +1026,18 @@
         text={confirmation.request.text}
         onpaste={(dontAsk) => confirmation.answer(confirmation.request?.text ?? null, dontAsk)}
         oncancel={() => confirmation.answer(null)}
+      />{/if}
+  {/key}
+  {#key editing?.request.id}
+    {#if editing}<EditPane
+        title={`Edit for ${editing.request.name}`}
+        hint="The program is waiting for this text. Save returns it; Cancel leaves the file as it was."
+        text={editing.request.text}
+        submitLabel="Save"
+        busy={editing.busy}
+        error={editing.error}
+        onsubmit={(text) => void finishEdit({ text })}
+        oncancel={() => void finishEdit({ cancelled: true })}
       />{/if}
   {/key}
   {#if transcript}<div class="live-transcript" aria-live="off">
