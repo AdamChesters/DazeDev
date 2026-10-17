@@ -130,6 +130,8 @@ def verify(package=None, binary=None, microphone=False, screenshot=None):
                              "embedded interface")
                     assert request("GET", prefix + "/url").startswith("tauri://localhost")
                     assert "Connect your first host" in js("return document.body.innerText")
+                    text = js("return document.body.textContent")
+                    assert "reply was malformed" not in text, "Interface reported an IPC error"
                     # Wait for native initialization before replacing the first-run dialog.
                     wait_for(lambda: js("return !!document.querySelector('.modal')"), "voice setup dialog")
                     js("document.querySelector('button[aria-label=\"Settings\"]').click()")
