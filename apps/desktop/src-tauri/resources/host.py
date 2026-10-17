@@ -512,9 +512,12 @@ def create_session(a):
     # -I keeps the repository folder and PYTHON* variables off sys.path.
     command='python3 -I -u -c '+shlex.quote('import base64;exec(base64.b64decode('+repr(encoded)+'))')
     if BROWSER:
-        browser = BROWSER.environment()['command']
+        bridge = BROWSER.environment()
+        browser = bridge['command']
         BROWSER.launch(op)
         command = 'export BROWSER='+shlex.quote(browser)+'; export PATH='+shlex.quote(str(P(browser).parent))+':"$PATH"; export DAZEDEV_BROWSER_ENDPOINT='+shlex.quote(BROWSER.endpoint)+' DAZEDEV_BROWSER_LAUNCH='+shlex.quote(op)+'; '+command
+        editor = editor_environment(bridge)
+        if editor: command = 'export '+' '.join(k+'='+shlex.quote(v) for k,v in editor.items())+'; '+command
     # Ctrl-C reaches both the agent and its noninteractive launcher. Catch it
     # in the launcher so the child exits normally into a usable login shell.
     if agent != 'shell': command = 'trap : INT; '+command+'; exec "${SHELL:-/bin/sh}" -l'
@@ -524,9 +527,21 @@ def create_session(a):
     if BROWSER:
         tmux('set-environment','-t',sid,'BROWSER',browser)
         tmux('set-environment','-t',sid,'PATH',str(P(browser).parent)+':'+os.environ.get('PATH',''))
+        for key,value in editor.items(): tmux('set-environment','-t',sid,key,value)
     tmux('set-window-option','-t',sid,'remain-on-exit','off')
     tmux('respawn-pane','-k','-t',sid,'-c',str(path),command)
     return next(s for s in sessions() if s['id']==sid)
+
+def editor_environment(bridge):
+    # Programs in DazeDev sessions open files with the desktop editor shim.
+    # The user's own editor stays available to it as the terminal fallback;
+    # a shim inherited from an outer DazeDev session is never the fallback.
+    shim = bridge.get('editor')
+    if not shim: return {}
+    fallback = next((v for v in (os.environ.get('VISUAL',''), os.environ.get('EDITOR','')) if v and 'dazedev-editor' not in v), None)
+    if fallback is None: fallback = os.environ.get('DAZEDEV_EDITOR_FALLBACK','')
+    if 'dazedev-editor' in fallback: fallback = ''
+    return {'VISUAL':shim,'EDITOR':shim,'DAZEDEV_EDITOR_FALLBACK':fallback}
 
 def process_context(pid):
     pid=int(pid)
@@ -1105,6 +1120,11 @@ def dispatch(method,a):
         return BROWSER.environment()
     if method == 'browser_result':
         return BROWSER.complete(a) if BROWSER else False
+    if method == 'editor_shown':
+        return BROWSER.editor_shown(a) if BROWSER else False
+    if method == 'editor_done':
+        if not BROWSER: raise RuntimeError('This edit request has ended')
+        return BROWSER.editor_done(a)
     file_methods = {"upload_preflight":upload_preflight,"upload_begin":upload_begin,"upload_chunk":upload_chunk,"upload_finish":upload_finish,"upload_abort":upload_abort,"documents":documents,"file_read":file_read,"image_read":image_read,"document_read":document_read,"document_save":document_save,"terminal_status":terminal_status}
     if method=='terminal_recover': return terminal_recover(a)
     if method=='tmux_settings_read': return tmux_settings_read(a)
@@ -1149,7 +1169,7 @@ def dispatch(method,a):
 
 # Read-only methods share the read lane; everything else stays ordered on the
 # single mutation lane. Inline methods run on the input loop itself.
-INLINE_METHODS = frozenset({'ping','browser_prepare','browser_result'})
+INLINE_METHODS = frozenset({'ping','browser_prepare','browser_result','editor_shown','editor_done'})
 READ_METHODS = frozenset({'inventory','capabilities','repositories','repository_worktrees','github_repos',
     'sessions','session_context','session_agent','profile_load','documents','file_read','image_read',
     'document_read','terminal_status','process_context','tmux_settings_read','dictionary_read','upload_preflight','agents_read'})
@@ -1301,7 +1321,9 @@ def serve(prefix, requests=None):
         try:
             namespace={'__name__':'dazedev_browser'}
             exec(compile(BROWSER_SOURCE,'<dazedev-browser>','exec'),namespace)
-            BROWSER=namespace['Bridge'](BROWSER_SOURCE,os.environ['DAZED_BROWSER_ENDPOINT'],os.environ['DAZED_BROWSER_DESKTOP'],lambda value: send_reply(prefix,dict(event='browser-open',**value),True),start=False)
+            # DAZED_EDITOR=1: the connecting app can show editor requests.
+            BROWSER=namespace['Bridge'](BROWSER_SOURCE,os.environ['DAZED_BROWSER_ENDPOINT'],os.environ['DAZED_BROWSER_DESKTOP'],lambda value: send_reply(prefix,dict(event='browser-open',**value),True),start=False,
+                edited=lambda value: send_reply(prefix,dict(event='editor-open',**value),True),editor=os.environ.get('DAZED_EDITOR')=='1')
         except Exception as error: BROWSER_ERROR=str(error)
     send_reply(prefix,{'id':'ready','result':{'machine':MACHINE,'user':getpass.getuser(),'protocol':PROTOCOL if BINARY else 1,'schema':SCHEMA}})
     if BROWSER: BROWSER.start()
