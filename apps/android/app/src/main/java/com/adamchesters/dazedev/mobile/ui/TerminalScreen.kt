@@ -420,6 +420,10 @@ fun TerminalScreen(
                                 more = false
                                 showFind = true
                             })
+                            DropdownMenuItem(text = { Text("Broadcast") }, onClick = {
+                                more = false
+                                tools.broadcast("")
+                            })
                             DropdownMenuItem(text = { Text("Upload file") }, onClick = {
                                 more = false
                                 uploadPicker.launch(arrayOf("*/*"))
@@ -644,6 +648,12 @@ fun TerminalScreen(
                         modifier = Modifier.fillMaxWidth(),
                     )
                     if (draftMessage.isNotBlank()) Text(draftMessage, style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.onSurface)
+                    if (input.isNotBlank() && voiceStatus.phase == VoiceInputPhase.Idle && !submitting && !startingVoice) {
+                        TextButton(onClick = {
+                            showDraft = false
+                            tools.broadcast(input)
+                        }) { Text("Broadcast this draft to several terminals") }
+                    }
                     Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(12.dp), verticalAlignment = Alignment.CenterVertically) {
                         Column(Modifier.weight(1f)) {
                             Text("End to edit, Enter to send", style = MaterialTheme.typography.labelLarge)

@@ -12,4 +12,6 @@ class TerminalTools(
     val page: (TerminalPageController?) -> Unit = {},
     /** A tapped web address or file path; shows the link sheet. */
     val link: (TerminalTarget) -> Unit = {},
+    /** Opens Broadcast with this text (empty, or the voice draft). */
+    val broadcast: (String) -> Unit = {},
 )
