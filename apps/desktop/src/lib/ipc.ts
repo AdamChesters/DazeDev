@@ -143,8 +143,11 @@ export function checked<T>(name: string, check: Check<T>, value: unknown): T {
   }
 }
 
-export const loadDevice = async () =>
-  checked('device_load', checkDeviceFile, await call<unknown>('device_load'));
+// The backend answers null before the first device.json is written: start from defaults.
+export const loadDevice = async () => {
+  const value = await call<unknown>('device_load');
+  return value === null ? null : checked('device_load', checkDeviceFile, value);
+};
 export const checkForUpdate = async () =>
   checked('update_check', checkUpdate, await call<unknown>('update_check'));
 export const loadProfile = async (hostId: string) =>

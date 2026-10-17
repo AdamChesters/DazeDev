@@ -178,10 +178,17 @@ pub fn prepare(root: &Path, old_app_data: &Path) -> Result<(PathBuf, fs::File), 
         .write(true)
         .open(data.join("instance.lock"))
         .map_err(|e| e.to_string())?;
-    lock.try_lock().map_err(|_| {
-        "DazeDev is already running from this folder. Close it before opening another copy."
-            .to_string()
-    })?;
+    // A copy that was just closed can hold the lock for a moment while it shuts down.
+    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(5);
+    while lock.try_lock().is_err() {
+        if std::time::Instant::now() >= deadline {
+            return Err(
+                "DazeDev is already running from this folder. Close it before opening another copy."
+                    .to_string(),
+            );
+        }
+        std::thread::sleep(std::time::Duration::from_millis(100));
+    }
     let mut sources = vec![old_app_data.to_path_buf()];
     for parent in [dirs::data_dir(), dirs::data_local_dir(), dirs::config_dir()]
         .into_iter()
