@@ -122,6 +122,7 @@ data class DazeDevMobileUiState(
     val secureScreen: Boolean = false,
     val backgroundWindow: BackgroundWindow = BackgroundWindow.Default,
     val keepOtherSize: Boolean = false,
+    val extraKeys: Boolean = true,
     /** The selected host is being checked after the app returned to the screen. */
     val hostChecking: Boolean = false,
 )

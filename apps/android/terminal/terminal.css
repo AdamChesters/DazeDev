@@ -45,7 +45,7 @@ body {
   overflow-x: auto;
 }
 #quick button {
-  flex: 1 0 40px;
+  flex: 1 0 44px;
   min-height: 40px;
   padding: 0 6px;
 }

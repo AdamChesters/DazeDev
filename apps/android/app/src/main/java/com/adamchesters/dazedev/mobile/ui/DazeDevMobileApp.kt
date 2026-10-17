@@ -113,6 +113,7 @@ fun DazeDevMobileApp(viewModel: MainViewModel) {
             uiState.selectedFolder,
             uiState.localGroupId,
             hostActivity,
+            uiState.extraKeys,
         ) { uiState.terminalScreenState(terminalLink) }
     Scaffold(
         snackbarHost = { SnackbarHost(snackbarHostState) },

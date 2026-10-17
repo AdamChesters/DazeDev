@@ -168,11 +168,16 @@ let nativeViewport = null;
 // view, so it keeps this size (other devices do not resize) and the view scrolls instead.
 let stable = null;
 let cursorOffset = 0;
+// The extra-keys row shows only while the on-screen keyboard is open; a setting can turn it off.
+let extraKeys = true;
 function layout() {
   const width = nativeViewport?.width ?? innerWidth;
   const visible = nativeViewport?.height ?? innerHeight;
+  const keyboard = !!nativeViewport?.keyboard;
+  quick.hidden = !(extraKeys && keyboard);
+  // Equal height counts too: the keyboard flag can arrive before the view shrinks.
   const keyboardOnly =
-    nativeViewport?.keyboard && stable && stable.width === width && visible < stable.height;
+    keyboard && stable && stable.width === width && visible <= stable.height;
   if (!keyboardOnly) stable = { width, height: visible };
   document.documentElement.style.width = `${width}px`;
   document.documentElement.style.height = `${visible}px`;
@@ -181,7 +186,8 @@ function layout() {
   drawer.style.maxHeight = `${visible * 0.4}px`;
   const keysHeight = drawer.hidden ? 0 : Math.ceil(drawer.getBoundingClientRect().height);
   const quickHeight = quick.hidden ? 0 : Math.ceil(quick.getBoundingClientRect().height);
-  container.style.height = `${Math.max(0, stable.height - keysHeight - quickHeight)}px`;
+  // Like the keyboard, the row above it only narrows the shown part; the terminal keeps its size.
+  container.style.height = `${Math.max(0, stable.height - keysHeight - (keyboardOnly ? 0 : quickHeight))}px`;
   shownArea.style.height = `${Math.max(0, visible - keysHeight - quickHeight)}px`;
   requestAnimationFrame(() => {
     fit.fit();
@@ -317,7 +323,8 @@ for (const k of keys) {
   };
   drawer.append(b);
 }
-// Extra keys above the phone keyboard. Ctrl and Alt apply to the next key only.
+// Extra keys above the phone keyboard. Ctrl and Alt apply to the next key only, including
+// a key typed on the phone keyboard. The row scrolls sideways for Home, End and the page keys.
 for (const [label, k, name] of [
   ["Esc", "Escape", "Escape"],
   ["Tab", "Tab", "Tab"],
@@ -331,6 +338,10 @@ for (const [label, k, name] of [
   ["~", "~", "Tilde"],
   ["/", "/", "Slash"],
   ["-", "-", "Dash"],
+  ["Home", "Home", "Home"],
+  ["End", "End", "End"],
+  ["PgUp", "PageUp", "Page up"],
+  ["PgDn", "PageDown", "Page down"],
 ]) {
   const b = document.createElement("button");
   b.textContent = label;
@@ -375,6 +386,10 @@ window.addEventListener("blur", () => window.daze.clear());
 window.daze = {
   keys: (visible) => {
     drawer.hidden = !visible;
+    layout();
+  },
+  extraKeys: (visible) => {
+    extraKeys = !!visible;
     layout();
   },
   clear: () => {

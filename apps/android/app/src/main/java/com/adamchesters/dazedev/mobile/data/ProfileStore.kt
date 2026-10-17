@@ -58,6 +58,12 @@ class ProfileStore(
                 .apply()
         }
 
+    var extraKeys: Boolean
+        get() = prefs.getBoolean("extra_keys", true)
+        set(value) {
+            prefs.edit().putBoolean("extra_keys", value).apply()
+        }
+
     fun load(): ConnectionProfile = loadAll().firstOrNull() ?: ConnectionProfile()
 
     override fun save(profile: ConnectionProfile) {

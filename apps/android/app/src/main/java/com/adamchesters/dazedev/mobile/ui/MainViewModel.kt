@@ -33,7 +33,7 @@ class MainViewModel(
     private val registry = (application as DazeDevApplication).hosts
     private val credentials = (application as DazeDevApplication).credentials
     private val store = ProfileStore(application)
-    private val ui = UiStore(DazeDevMobileUiState(profile = store.load(), secureScreen = store.secureScreen, backgroundWindow = registry.backgroundWindow.value, keepOtherSize = store.keepOtherSize))
+    private val ui = UiStore(DazeDevMobileUiState(profile = store.load(), secureScreen = store.secureScreen, backgroundWindow = registry.backgroundWindow.value, keepOtherSize = store.keepOtherSize, extraKeys = store.extraKeys))
     val uiState: StateFlow<DazeDevMobileUiState> = ui.state.asStateFlow()
     private val terminal = TerminalController(ui, registry, viewModelScope)
 
@@ -330,6 +330,12 @@ class MainViewModel(
         store.backgroundWindow = value
         registry.backgroundWindow.value = value
         ui.update { it.copy(backgroundWindow = value) }
+    }
+
+    /** Shows or hides the extra-keys row above the on-screen keyboard. */
+    fun setExtraKeys(value: Boolean) {
+        store.extraKeys = value
+        ui.update { it.copy(extraKeys = value) }
     }
 
     /** Applies to terminals opened from now on. */
