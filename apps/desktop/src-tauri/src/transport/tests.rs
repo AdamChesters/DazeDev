@@ -359,6 +359,7 @@ fn child_exit_drains_host_requests_and_rejects_late_ready_without_eof() {
         pending: Mutex::new(HashMap::from([("pending".into(), reply_tx)])),
         ready: Mutex::new(true),
         browser: crate::browser::Requests::new("test".into()),
+        editors: Default::default(),
         prompts: None,
         binary: false,
     });
@@ -433,6 +434,7 @@ fn stalled_management_probe_is_bounded() {
             pending: Mutex::new(HashMap::new()),
             ready: Mutex::new(true),
             browser: crate::browser::Requests::new("test".into()),
+            editors: Default::default(),
             prompts: None,
             binary: false,
         }),
@@ -1149,4 +1151,58 @@ fn host_messages_parse_into_typed_kinds() {
     ));
     assert!(parse(json!({"id":"5","event":"future-event"})).is_none());
     assert!(parse(json!({"id":5})).is_none());
+}
+#[cfg(unix)]
+#[test]
+fn editor_requests_reach_the_desktop_once_and_only_when_valid() {
+    let mut command = CommandBuilder::new("sh");
+    command.args(["-c", "exec sleep 30"]);
+    let (pty, _reader) = spawn(command).unwrap();
+    let conn = Connection {
+        pty,
+        pending: Mutex::new(HashMap::new()),
+        ready: Mutex::new(true),
+        browser: crate::browser::Requests::new("test".into()),
+        editors: Default::default(),
+        prompts: None,
+        binary: true,
+    };
+    let (tx, rx) = mpsc::channel();
+    let sink: EventSink = Arc::new(move |event, value| {
+        let _ = tx.send((event.to_owned(), value));
+    });
+    let id = "0123456789abcdef0123456789abcdef";
+    let text = "keep\r\nthis exactly\n";
+    let open = |id: &str, pid: Value| json!({"id":id,"event":"editor-open","pid":pid,"name":"codex","text":text});
+    assert!(host_message(&conn, "h1", "n", open(id, json!(4242)), &sink));
+    let (event, value) = rx.try_recv().unwrap();
+    assert_eq!(event, "host-editor-open");
+    assert_eq!(
+        value,
+        json!({"hostId":"h1","id":id,"pid":4242,"name":"codex","text":text})
+    );
+    // A repeated or malformed request is not shown again.
+    assert!(host_message(&conn, "h1", "n", open(id, json!(4242)), &sink));
+    assert!(host_message(
+        &conn,
+        "h1",
+        "n",
+        open("ffffffffffffffffffffffffffffffff", json!(0)),
+        &sink
+    ));
+    assert!(rx.try_recv().is_err());
+    // Nothing reaches the desktop before the helper is ready.
+    *lock(&conn.ready) = false;
+    conn.editors.release(id);
+    assert!(host_message(&conn, "h1", "n", open(id, json!(4242)), &sink));
+    assert!(rx.try_recv().is_err());
+    conn.pty.io.kill();
+}
+#[test]
+fn editor_open_events_parse() {
+    assert!(matches!(
+        HostMessage::parse(json!({"id":"9","event":"editor-open","pid":7,"name":"n","text":"t"})),
+        Some(HostMessage::EditorOpen { id, pid, name, text })
+            if id == "9" && pid == 7 && name == "n" && text == "t"
+    ));
 }

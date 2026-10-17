@@ -40,6 +40,25 @@ pub(super) fn host_message(
                 );
             }
         }
+        Some(HostMessage::EditorOpen {
+            id,
+            pid,
+            name,
+            text,
+        }) => {
+            // An invalid or excess request is dropped; the helper then opens
+            // a terminal editor once its acknowledgement wait ends.
+            if conn.pty.active.load(Ordering::Acquire) && *lock(&conn.ready) {
+                if let Ok(request) = crate::editor::validate(&id, &pid, &name, &text) {
+                    if conn.editors.reserve(&request.id) {
+                        sink(
+                            "host-editor-open",
+                            json!({"hostId":host_id,"id":request.id,"pid":request.pid,"name":request.name,"text":request.text}),
+                        );
+                    }
+                }
+            }
+        }
         Some(HostMessage::Ready(identity)) => {
             if conn.binary && identity["protocol"].as_u64() != Some(HOST_PROTOCOL) {
                 sink(
