@@ -12,19 +12,23 @@ export DEBIAN_FRONTEND=noninteractive
 step() { printf '\n== %s\n' "$*"; }
 
 step "System"
-grep -E '^(PRETTY_NAME|VERSION_CODENAME|UBUNTU_CODENAME)=' /etc/os-release | tee "$results/os.txt"
-ldd --version | head -1 | tee -a "$results/os.txt"
+{
+  cat /etc/linuxmint/info 2>/dev/null || true
+  grep -E '^(PRETTY_NAME|VERSION_CODENAME|UBUNTU_CODENAME)=' /etc/os-release
+  ldd --version | sed -n 1p
+} | tee "$results/os.txt"
 
 deb=$(ls "$artifacts"/*.deb)
 appimage=$(ls "$artifacts"/*.AppImage)
 apt-get update -qq
 
 step "Install $(basename "$deb") with apt resolving dependencies"
+pkg=$(dpkg-deb -f "$deb" Package)
 dpkg-deb -f "$deb" Package Version Depends Recommends | tee "$results/deb-control.txt"
 apt-get install -y --no-install-recommends --simulate "$deb" | grep '^Inst ' | tee "$results/apt-resolved.txt"
 apt-get install -y "$deb" > "$results/apt-install.log" 2>&1 || { cat "$results/apt-install.log"; exit 1; }
-dpkg -s dazedev | grep -E '^(Status|Version)' | tee -a "$results/deb-control.txt"
-dpkg -L dazedev > "$results/deb-files.txt"
+dpkg -s "$pkg" | grep -E '^(Status|Version)' | tee -a "$results/deb-control.txt"
+dpkg -L "$pkg" > "$results/deb-files.txt"
 test -x /usr/bin/DazeDev
 runtime=$(dirname "$(grep '/runtime/llama-server$' "$results/deb-files.txt")")
 test -x "$runtime/llama-server"
@@ -40,7 +44,7 @@ echo "All installed ELF files resolve their libraries." | tee "$results/ldd.txt"
 
 step "Test-only tools (not package dependencies)"
 apt-get install -y -qq xvfb xauth webkit2gtk-driver pulseaudio pulseaudio-utils dbus-x11 \
-  imagemagick x11-utils xdotool > /dev/null
+  imagemagick x11-utils xdotool ca-certificates util-linux > /dev/null
 id tester > /dev/null 2>&1 || useradd -m -s /bin/bash tester
 # Containers may restrict unprivileged user namespaces needed by the WebKit sandbox.
 sysctl -w kernel.apparmor_restrict_unprivileged_userns=0 > /dev/null 2>&1 || true
@@ -50,36 +54,52 @@ cp "$scripts/verify-linux-startup.py" "$appimage" "$work/"
 [[ -f "$artifacts/voice_smoke" ]] && cp "$artifacts/voice_smoke" "$artifacts/jfk.wav" "$work/"
 chown -R tester: "$work"
 chmod +x "$work"/*.AppImage
+sandbox=""
+if ! runuser -u tester -- unshare -U true 2> /dev/null; then
+  # Only for this container: the WebKit sandbox needs user namespaces.
+  sandbox="WEBKIT_DISABLE_SANDBOX_THIS_IS_DANGEROUS=1"
+  echo "User namespaces unavailable here; WebKit sandbox disabled for these tests only." | tee "$results/sandbox.txt"
+fi
 cat > "$work/as-tester.sh" <<'SH'
 #!/usr/bin/env bash
 # Session for the test user: private runtime folder, D-Bus and a null audio source.
 set -euo pipefail
 export XDG_RUNTIME_DIR=$(mktemp -d)
-pulseaudio --daemonize=yes --exit-idle-time=-1 --log-target=stderr 2>/dev/null
-for _ in $(seq 50); do pactl info > /dev/null 2>&1 && break; sleep 0.2; done
-pactl load-module module-null-sink sink_name=dazedev_test > /dev/null
-pactl set-default-source dazedev_test.monitor
+if pulseaudio --daemonize=yes --exit-idle-time=-1 2>/dev/null; then
+  for _ in $(seq 50); do pactl info > /dev/null 2>&1 && break; sleep 0.2; done
+  pactl load-module module-null-sink sink_name=dazedev_test > /dev/null || true
+  pactl set-default-source dazedev_test.monitor || true
+else
+  echo "PulseAudio did not start; microphone check will fail" >&2
+fi
 exec dbus-run-session -- "$@"
 SH
 chmod +x "$work/as-tester.sh"
-as_tester() { runuser -u tester -- env -C "$work" HOME=/home/tester "$work/as-tester.sh" "$@"; }
+as_tester() { runuser -u tester -- env -C "$work" HOME=/home/tester $sandbox "$work/as-tester.sh" "$@"; }
+failed=()
+check() { # name logfile command...: record PASS/FAIL and keep going
+  local name=$1 log=$2; shift 2
+  step "$name"
+  if "$@" > "$results/$log" 2>&1 && grep -q '^PASS' "$results/$log"; then
+    echo "PASS $name" | tee -a "$results/checks.txt"
+  else
+    tail -40 "$results/$log"; echo "FAIL $name" | tee -a "$results/checks.txt"; failed+=("$name")
+  fi
+  tail -3 "$results/$log"
+}
+xvfb() { as_tester xvfb-run -a -s '-screen 0 1440x920x24' "$@"; }
 
-step ".deb: interface, settings persistence and microphone under Xvfb"
-as_tester xvfb-run -a -s '-screen 0 1440x920x24' python3 -I verify-linux-startup.py \
-  --binary /usr/bin/DazeDev --microphone --screenshot "$work/deb-window.png" \
-  2>&1 | tee "$results/deb-startup.txt"
-grep -q '^PASS' "$results/deb-startup.txt"
-cp "$work/deb-window.png" "$results/"
-
+check ".deb: interface loads, settings saved in XDG folder and kept on restart" deb-startup.txt \
+  xvfb python3 -I verify-linux-startup.py --binary /usr/bin/DazeDev --screenshot "$work/deb-window.png"
+cp "$work/deb-window.png" "$results/" 2>/dev/null || true
+check ".deb: WebKit microphone stream" deb-microphone.txt \
+  xvfb python3 -I verify-linux-startup.py --binary /usr/bin/DazeDev --microphone
 if [[ -f "$work/voice_smoke" ]]; then
-  step ".deb: installed voice runtime (Parakeet, Silero, S1-mini cleanup)"
-  as_tester ./voice_smoke "$work/models" "$runtime/llama-server" jfk.wav parakeet \
-    2>&1 | tail -5 | tee "$results/deb-voice.txt"
-  grep -q '^PASS parakeet' "$results/deb-voice.txt"
+  check ".deb: installed voice runtime (Parakeet, Silero, S1-mini cleanup)" deb-voice.txt \
+    as_tester ./voice_smoke "$work/models" "$runtime/llama-server" jfk.wav parakeet
   rm -rf "$work/models"
 fi
 
-step "AppImage: start, window and interface under Xvfb"
 cat > "$work/appimage-run.sh" <<'SH'
 #!/usr/bin/env bash
 set -euo pipefail
@@ -107,11 +127,15 @@ kill "$pid"; wait "$pid" 2>/dev/null || true
 echo "PASS AppImage: window mapped, interface painted, settings in $XDG_DATA_HOME/DazeDev"
 SH
 chmod +x "$work/appimage-run.sh"
-as_tester xvfb-run -a -s '-screen 0 1440x920x24' ./appimage-run.sh 2>&1 | tee "$results/appimage-startup.txt"
-grep -q '^PASS' "$results/appimage-startup.txt"
-cp "$work/appimage-window.png" "$results/"
+check "AppImage: window mapped, interface painted, settings in XDG folder" appimage-startup.txt \
+  xvfb ./appimage-run.sh
+cp "$work/appimage-window.png" "$results/" 2>/dev/null || true
 
 step "Remove"
-apt-get remove -y dazedev > /dev/null
+apt-get remove -y "$pkg" > /dev/null
 test ! -e /usr/bin/DazeDev
-echo "PASS install, start and removal on $(. /etc/os-release; echo "$PRETTY_NAME")" | tee "$results/summary.txt"
+system="$(sed -n "s/^DESCRIPTION=//p" /etc/linuxmint/info 2>/dev/null || true) ($(. /etc/os-release; echo "$PRETTY_NAME"))"
+if (( ${#failed[@]} )); then
+  printf 'FAIL on %s: %s\n' "$system" "${failed[*]}" | tee "$results/summary.txt"; exit 1
+fi
+echo "PASS install, start and removal on $system" | tee "$results/summary.txt"
