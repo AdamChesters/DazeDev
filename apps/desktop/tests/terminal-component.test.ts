@@ -1,7 +1,7 @@
 // @vitest-environment jsdom
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { fireEvent, render, screen, waitFor } from '@testing-library/svelte';
-import { calls, emit, frame, resetTauri } from './support/tauri';
+import { calls, emit, frame, handlers, resetTauri } from './support/tauri';
 import { Terminal as FakeTerminal } from './support/xterm';
 import { clipboard, installDom, pasteEvent } from './support/dom';
 import Terminal from '../src/components/Terminal.svelte';
@@ -54,6 +54,7 @@ async function attached(settings: Partial<TerminalSettings> = {}) {
     onshell: vi.fn(),
     onclipboard: vi.fn(),
     onpastesetting: vi.fn(),
+    onmetadata: vi.fn(),
     settings: { ...terminalDefaults, ...settings },
   };
   const view = render(Terminal, { props });
@@ -161,6 +162,27 @@ describe('Terminal OSC 52 clipboard writes', () => {
     await new Promise((resolve) => setTimeout(resolve, 20));
     expect(clipboard.writeText).not.toHaveBeenCalled();
     expect(props.onclipboard).not.toHaveBeenCalled();
+  });
+});
+
+describe('Terminal status polling', () => {
+  const statusPolls = () =>
+    calls('host_rpc').filter((args) => args.method === 'terminal_status').length;
+  it('treats a reply that is not a status object as unknown status', async () => {
+    // The first poll runs 500 ms after mounting. A missing reply used to
+    // become the pane status and throw in the ended-session banner.
+    handlers.set('host_rpc', () => undefined);
+    const { props } = await attached();
+    await waitFor(() => expect(statusPolls()).toBeGreaterThan(0), { timeout: 3000 });
+    await new Promise((resolve) => setTimeout(resolve, 20));
+    expect(props.onmetadata).not.toHaveBeenCalledWith(undefined);
+    expect(screen.queryByLabelText('Session ended')).toBeNull();
+  });
+  it('reports a real status reply', async () => {
+    const status = { attachment: 'tmux', nestedSsh: false, hostname: 'build', paneDead: false };
+    handlers.set('host_rpc', (args) => (args.method === 'terminal_status' ? status : undefined));
+    const { props } = await attached();
+    await waitFor(() => expect(props.onmetadata).toHaveBeenCalledWith(status), { timeout: 3000 });
   });
 });
 

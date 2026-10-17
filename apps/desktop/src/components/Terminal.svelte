@@ -141,6 +141,14 @@
       onstate(pane.shell ? 'Shell' : 'Attached');
     }
   }
+  // A status reply that is not a status object (an older or failing helper)
+  // counts as a failed poll, so the pane keeps a valid status.
+  async function paneStatus(pid: number): Promise<PaneStatus> {
+    const value = await rpc<PaneStatus | null>(pane.hostId, 'terminal_status', { pid });
+    if (!value || typeof value !== 'object' || typeof value.attachment !== 'string')
+      throw new Error('Invalid terminal status reply');
+    return value;
+  }
   function recover(): Promise<void> {
     if (recoveryPending) return recoveryPending;
     const target = observedStatus;
@@ -153,7 +161,7 @@
       try {
         await recoverDeadPane(target, (args) => rpc(pane.hostId, 'terminal_recover', args));
         if (dead || current !== generation) return;
-        const value = await rpc<PaneStatus>(pane.hostId, 'terminal_status', { pid: remotePid });
+        const value = await paneStatus(remotePid);
         if (dead || current !== generation) return;
         if (value.paneDead) throw Error('The terminal is still ended. Try Open terminal again.');
         if (
@@ -525,7 +533,7 @@
       const epoch = recoveryEpoch;
       try {
         if (opened && remoteReady && connected && (visible || floating)) {
-          const value = await rpc<PaneStatus>(pane.hostId, 'terminal_status', { pid: remotePid });
+          const value = await paneStatus(remotePid);
           if (
             !disposed &&
             current === generation &&
