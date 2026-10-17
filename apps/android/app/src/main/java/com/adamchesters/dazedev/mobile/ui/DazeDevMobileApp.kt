@@ -43,6 +43,27 @@ fun DazeDevMobileApp(viewModel: MainViewModel) {
     val coroutineScope = rememberCoroutineScope()
 
     val terminalLink by viewModel.terminalLink.collectAsStateWithLifecycle()
+    val upload by viewModel.uploads.state.collectAsStateWithLifecycle()
+    val preview by viewModel.previews.state.collectAsStateWithLifecycle()
+    val broadcast by viewModel.broadcasts.state.collectAsStateWithLifecycle()
+    val repositories by viewModel.repositories.state.collectAsStateWithLifecycle()
+    val dictionaryOpen by viewModel.dictionary.isOpen.collectAsStateWithLifecycle()
+    val dictionaryView by viewModel.dictionary.store.view
+        .collectAsStateWithLifecycle()
+    val dictionaryBusy by viewModel.dictionary.busy.collectAsStateWithLifecycle()
+    val dictionaryError by viewModel.dictionary.error.collectAsStateWithLifecycle()
+    val terminalTools =
+        remember(viewModel) {
+            TerminalTools(
+                uploadFiles = { uris -> viewModel.shared(uris) },
+                clipboardFile = viewModel::clipboardFile,
+                page = { viewModel.page.value = it },
+                link = viewModel.previews::showLink,
+                broadcast = viewModel.broadcasts::open,
+                applyDictionary = viewModel.dictionary::apply,
+                openDictionary = viewModel.dictionary::show,
+            )
+        }
     BackHandler(enabled = uiState.screen != Screen.Hosts, onBack = viewModel::back)
 
     val privateKeyPicker =
@@ -173,6 +194,7 @@ fun DazeDevMobileApp(viewModel: MainViewModel) {
                     onValidateTarget = viewModel::validateInputTarget,
                     onReconnect = viewModel::reconnectTerminal,
                     onMeasured = viewModel::terminalMeasured,
+                    tools = terminalTools,
                     onMessage = { text ->
                         coroutineScope.launch {
                             snackbarHostState.currentSnackbarData?.dismiss()
@@ -207,6 +229,13 @@ fun DazeDevMobileApp(viewModel: MainViewModel) {
             dismissButton = { TextButton(onClick = viewModel::dismissGroupConnect) { Text("Keep disconnected") } },
         )
     }
+    if (upload.open) UploadSheet(upload, uiState.hosts, viewModel)
+    if (broadcast.open) BroadcastSheet(broadcast, viewModel.broadcasts)
+    if (repositories.open) RepositoriesDialog(repositories, viewModel.repositories)
+    if (dictionaryOpen) DictionaryDialog(dictionaryView, uiState.hosts, dictionaryBusy, dictionaryError, viewModel.dictionary)
+    val showMessage: (String) -> Unit = { text -> coroutineScope.launch { snackbarHostState.showSnackbar(text) } }
+    preview.link?.let { link -> LinkSheet(link, preview.linkHost, viewModel.previews::open, viewModel.previews::dismissLink, showMessage) }
+    if (preview.path != null) PreviewDialog(preview, viewModel.previews::toggleSource, viewModel.previews::close, showMessage)
     uiState.mobileUpdate?.let { update -> UpdateDialog(update, uiState, viewModel) }
     if (uiState.windows.isNotEmpty()) TmuxWindowPicker(uiState.windows, viewModel::selectWindow, viewModel::dismissWindows)
     uiState.draftReview?.let { review -> DraftReview(review, viewModel::applyDraftReview, viewModel::dismissDraftReview) }

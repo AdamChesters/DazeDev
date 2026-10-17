@@ -16,7 +16,9 @@ import com.adamchesters.dazedev.mobile.host.HostEvent
 import com.adamchesters.dazedev.mobile.host.SessionLaunch
 import com.adamchesters.dazedev.mobile.host.TerminalRow
 import com.adamchesters.dazedev.mobile.releases.PublicReleaseCatalog
+import com.adamchesters.dazedev.mobile.service.AlertNotifier
 import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.distinctUntilChanged
@@ -33,7 +35,7 @@ class MainViewModel(
     private val registry = (application as DazeDevApplication).hosts
     private val credentials = (application as DazeDevApplication).credentials
     private val store = ProfileStore(application)
-    private val ui = UiStore(DazeDevMobileUiState(profile = store.load(), secureScreen = store.secureScreen, backgroundWindow = registry.backgroundWindow.value, keepOtherSize = store.keepOtherSize, extraKeys = store.extraKeys))
+    private val ui = UiStore(DazeDevMobileUiState(profile = store.load(), secureScreen = store.secureScreen, backgroundWindow = registry.backgroundWindow.value, keepOtherSize = store.keepOtherSize, extraKeys = store.extraKeys, alertNotifications = store.alertNotifications))
     val uiState: StateFlow<DazeDevMobileUiState> = ui.state.asStateFlow()
     private val terminal = TerminalController(ui, registry, viewModelScope)
 
@@ -44,12 +46,26 @@ class MainViewModel(
     private val sessions = SessionController(ui, registry, store, viewModelScope, terminal, workspace)
     private val updates = UpdateController(ui, viewModelScope, store, PublicReleaseCatalog, BuildConfig.VERSION_NAME, downloads = java.io.File(application.cacheDir, "updates"))
     private val hostKeys = HostKeyController(ui, registry, viewModelScope, (application as DazeDevApplication)::knownHosts)
+    private val contentFiles = ContentFiles(application)
+    val uploads = UploadController(registry, terminal, viewModelScope, ui::message) { contentFiles.spool(it) }
+
+    val previews = PreviewController(terminal, viewModelScope)
+    val broadcasts = BroadcastController(ui, registry, viewModelScope)
+    val repositories = RepositoryController(registry, viewModelScope)
+    val dictionary = DictionaryController(java.io.File(application.filesDir, "dictionary/dictionary.json"), registry, viewModelScope)
+    private val alerts = TerminalAlertCenter(ui, registry, { ui.value.alertNotifications }, { key, title, text -> AlertNotifier.notify(application, key, title, text) })
+
+    /** The open terminal's page, registered while the terminal screen shows it. */
+    val page = MutableStateFlow<TerminalPageController?>(null)
 
     init {
         connections.workspace = workspace
         terminal.connect = { connections.connect(it, "") }
         terminal.rebindPane = workspace::rebindPane
         terminal.keepOtherSize = { ui.value.keepOtherSize }
+        terminal.wrapStream = { h, id, name, stream -> AlertingTerminal(stream, alerts.watcher(h, id, name)) }
+        terminal.opened = alerts::clear
+        terminal.keepAttachedInBackground = { ui.value.alertNotifications && AlertNotifier.allowed(application) }
         viewModelScope.launch { registry.hosts.collect { connections.sync(it) } }
         viewModelScope.launch { registry.events.collect(::onHostEvent) }
         viewModelScope.launch { registry.prompts.authNotice.collect { notice -> ui.update { it.copy(authNotice = notice) } } }
@@ -84,6 +100,42 @@ class MainViewModel(
             is HostEvent.Disconnected -> terminal.linkLost(event.hostId, "This host was disconnected. Connect again to continue.")
             is HostEvent.KeyChanged -> ui.update { it.copy(hostKeyChange = event.change) }
         }
+    }
+
+    /** Files or text shared to DazeDev, or picked with the document picker: confirm, then upload. */
+    fun shared(
+        uris: List<Uri>,
+        text: String? = null,
+    ) {
+        // A running upload may read a spooled copy; offer() refuses a new one meanwhile.
+        if (!uploads.state.value.uploading) contentFiles.clearSpool()
+        uploads.offer(uris.map(contentFiles::describe), text)
+    }
+
+    /** A file on the clipboard: quick upload to the host's DazeDev uploads folder, then its path can be pasted. */
+    fun clipboardFile(uri: Uri) {
+        if (!uploads.state.value.uploading) contentFiles.clearSpool()
+        uploads.offer(listOf(contentFiles.describe(uri)), quick = true)
+    }
+
+    fun dismissUpload() {
+        uploads.dismiss()
+        if (!uploads.state.value.open) contentFiles.clearSpool()
+    }
+
+    /** Pastes uploaded paths into the terminal that was open when the upload started, without Return. */
+    fun pasteUploadedPath() {
+        val text = uploads.pathText()
+        if (!uploads.sameTerminal()) return ui.message("The terminal changed. Copy the path instead.")
+        if (page.value?.paste(text) != true) return ui.message("The path was not pasted. Wait for the terminal, then try again.")
+        uploads.dismiss()
+    }
+
+    fun pasteSharedText() {
+        val text = uploads.state.value.text ?: return
+        if (!uploads.sameTerminal()) return ui.message("The terminal changed. Open it again to paste.")
+        if (page.value?.paste(text) != true) return ui.message("Text was not pasted. Wait for the terminal, or share less than 64 KiB.")
+        uploads.dismiss()
     }
 
     fun checkUpdates(manual: Boolean = true) = updates.checkUpdates(manual)
@@ -311,6 +363,7 @@ class MainViewModel(
         registry.setForeground(value)
         registry.prompts.foreground = value
         terminal.setForeground(value)
+        if (value) alerts.returned()
     }
 
     fun dismissAuthNotice() = registry.prompts.dismissAuthNotice()
@@ -338,6 +391,12 @@ class MainViewModel(
         ui.update { it.copy(extraKeys = value) }
     }
 
+    /** Local notifications for completion alerts while the app is in the background. */
+    fun setAlertNotifications(value: Boolean) {
+        store.alertNotifications = value
+        ui.update { it.copy(alertNotifications = value) }
+    }
+
     /** Applies to terminals opened from now on. */
     fun setKeepOtherSize(value: Boolean) {
         store.keepOtherSize = value
@@ -346,6 +405,10 @@ class MainViewModel(
 
     fun notificationsDenied() {
         ui.message("Notifications are off, so the background connection notice and its timer are hidden. Hosts still stay connected in the background.")
+    }
+
+    fun alertNotificationsDenied() {
+        ui.message("Notifications are not allowed, so completion notifications stay off. Alerts still show as badges in the app.")
     }
 
     fun closeHostKeys() = hostKeys.closeHostKeys()

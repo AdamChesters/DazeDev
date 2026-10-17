@@ -30,11 +30,14 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.rounded.ArrowBack
 import androidx.compose.material.icons.automirrored.rounded.Send
 import androidx.compose.material.icons.rounded.Mic
+import androidx.compose.material.icons.rounded.MoreVert
 import androidx.compose.material.icons.rounded.Refresh
 import androidx.compose.material.icons.rounded.Stop
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
 import androidx.compose.material3.CircularProgressIndicator
+import androidx.compose.material3.DropdownMenu
+import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.FilledIconButton
 import androidx.compose.material3.FilledTonalButton
@@ -107,6 +110,7 @@ fun TerminalScreen(
     onMessage: (String) -> Unit,
     onReconnect: () -> Unit = onRefresh,
     onMeasured: (Long, Int, Int) -> Unit = { _, _, _ -> },
+    tools: TerminalTools = TerminalTools(),
 ) {
     val connected =
         uiState.terminal
@@ -152,6 +156,27 @@ fun TerminalScreen(
     var frozenTarget by rememberSaveable(draftKey) { mutableStateOf(drafts.getString("target:$draftKey", null)) }
     val scope = rememberCoroutineScope()
     val terminalController = remember(uiState.terminalEpoch) { TerminalPageController() }
+    DisposableEffect(terminalController) {
+        tools.page(terminalController)
+        onDispose { tools.page(null) }
+    }
+    val uploadPicker = rememberLauncherForActivityResult(ActivityResultContracts.OpenMultipleDocuments()) { uris -> if (uris.isNotEmpty()) tools.uploadFiles(uris) }
+    var more by remember { mutableStateOf(false) }
+    var showFind by remember { mutableStateOf(false) }
+    var exportText by remember { mutableStateOf<String?>(null) }
+
+    suspend fun terminalText(): String? = terminalController.evaluate("window.daze?.text()", 10_000).also { if (it == null) onMessage("The terminal did not answer. Try again.") }
+    val saveExport =
+        rememberLauncherForActivityResult(ActivityResultContracts.CreateDocument("text/plain")) { uri ->
+            val text = exportText
+            exportText = null
+            if (uri != null && text != null) {
+                scope.launch {
+                    val failed = withContext(Dispatchers.IO) { runCatching { TerminalExport.save(context, uri, text) }.exceptionOrNull() }
+                    onMessage(if (failed == null) "Saved the terminal output." else failed.message ?: "Could not save the terminal output.")
+                }
+            }
+        }
     var submitting by remember(draftKey) { mutableStateOf(false) }
     var startingVoice by remember(draftKey) { mutableStateOf(false) }
     var voiceStartRequest by remember(draftKey) { mutableStateOf(0L) }
@@ -180,8 +205,9 @@ fun TerminalScreen(
                         .putString("original:$draftKey", transcript)
                         .putLong("saved:$draftKey", System.currentTimeMillis())
                         .apply()
+                    // The original keeps what was heard; the draft gets the dictionary's spellings.
                     input =
-                        listOf(voicePrefix, transcript)
+                        listOf(voicePrefix, tools.applyDictionary(transcript))
                             .filter(String::isNotBlank)
                             .joinToString(" ")
                 },
@@ -402,6 +428,48 @@ fun TerminalScreen(
                     IconButton(onClick = onRefresh) {
                         Icon(Icons.Rounded.Refresh, contentDescription = "Refresh terminal")
                     }
+                    Box {
+                        IconButton(onClick = { more = true }) { Icon(Icons.Rounded.MoreVert, contentDescription = "More terminal actions") }
+                        DropdownMenu(expanded = more, onDismissRequest = { more = false }) {
+                            DropdownMenuItem(text = { Text("Find in terminal") }, onClick = {
+                                more = false
+                                showFind = true
+                            })
+                            DropdownMenuItem(text = { Text("Share output") }, onClick = {
+                                more = false
+                                scope.launch {
+                                    val text = terminalText() ?: return@launch
+                                    val name = TerminalExport.fileName(uiState.selectedSessionName.orEmpty(), java.time.LocalDateTime.now())
+                                    runCatching { context.startActivity(withContext(Dispatchers.IO) { TerminalExport.share(context, name, text) }) }.onFailure { onMessage("Could not share the terminal output.") }
+                                }
+                            })
+                            DropdownMenuItem(text = { Text("Save output…") }, onClick = {
+                                more = false
+                                scope.launch {
+                                    exportText = terminalText() ?: return@launch
+                                    saveExport.launch(TerminalExport.fileName(uiState.selectedSessionName.orEmpty(), java.time.LocalDateTime.now()))
+                                }
+                            })
+                            DropdownMenuItem(text = { Text("Clear local scrollback") }, onClick = {
+                                more = false
+                                scope.launch {
+                                    when (terminalController.evaluate("window.daze?.clearScrollback()")) {
+                                        "true" -> onMessage("Cleared this phone's copy of the scrollback. Nothing was sent to the host.")
+                                        "false" -> onMessage("This program uses the full screen, so the phone keeps no scrollback for it.")
+                                        else -> onMessage("The terminal did not answer. Try again.")
+                                    }
+                                }
+                            })
+                            DropdownMenuItem(text = { Text("Broadcast") }, onClick = {
+                                more = false
+                                tools.broadcast("")
+                            })
+                            DropdownMenuItem(text = { Text("Upload file") }, onClick = {
+                                more = false
+                                uploadPicker.launch(arrayOf("*/*"))
+                            })
+                        }
+                    }
                 }
             },
         )
@@ -420,6 +488,7 @@ fun TerminalScreen(
                 }
             }
         }
+        if (showFind) key(terminalController) { TerminalFindBar(terminalController) { showFind = false } }
         Surface(
             modifier =
                 Modifier
@@ -437,7 +506,7 @@ fun TerminalScreen(
                     InteractiveTerminal(stream, terminalController, { cols, rows -> onMeasured(uiState.terminalEpoch, cols, rows) }, { scrolledBack = it }, onMessage, {
                         onMessage("The terminal view stopped. Reconnecting.")
                         onReconnect()
-                    }, Modifier.fillMaxSize(), uiState.extraKeys)
+                    }, Modifier.fillMaxSize(), uiState.extraKeys, tools.link)
                 }
                 val problem = uiState.terminalError ?: if (stream != null && !connected) "Terminal disconnected. Input typed now is not sent." else null
                 if (activity != TerminalHostActivity.None) {
@@ -531,11 +600,19 @@ fun TerminalScreen(
                 TextButton(onClick = { terminalController.call("copy") }) { Text("Copy") }
                 TextButton(onClick = {
                     val clipboard = context.getSystemService(android.content.Context.CLIPBOARD_SERVICE) as android.content.ClipboardManager
-                    clipboard.primaryClip
-                        ?.getItemAt(0)
-                        ?.coerceToText(context)
-                        ?.toString()
-                        ?.let { if (!terminalController.paste(it)) onMessage("Clipboard was not pasted. Wait for the terminal, or choose text smaller than 64 KiB.") }
+                    val clip = clipboard.primaryClip
+                    val uri = clip?.getItemAt(0)?.uri
+                    val description = clip?.description
+                    // A copied image or file is uploaded (after confirmation) and its path pasted; text is pasted as before.
+                    if (uri != null && uri.scheme == "content" && description != null && (0 until description.mimeTypeCount).any { !description.getMimeType(it).startsWith("text/") }) {
+                        tools.clipboardFile(uri)
+                    } else {
+                        clip
+                            ?.getItemAt(0)
+                            ?.coerceToText(context)
+                            ?.toString()
+                            ?.let { if (!terminalController.paste(it)) onMessage("Clipboard was not pasted. Wait for the terminal, or choose text smaller than 64 KiB.") }
+                    }
                 }) { Text("Paste clipboard") }
             }
             FilledTonalButton(onClick = {
@@ -611,6 +688,12 @@ fun TerminalScreen(
                         modifier = Modifier.fillMaxWidth(),
                     )
                     if (draftMessage.isNotBlank()) Text(draftMessage, style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.onSurface)
+                    if (input.isNotBlank() && voiceStatus.phase == VoiceInputPhase.Idle && !submitting && !startingVoice) {
+                        TextButton(onClick = {
+                            showDraft = false
+                            tools.broadcast(input)
+                        }) { Text("Broadcast this draft to several terminals") }
+                    }
                     Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(12.dp), verticalAlignment = Alignment.CenterVertically) {
                         Column(Modifier.weight(1f)) {
                             Text("End to edit, Enter to send", style = MaterialTheme.typography.labelLarge)
@@ -642,6 +725,7 @@ fun TerminalScreen(
                         }
                     }
                     Text("Moonshine Medium runs on this phone. Installed models work offline.", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                    TextButton(onClick = tools.openDictionary) { Text("Dictionary: preferred spellings") }
                     Spacer(Modifier.size(8.dp))
                 }
             }

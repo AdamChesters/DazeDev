@@ -70,6 +70,30 @@ class TerminalPageController {
     fun clear() {
         call("clear")
     }
+
+    /** Evaluates [script] in the page and returns its string result, or null when the page did not answer. */
+    suspend fun evaluate(
+        script: String,
+        timeoutMs: Long = 5_000,
+    ): String? {
+        val page = web ?: return null
+        if (!ready) return null
+        val result = CompletableDeferred<String?>()
+        page.evaluateJavascript(script) { value -> result.complete(value) }
+        val raw = withTimeoutOrNull(timeoutMs) { result.await() } ?: return null
+        return runCatching { JSONTokener(raw).nextValue() }.getOrNull()?.toString()
+    }
+
+    /** The terminal buffer as logical lines (soft-wrapped rows joined), for terminal-local find. */
+    suspend fun lines(): TerminalLines? = evaluate("window.daze?.lines()")?.let { runCatching { TerminalLines.parse(it) }.getOrNull() }
+
+    /** Scrolls to and selects a find match; false when that line changed since the search. */
+    suspend fun reveal(
+        first: Int,
+        text: String,
+        start: Int,
+        end: Int,
+    ): Boolean = evaluate("window.daze?.reveal($first, ${JSONObject.quote(text)}, $start, $end)") == "true"
 }
 
 private fun inputRefused(stream: TerminalLink?) = if (stream?.connected == true) "Input is still being sent. Wait a moment, then try again." else "Input was not sent. Reconnect the terminal."
@@ -86,6 +110,7 @@ fun InteractiveTerminal(
     onRendererGone: () -> Unit,
     modifier: Modifier = Modifier,
     extraKeys: Boolean = true,
+    onLink: (TerminalTarget) -> Unit = {},
 ) {
     val context = LocalContext.current
     val fontScale = LocalConfiguration.current.fontScale
@@ -199,8 +224,18 @@ fun InteractiveTerminal(
                                     }
                                 }
 
-                                "openUrl" -> {
-                                    BrowserLauncher.open(context, event.getString("value"))?.let(onMessage)
+                                // Remote output never opens a browser by itself: taps show the link sheet.
+                                "link" -> {
+                                    val uri = event.getString("value")
+                                    if (uri.length <= 8192) onLink(TerminalTarget(TerminalTarget.Kind.Url, uri, 0, uri.length))
+                                }
+
+                                "tap" -> {
+                                    val tap = event.getJSONObject("value")
+                                    TerminalLinks.at(tap.getString("text"), tap.getInt("index"))?.let { target ->
+                                        if (tap.optBoolean("long")) controller.call("clearSelection")
+                                        onLink(target)
+                                    }
                                 }
 
                                 "copy" -> {

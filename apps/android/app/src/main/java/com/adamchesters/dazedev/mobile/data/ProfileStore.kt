@@ -64,6 +64,13 @@ class ProfileStore(
             prefs.edit().putBoolean("extra_keys", value).apply()
         }
 
+    /** Completion notifications from the open terminal while in the background; off unless turned on. */
+    var alertNotifications: Boolean
+        get() = prefs.getBoolean("alert_notifications", false)
+        set(value) {
+            prefs.edit().putBoolean("alert_notifications", value).apply()
+        }
+
     fun load(): ConnectionProfile = loadAll().firstOrNull() ?: ConnectionProfile()
 
     override fun save(profile: ConnectionProfile) {

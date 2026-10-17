@@ -9,6 +9,7 @@ import com.adamchesters.dazedev.mobile.ssh.AttachRequest
 import com.adamchesters.dazedev.mobile.ssh.SshTerminalOpener
 import com.adamchesters.dazedev.mobile.ssh.TerminalLink
 import com.adamchesters.dazedev.mobile.ssh.TerminalOpener
+import com.adamchesters.dazedev.mobile.tmux.ShellQuoter
 import com.adamchesters.dazedev.mobile.tmux.TmuxSession
 import com.adamchesters.dazedev.mobile.tmux.TmuxVersion
 import kotlinx.coroutines.CancellationException
@@ -54,9 +55,46 @@ class TerminalController(
     /** Points the selected saved terminal at a replacement session. */
     var rebindPane: (String, TmuxSession) -> Unit = { _, _ -> }
 
+    /** Wraps a newly attached stream, for example to read completion alerts from its output. */
+    var wrapStream: (HostEntry, String, String, TerminalLink) -> TerminalLink = { _, _, _, stream -> stream }
+
+    /** A terminal is being opened (host id, session id). */
+    var opened: (String, String) -> Unit = { _, _ -> }
+
+    /** True to keep the terminal attached for the whole background window, so its alerts keep arriving. */
+    var keepAttachedInBackground: () -> Boolean = { false }
+
     val generation get() = attachmentGeneration
 
     private fun target(): HostEntry? = registry.entry(ui.value.selectedTargetHost)
+
+    /** The open terminal's host while it is connected. */
+    fun openHost(): HostEntry? = target()?.takeIf { it.phase == ConnectionPhase.Connected && ui.value.selectedSessionId != null }
+
+    /** Names the open terminal (host, session and stamp), or null when none is open. */
+    fun terminalKey(): String? {
+        val s = ui.value
+        return if (s.selectedTargetHost == null || s.selectedSessionId == null || s.selectedStamp == null) null else "${s.selectedTargetHost}:${s.selectedSessionId}:${s.selectedStamp}"
+    }
+
+    /** The open terminal's current folder on its host (tmux pane_current_path), or null when unknown. */
+    suspend fun currentDirectory(): String? {
+        val h = openHost() ?: return null
+        val session = ui.value.selectedSessionId ?: return null
+        val socket = h.profile.socket
+        val command = "tmux ${if (socket.isBlank()) "" else "-L ${ShellQuoter.quote(socket)} "}display-message -p -t ${ShellQuoter.quote(session)} ${ShellQuoter.quote("#{pane_current_path}")}"
+        return try {
+            h.ssh
+                .execute(command, 5_000)
+                .stdout
+                .trim()
+                .takeIf { it.startsWith("/") && it.none { c -> c.code < 32 } }
+        } catch (e: CancellationException) {
+            throw e
+        } catch (_: Exception) {
+            null
+        }
+    }
 
     fun openSession(
         h: HostEntry,
@@ -79,6 +117,7 @@ class TerminalController(
                 staleSession = null,
             )
         }
+        opened(h.profile.id, id)
         if (!foreground) return
         val generation = attachmentGeneration
         attachment = scope.launch { attach(h, id, stamp, name, generation) }
@@ -119,7 +158,7 @@ class TerminalController(
                 return
             }
             terminalSize.value?.let { stream.resize(it.first, it.second) }
-            openLink.value = stream
+            openLink.value = wrapStream(h, id, name, stream)
         } catch (e: TimeoutCancellationException) {
             stream?.close()
             if (generation == attachmentGeneration) ui.update { it.copy(terminalError = "The terminal did not connect in time. Try again.") }
@@ -325,6 +364,8 @@ class TerminalController(
         backgroundDetach?.cancel()
         backgroundDetach = null
         if (!value) {
+            // With completion notifications on, the terminal stays attached while its host stays connected.
+            if (keepAttachedInBackground()) return
             backgroundDetach =
                 scope.launch {
                     delay(BACKGROUND_GRACE_MS)

@@ -122,6 +122,7 @@ fun HostWorkspaceScreen(
             }
             Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.Center) {
                 TextButton(onClick = viewModel::refreshSessions, enabled = !state.isRefreshing) { Text(if (state.isRefreshing) "Refreshing…" else "Refresh") }
+                TextButton(onClick = { viewModel.repositories.open(state.profile.id) }) { Text("Repositories") }
                 TextButton(onClick = viewModel::disconnect) { Text("Disconnect") }
             }
             if (state.hostChecking) Text("Checking the connection…", modifier = Modifier.padding(horizontal = 16.dp), style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
@@ -172,9 +173,11 @@ fun HostWorkspaceScreen(
         Row(Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()), horizontalArrangement = Arrangement.Center) {
             TextButton(onClick = { history = true }) { Text("Changelog") }
             TextButton(onClick = viewModel::openHostKeys) { Text("Host keys") }
+            TextButton(onClick = viewModel.dictionary::show) { Text("Dictionary") }
             TextButton(onClick = { viewModel.setSecureScreen(!state.secureScreen) }, modifier = Modifier.semantics { contentDescription = if (state.secureScreen) "Private screen is on. Screenshots and the Recents preview are blocked." else "Private screen is off." }) { Text(if (state.secureScreen) "Private screen: on" else "Private screen: off") }
             BackgroundWindowSetting(state.backgroundWindow, viewModel::setBackgroundWindow, viewModel::notificationsDenied)
             TerminalSizeSetting(state.keepOtherSize, viewModel::setKeepOtherSize)
+            AlertNotificationSetting(state.alertNotifications, viewModel::setAlertNotifications, viewModel::alertNotificationsDenied)
             TextButton(onClick = { viewModel.setExtraKeys(!state.extraKeys) }, modifier = Modifier.semantics { contentDescription = if (state.extraKeys) "Extra keys above the keyboard are on." else "Extra keys above the keyboard are off." }) { Text(if (state.extraKeys) "Keys above keyboard: on" else "Keys above keyboard: off") }
             TextButton(onClick = {
                 val assets = context.assets

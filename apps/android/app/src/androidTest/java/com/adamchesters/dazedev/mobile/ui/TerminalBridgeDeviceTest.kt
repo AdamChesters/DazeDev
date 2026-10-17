@@ -11,6 +11,7 @@ import androidx.compose.ui.test.swipeUp
 import androidx.test.ext.junit.runners.AndroidJUnit4
 import com.adamchesters.dazedev.mobile.ssh.TerminalLink
 import kotlinx.coroutines.CompletableDeferred
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.MutableSharedFlow
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -28,7 +29,7 @@ import java.util.concurrent.LinkedBlockingQueue
 import java.util.concurrent.TimeUnit
 
 /**
- * The terminal WebView, its message channel and the page's keys on a device or emulator.
+ * The terminal WebView, its message channel, the page's keys, link taps and find on a device or emulator.
  * Run with `./gradlew connectedDebugAndroidTest`; no host or network is needed.
  */
 @RunWith(AndroidJUnit4::class)
@@ -60,9 +61,10 @@ class TerminalBridgeDeviceTest {
 
     private val link = FakeLink()
     private val page = TerminalPageController()
+    private val links = LinkedBlockingQueue<TerminalTarget>()
 
     @Before fun openTerminal() {
-        compose.setContent { InteractiveTerminal(link, page, { _, _ -> }, {}, {}, {}, Modifier.fillMaxSize()) }
+        compose.setContent { InteractiveTerminal(link, page, { _, _ -> }, {}, {}, {}, Modifier.fillMaxSize(), onLink = { links.add(it) }) }
         compose.waitUntil(20_000) { page.ready }
     }
 
@@ -139,5 +141,32 @@ class TerminalBridgeDeviceTest {
             connection!!.commitText("ls", 1)
         }
         assertEquals("ls", sentUntil { it.length >= 2 })
+    }
+
+    @Test fun aTapOnAPathOpensTheLinkSheetAndNothingElse() {
+        output("\u001b[2J\u001b[Hsee ./out/shot.png now\r\n", "tap-ready")
+        val cols = link.size!!.first
+        // A short touch on the cell in column 8 of the first row: inside the path.
+        js(
+            "(()=>{const s=document.querySelector('.xterm-screen'),r=s.getBoundingClientRect();" +
+                "const x=r.left+8.5*r.width/$cols,y=r.top+4;" +
+                "for(const t of ['pointerdown','pointerup'])s.dispatchEvent(new PointerEvent(t,{bubbles:true,pointerType:'touch',pointerId:7,clientX:x,clientY:y}));})()",
+        )
+        val target = links.poll(3, TimeUnit.SECONDS)
+        assertEquals(TerminalTarget(TerminalTarget.Kind.Path, "./out/shot.png", 4, 18), target)
+        assertTrue("A tap sends no input", sentUntil { false }.isEmpty())
+    }
+
+    @Test fun findAndExportReadTheBufferWithoutSendingInput() {
+        output("alpha\r\nbeta alpha\r\n", "find-ready")
+        // WebView calls run on the main thread, as the terminal screen makes them.
+        val lines = runBlocking(Dispatchers.Main) { page.lines() }!!
+        assertTrue(lines.text.any { it.startsWith("beta alpha") })
+        val find = TerminalFind.search(lines, SearchOptions("alpha"))
+        val match = find.selected()!!
+        val (first, text) = find.place(match)
+        assertTrue(runBlocking(Dispatchers.Main) { page.reveal(first, text, match.start, match.end) })
+        assertTrue(runBlocking(Dispatchers.Main) { page.evaluate("window.daze.text()") }!!.contains("beta alpha\n"))
+        assertTrue(sentUntil { false }.isEmpty())
     }
 }
