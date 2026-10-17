@@ -21,7 +21,7 @@ Build and verification steps are in [building](BUILDING.md#linux-packages). Stat
 
 | Check (CI run 39013076056, 17 October 2026)                                                                     | Mint 21.3 container | Mint 22.3 container |
 | --------------------------------------------------------------------------------------------------------------- | ------------------- | ------------------- |
-| `apt install ./DazeDev_…_amd64.deb` resolves all dependencies from Mint/Ubuntu repositories                     | Pass                | Pass                |
+| `apt install ./dazedev_…_amd64.deb` resolves all dependencies from Mint/Ubuntu repositories                     | Pass                | Pass                |
 | Every installed binary and bundled runtime library resolves (`ldd`)                                             | Pass                | Pass                |
 | Installed app starts under Xvfb, interface loads, settings written to `~/.local/share/DazeDev`, kept on restart | Pass                | Pass                |
 | WebKit microphone stream (`getUserMedia`) from a PulseAudio test source                                         | Pass                | Pass                |

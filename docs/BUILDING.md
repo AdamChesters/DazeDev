@@ -20,7 +20,7 @@ The icon source is [the DazeDev logo](../apps/desktop/public/brand.svg). Desktop
 
 Linux packages are built on GitHub-hosted runners with `.github/workflows/unix-test-build.yml` (manual dispatch; the `platforms` input defaults to `linux`, which starts no macOS runner). The Linux job runs on Ubuntu 22.04 and produces:
 
-- `DazeDev_<version>_amd64.deb`: package `daze-dev`. It installs `/usr/bin/DazeDev`, the voice runtimes in `/usr/lib/DazeDev/runtime`, and a desktop menu entry. apt installs WebKitGTK 4.1, GTK 3, BLAS (`libblas3`), libgomp1 and libssl3. python3, tmux and the GStreamer PulseAudio plugins are Recommends.
+- `dazedev_<version>_amd64.deb`: package `dazedev` (scripts/rename-deb.sh renames Tauri's `daze-dev`). It installs `/usr/bin/DazeDev`, the voice runtimes in `/usr/lib/DazeDev/runtime`, and a desktop menu entry. apt installs WebKitGTK 4.1, GTK 3, BLAS (`libblas3`), libgomp1 and libssl3. python3, tmux and the GStreamer PulseAudio plugins are Recommends.
 - `DazeDev_<version>_amd64.AppImage`: self-contained, including WebKitGTK and GStreamer from Ubuntu 22.04. It needs FUSE 2 (`libfuse2`/`libfuse2t64`) to run directly.
 - `DazeDev_<version>_linux-x64.tar.gz`: the portable folder, started with `Start DazeDev.sh`.
 

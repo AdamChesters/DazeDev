@@ -127,6 +127,8 @@ jobs:
         run: *host-check
       - name: Build .deb and AppImage
         run: npm run tauri -- build --bundles deb,appimage -- --locked
+      - name: Name the .deb package dazedev
+        run: bash scripts/rename-deb.sh src-tauri/target/release/bundle/deb/*.deb
       - name: Verify offline models on native architecture
         shell: bash
         run: *voice-smoke
