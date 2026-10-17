@@ -985,6 +985,7 @@ dependencies = [
  "transcribe-cpp",
  "uuid",
  "vt100",
+ "webkit2gtk",
  "windows-sys 0.61.2",
  "zip",
 ]

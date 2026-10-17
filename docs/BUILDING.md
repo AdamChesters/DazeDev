@@ -12,9 +12,25 @@ From the repository root:
 
 Run `node scripts/prepare-runtime.mjs` from `apps/desktop` to download its pinned voice runtimes. That command downloads files; it is separate from the source checks.
 
-For Windows releases, run `scripts/build-windows.ps1` from an initialized MSVC environment in `apps/desktop`, then `scripts/package-portable.ps1`. The build remaps local source paths. Keep the complete portable folder together; voice models are downloaded in-app. Unix packaging uses `scripts/package-unix.sh` in the same directory.
+For Windows releases, run `scripts/build-windows.ps1` from an initialized MSVC environment in `apps/desktop`, then `scripts/package-portable.ps1`. The build remaps local source paths. Keep the complete portable folder together; voice models are downloaded in-app. Unix portable archives use `scripts/package-unix.sh` in the same directory.
 
 The icon source is [the DazeDev logo](../apps/desktop/public/brand.svg). Desktop builds regenerate package icons with `scripts/generate-icons.mjs`.
+
+## Linux packages
+
+Linux packages are built on GitHub-hosted runners with `.github/workflows/unix-test-build.yml` (manual dispatch; the `platforms` input defaults to `linux`, which starts no macOS runner). The Linux job runs on Ubuntu 22.04 and produces:
+
+- `DazeDev_<version>_amd64.deb`: package `daze-dev`. It installs `/usr/bin/DazeDev`, the voice runtimes in `/usr/lib/DazeDev/runtime`, and a desktop menu entry. apt installs WebKitGTK 4.1, GTK 3, libgomp1 and libssl3. python3, tmux and the GStreamer PulseAudio plugins are Recommends.
+- `DazeDev_<version>_amd64.AppImage`: self-contained, including WebKitGTK and GStreamer from Ubuntu 22.04. It needs FUSE 2 (`libfuse2`/`libfuse2t64`) to run directly.
+- `DazeDev_<version>_linux-x64.tar.gz`: the portable folder, started with `Start DazeDev.sh`.
+
+Ubuntu 22.04 is the build base because its glibc (2.35) is the oldest in the supported range: one build runs on Mint 21.x (Ubuntu 22.04) and Mint 22.x (Ubuntu 24.04). The bundled llama.cpp and ONNX Runtime binaries need at most GLIBC 2.34 and GLIBCXX 3.4.30. Each run writes these numbers to `BUILD-INFO.txt` with `SHA256SUMS`.
+
+The .deb and AppImage store settings, models and logs in `~/.local/share/DazeDev` (or `$XDG_DATA_HOME/DazeDev`), because their program folders are read-only. The portable archive keeps `data/` beside the app. `DAZEDEV_DATA_DIR` overrides both. Automatic updates are Windows-only: on Linux, install the new .deb or replace the AppImage, and settings are kept.
+
+After building, the workflow installs the .deb into clean `linuxmintd/mint22.3-amd64` and `linuxmintd/mint21.3-amd64` containers with `scripts/verify-linux-install.sh`. The script runs as root in a disposable system only: it installs packages and creates a test user. Inside, apt resolves the dependencies, every installed binary must resolve its libraries, and `scripts/verify-linux-startup.py` drives the installed app under Xvfb through WebKitWebDriver. The script also runs the installed voice runtime and starts the AppImage. Results, screenshots and logs are uploaded per image.
+
+The Linux build needs `libwebkit2gtk-4.1-dev libgtk-3-dev libssl-dev librsvg2-dev libayatana-appindicator3-dev patchelf file` plus the GStreamer base, good and PulseAudio plugins for the AppImage. Build with `npm run tauri -- build --bundles deb,appimage -- --locked`; `src-tauri/tauri.linux.conf.json` holds the Linux package settings.
 
 ## Android
 

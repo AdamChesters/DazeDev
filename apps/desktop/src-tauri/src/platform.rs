@@ -15,6 +15,75 @@ pub fn portable_root(exe: &Path) -> PathBuf {
     }
     parent.to_path_buf()
 }
+/// Installed Linux packages (.deb under /usr or /opt, or a mounted AppImage)
+/// cannot keep data beside the read-only executable. They use the user's XDG
+/// data folder instead. Extracted portable folders keep adjacent `data/`, and
+/// an explicit `DAZEDEV_DATA_DIR` always wins.
+#[cfg(target_os = "linux")]
+pub fn installed_linux_data_dir(exe: &Path) -> Option<PathBuf> {
+    if std::env::var_os("DAZEDEV_DATA_DIR").is_some() {
+        return None;
+    }
+    let appimage = std::env::var_os("APPIMAGE").is_some()
+        && std::env::var_os("APPDIR").is_some_and(|dir| exe.starts_with(dir));
+    let installed = exe.starts_with("/usr/") || exe.starts_with("/opt/");
+    if !(appimage || installed) {
+        return None;
+    }
+    dirs::data_dir().map(|dir| dir.join("DazeDev"))
+}
+/// The data folder `storage::prepare` will use, for code that runs before it
+/// (the panic hook): `DAZEDEV_DATA_DIR`, the XDG folder for installed Linux
+/// packages, otherwise `data/` beside the portable app.
+pub fn data_dir(exe: &Path) -> PathBuf {
+    if let Some(dir) = std::env::var_os("DAZEDEV_DATA_DIR") {
+        return PathBuf::from(dir);
+    }
+    #[cfg(target_os = "linux")]
+    if let Some(dir) = installed_linux_data_dir(exe) {
+        return dir;
+    }
+    portable_root(exe).join("data")
+}
+/// WebKitGTK leaves media capture off by default. Enable it for the bundled
+/// interface and grant microphone-only requests from it; camera, screen and
+/// any other origin are denied.
+#[cfg(all(target_os = "linux", feature = "desktop"))]
+pub fn enable_linux_microphone<R: tauri::Runtime>(window: &tauri::WebviewWindow<R>) {
+    let _ = window.with_webview(|webview| {
+        use webkit2gtk::glib::prelude::{Cast, ObjectExt};
+        use webkit2gtk::{
+            PermissionRequestExt, SettingsExt, UserMediaPermissionRequestExt, WebViewExt,
+        };
+        let view = webview.inner();
+        if let Some(settings) = WebViewExt::settings(&view) {
+            settings.set_enable_media_stream(true);
+        }
+        view.connect_permission_request(|view, request| {
+            let bundled = view.uri().is_some_and(|uri| {
+                let uri = uri.as_str();
+                uri == "tauri://localhost"
+                    || uri.starts_with("tauri://localhost/")
+                    || (cfg!(debug_assertions) && uri.starts_with("http://localhost:1420/"))
+            });
+            let allowed = if let Some(media) =
+                request.downcast_ref::<webkit2gtk::UserMediaPermissionRequest>()
+            {
+                media.is_for_audio_device() && !media.is_for_video_device()
+            } else if request.is::<webkit2gtk::DeviceInfoPermissionRequest>() {
+                true // Microphone names for the device picker.
+            } else {
+                return false;
+            };
+            if bundled && allowed {
+                request.allow();
+            } else {
+                request.deny();
+            }
+            true
+        });
+    });
+}
 /// Free bytes available to this user on the volume holding `path`.
 pub fn available_space(path: &Path) -> std::io::Result<u64> {
     #[cfg(windows)]
@@ -71,6 +140,23 @@ mod tests {
     fn free_space_is_reported_for_existing_folders() {
         assert!(available_space(&std::env::temp_dir()).unwrap() > 0);
         assert!(available_space(Path::new("/definitely/missing/dazedev")).is_err());
+    }
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn linux_package_locations_use_user_data_folder() {
+        if std::env::var_os("DAZEDEV_DATA_DIR").is_some() {
+            return;
+        }
+        let user = dirs::data_dir().unwrap().join("DazeDev");
+        for exe in ["/usr/bin/DazeDev", "/opt/DazeDev/DazeDev"] {
+            assert_eq!(installed_linux_data_dir(Path::new(exe)), Some(user.clone()));
+        }
+        if std::env::var_os("APPIMAGE").is_none() {
+            assert_eq!(
+                installed_linux_data_dir(Path::new("/home/u/DazeDev/DazeDev")),
+                None
+            );
+        }
     }
     #[cfg(target_os = "macos")]
     #[test]
