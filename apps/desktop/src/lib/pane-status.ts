@@ -1,3 +1,5 @@
+import { isAgentId } from './agents';
+
 export interface PaneStatus {
   paneId?: string;
   paneDead?: boolean;
@@ -28,7 +30,7 @@ export function terminalPresentation(
     const agent = status.agent;
     return {
       name: status.sessionName || pane.name,
-      type: agent && ['codex', 'claude', 'gemini', 'opencode'].includes(agent) ? agent : 'tmux',
+      type: isAgentId(agent) ? agent : 'tmux',
       model: '',
     };
   }

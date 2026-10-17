@@ -3,6 +3,7 @@ import { balanced, ids, split, swap, tile } from '../layout';
 import { terminals } from '../terminals';
 import { uid, type Pane, type Session, type Workspace } from '../types';
 import { listSessions } from '../ipc';
+import { takesPrompt } from '../agents';
 import type { App } from './app';
 import { blankForm } from './shell.svelte';
 
@@ -194,7 +195,12 @@ export class Sessions {
             path: options.repo,
             install: false,
             brief:
-              options.repo && options.agent !== 'shell' && options.brief
+              options.repo &&
+              options.agent !== 'shell' &&
+              options.brief &&
+              takesPrompt(
+                ui.inventories[options.hostId]?.agents.find((a) => a.id === options.agent),
+              )
                 ? profiles.promptFor(target)
                 : '',
           });
@@ -221,7 +227,11 @@ export class Sessions {
     const s = await rpc<Session>(p.hostId, 'create', {
       ...p,
       path: p.repo,
-      brief: p.agent !== 'shell' ? this.#app.profiles.promptFor(p) : '',
+      brief:
+        p.agent !== 'shell' &&
+        takesPrompt(this.#app.ui.inventories[p.hostId]?.agents.find((a) => a.id === p.agent))
+          ? this.#app.profiles.promptFor(p)
+          : '',
     });
     const owner = this.#app.panes.owner(p.id);
     if (owner) {
@@ -295,7 +305,9 @@ export class Sessions {
       path: form.repo,
       install: form.agent !== 'shell' && !this.selectedAgent?.path,
       brief:
-        form.repo && form.agent !== 'shell' && form.brief ? this.#app.profiles.promptFor(p) : '',
+        form.repo && form.agent !== 'shell' && form.brief && takesPrompt(this.selectedAgent)
+          ? this.#app.profiles.promptFor(p)
+          : '',
     });
     const inventory = ui.inventories[this.sessionHost];
     if (inventory)
