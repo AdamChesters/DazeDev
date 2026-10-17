@@ -16,6 +16,7 @@ I got tired of typing The Lord of the Rings into agents [(seriously, I proved it
 - **Quick organisation:** split, tile and drag terminals or whole groups between workspaces. Attach to existing tmux sessions.
 - **Local voice + tidy-up:** dictate straight into a terminal. Speech recognition and text cleanup run on your machine, with no API fees after downloading the models.
 - **Sessions + repos:** one click to see, join, or make tmux sessions. One click to see, select, and auto-prompt your agent to get up to speed with your repo.
+- **Any agent:** install and start Codex, Claude Code, Gemini, Copilot, Cursor, Qwen, goose, Amp, Aider and more, or add your own with its launch command.
 - **Global search:** find text across open terminal buffers, or narrow to a host, workspace or terminal.
 - **Global broadcast:** review and send one message to selected sessions across hosts and workspaces.
 - **Config on your host:** remote workspace layouts and preferences stay on the host. Reconnect from another device to the same setup and tmux sessions.
@@ -26,6 +27,7 @@ I got tired of typing The Lord of the Rings into agents [(seriously, I proved it
 - Persistent PowerShell sessions and detachable windows for extra monitors.
 - A built-in SSH client: one sign-in per host for every terminal, using your `~/.ssh/config` and known_hosts.
 - File uploads, source viewing, Markdown editing and image previews.
+- Long pastes show in full in Codex, and Ctrl+G opens an agent's prompt in a DazeDev edit pane.
 - Dictation dictionary, configurable hotkeys and transcript recovery.
 - Custom colours, terminal notifications and an optional startup PIN.
 - Signed updates that preserve your settings and downloaded models.
@@ -39,8 +41,6 @@ I got tired of typing The Lord of the Rings into agents [(seriously, I proved it
 ## Coming soon
 
 - **Mobile:** an app with on-device voice input.
-- **More agents** in the easy-install and new session lists.
-- **DIY agent picker:** add your own agent (ASAP).
 - **Linux Mint:** a packaged desktop release.
 
 Frontier voice is a later research topic. Provider access, subscription eligibility,
