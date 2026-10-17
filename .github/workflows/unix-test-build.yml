@@ -1,13 +1,27 @@
 name: macOS and Linux test packages
 on:
   workflow_dispatch:
+    inputs:
+      platforms:
+        description: 'Platforms to build. macOS runners bill at 10x Linux minutes.'
+        type: choice
+        options: [linux, macos, all]
+        default: linux
+      voice_models:
+        description: 'Voice models for the native voice smoke test (space separated)'
+        type: string
+        default: 'parakeet whisper-small'
 defaults:
   run:
     working-directory: apps/desktop
 permissions:
   contents: read
+env:
+  TRANSCRIBE_CMAKE_ARGS: '-DGGML_NATIVE=OFF'
+  VOICE_MODELS: ${{ inputs.voice_models }}
 jobs:
-  package:
+  macos:
+    if: inputs.platforms != 'linux'
     strategy:
       fail-fast: false
       matrix:
@@ -16,12 +30,9 @@ jobs:
             platform: darwin-arm64
           - runner: macos-15-intel
             platform: darwin-x64
-          - runner: ubuntu-24.04
-            platform: linux-x64
     runs-on: ${{ matrix.runner }}
     env:
       MACOSX_DEPLOYMENT_TARGET: '14.0'
-      TRANSCRIBE_CMAKE_ARGS: '-DGGML_NATIVE=OFF'
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
       - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
@@ -29,12 +40,7 @@ jobs:
       - uses: dtolnay/rust-toolchain@686976e191b89faba57d3206551f0f330d8cb249 # stable
       - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2
         with: {workspaces: 'apps/desktop/src-tauri -> target', key: 'unix-portable-v1', cache-on-failure: true}
-      - name: Linux dependencies
-        if: runner.os == 'Linux'
-        run: sudo apt-get update && sudo apt-get install -y libwebkit2gtk-4.1-dev libgtk-3-dev libssl-dev librsvg2-dev libayatana-appindicator3-dev patchelf tmux xvfb webkit2gtk-driver
-      - name: Mac test dependencies
-        if: runner.os == 'macOS'
-        run: brew install tmux
+      - run: brew install tmux
       - run: npm ci
       - run: npm run gate
       - run: node scripts/prepare-runtime.mjs
@@ -42,8 +48,7 @@ jobs:
       - run: cargo test --manifest-path src-tauri/Cargo.toml --no-default-features --locked
       - run: cargo run --manifest-path src-tauri/Cargo.toml --no-default-features --locked --example transport_smoke
       - name: Native host destination check
-        shell: bash
-        run: |
+        run: &host-check |
           python3 - <<'PYTEST'
           import os,runpy,subprocess
           host=runpy.run_path('src-tauri/resources/host.py')
@@ -61,30 +66,22 @@ jobs:
           print('Native host destination identity is stable and rejects exited processes.')
           PYTEST
       - name: Build macOS app
-        if: runner.os == 'macOS'
         run: npm run tauri -- build --bundles app --config '{"mainBinaryName":"DazeDev","bundle":{"icon":["icons/icon.icns"],"macOS":{"minimumSystemVersion":"14.0","signingIdentity":"-"}}}'
-      - name: Build Linux app
-        if: runner.os == 'Linux'
-        run: cargo build --release --manifest-path src-tauri/Cargo.toml --features custom-protocol --locked
       - name: Verify offline models on native architecture
         shell: bash
-        run: |
+        run: &voice-smoke |
           set -euo pipefail
           cargo build --release --manifest-path src-tauri/Cargo.toml --example voice_smoke --locked
           curl -fL https://raw.githubusercontent.com/ggml-org/whisper.cpp/master/samples/jfk.wav -o "$RUNNER_TEMP/jfk.wav"
           python3 -c 'import hashlib,os,pathlib; assert hashlib.sha256((pathlib.Path(os.environ["RUNNER_TEMP"])/"jfk.wav").read_bytes()).hexdigest()=="59dfb9a4acb36fe2a2affc14bacbee2920ff435cb13cc314a08c13f66ba7860e"'
           export LD_LIBRARY_PATH="$PWD/src-tauri/runtime${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}"
-          for model in parakeet whisper-small whisper-medium whisper-turbo whisper-large; do
+          for model in $VOICE_MODELS; do
             src-tauri/target/release/examples/voice_smoke "$RUNNER_TEMP/models" "$PWD/src-tauri/runtime/llama-server" "$RUNNER_TEMP/jfk.wav" "$model"
             MODEL_ID="$model" python3 -c 'import json,os,pathlib; m=next(m for m in json.load(open("src-tauri/resources/models.json")) if m["id"]==os.environ["MODEL_ID"]); (pathlib.Path(os.environ["RUNNER_TEMP"])/"models"/m["file"]).unlink()'
           done
       - name: Package portable archive
         run: bash scripts/package-unix.sh
-      - name: Verify packaged Linux startup and settings
-        if: runner.os == 'Linux'
-        run: xvfb-run -a python3 scripts/verify-linux-startup.py "$PWD/artifacts/DazeDev_$(node -p "require('./package.json').version")_linux-x64"
       - name: Verify packaged macOS startup
-        if: runner.os == 'macOS'
         shell: bash
         run: |
           set -euo pipefail
@@ -99,8 +96,97 @@ jobs:
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
           name: DazeDev-${{ matrix.platform }}
-          path: |
-            apps/desktop/artifacts/*.zip
-            apps/desktop/artifacts/*.tar.gz
+          path: apps/desktop/artifacts/*.zip
           if-no-files-found: error
-          retention-days: 14
+          retention-days: 3
+
+  linux:
+    if: inputs.platforms != 'macos'
+    # Oldest supported base: glibc 2.35 runs on Mint 21.x (Ubuntu 22.04) and 22.x (24.04).
+    runs-on: ubuntu-22.04
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
+        with: {node-version: 22, cache: npm, cache-dependency-path: apps/desktop/package-lock.json}
+      - uses: dtolnay/rust-toolchain@686976e191b89faba57d3206551f0f330d8cb249 # stable
+      - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2
+        with: {workspaces: 'apps/desktop/src-tauri -> target', key: 'linux-jammy-v1', cache-on-failure: true}
+      - name: Linux build dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libwebkit2gtk-4.1-dev libgtk-3-dev libssl-dev librsvg2-dev \
+            libayatana-appindicator3-dev patchelf file tmux xvfb webkit2gtk-driver \
+            gstreamer1.0-plugins-base gstreamer1.0-plugins-good gstreamer1.0-pulseaudio
+      - run: npm ci
+      - run: npm run gate
+      - run: node scripts/prepare-runtime.mjs
+      - run: node scripts/collect-licenses.mjs
+      - run: cargo test --manifest-path src-tauri/Cargo.toml --no-default-features --locked
+      - run: cargo run --manifest-path src-tauri/Cargo.toml --no-default-features --locked --example transport_smoke
+      - name: Native host destination check
+        run: *host-check
+      - name: Build .deb and AppImage
+        run: npm run tauri -- build --bundles deb,appimage -- --locked
+      - name: Verify offline models on native architecture
+        shell: bash
+        run: *voice-smoke
+      - name: Package portable archive
+        run: bash scripts/package-unix.sh
+      - name: Verify portable startup and settings
+        run: xvfb-run -a python3 scripts/verify-linux-startup.py "$PWD/artifacts/DazeDev_$(node -p "require('./package.json').version")_linux-x64"
+      - name: Collect packages and glibc requirements
+        shell: bash
+        run: |
+          set -euo pipefail
+          out="$PWD/artifacts/linux"
+          mkdir -p "$out"
+          cp src-tauri/target/release/bundle/deb/*.deb src-tauri/target/release/bundle/appimage/*.AppImage artifacts/*.tar.gz "$out/"
+          cp src-tauri/target/release/examples/voice_smoke "$RUNNER_TEMP/jfk.wav" "$out/"
+          {
+            echo "Built on: $(lsb_release -ds), $(ldd --version | head -1)"
+            dpkg-deb -f "$out"/*.deb Package Version Architecture Depends Recommends Installed-Size
+            echo "Highest symbol versions required (DazeDev and bundled runtime):"
+            for f in src-tauri/target/release/DazeDev src-tauri/runtime/llama-server src-tauri/runtime/*.so*; do
+              objdump -T "$f" | grep -o 'GLIBC_[0-9.]*\|GLIBCXX_[0-9.]*' || true
+            done | sort -Vu | awk -F_ '{v[$1]=$0} END {for (k in v) print "  " v[k]}'
+            ls -l "$out"
+          } | tee "$out/BUILD-INFO.txt"
+          (cd "$out" && sha256sum *.deb *.AppImage *.tar.gz > SHA256SUMS && cat SHA256SUMS)
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: DazeDev-linux-x64
+          path: apps/desktop/artifacts/linux/
+          if-no-files-found: error
+          retention-days: 3
+
+  linux-install:
+    needs: linux
+    strategy:
+      fail-fast: false
+      matrix:
+        image: [linuxmintd/mint22.3-amd64, linuxmintd/mint21.3-amd64]
+    runs-on: ubuntu-24.04
+    container:
+      image: ${{ matrix.image }}
+      # The WebKit sandbox needs user namespaces inside the container.
+      options: --privileged
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with: {sparse-checkout: apps/desktop/scripts}
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
+        with: {name: DazeDev-linux-x64, path: packages}
+      - name: Install, start and remove on a clean Mint image
+        shell: bash
+        run: bash scripts/verify-linux-install.sh "$GITHUB_WORKSPACE/packages" "$GITHUB_WORKSPACE/results"
+      - name: Results name
+        if: always()
+        id: name
+        shell: bash
+        run: echo "name=install-results-$(echo '${{ matrix.image }}' | tr '/' '-')" >> "$GITHUB_OUTPUT"
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        if: always()
+        with:
+          name: ${{ steps.name.outputs.name }}
+          path: results/
+          if-no-files-found: warn
+          retention-days: 3

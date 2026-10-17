@@ -1,0 +1,16 @@
+{
+  "$schema": "https://schema.tauri.app/config/2",
+  "bundle": {
+    "targets": ["deb", "appimage"],
+    "linux": {
+      "deb": {
+        "section": "devel",
+        "depends": ["libgomp1", "libssl3 | libssl3t64", "python3", "tmux"],
+        "recommends": ["gstreamer1.0-plugins-good", "gstreamer1.0-pulseaudio"]
+      },
+      "appimage": {
+        "bundleMediaFramework": true
+      }
+    }
+  }
+}
