@@ -14,6 +14,7 @@
     error = '',
     onsubmit,
     oncancel,
+    alternate,
   }: {
     title: string;
     hint: string;
@@ -25,6 +26,8 @@
     error?: string;
     onsubmit: (text: string, dontAsk: boolean) => void;
     oncancel: () => void;
+    /** An extra action, such as continuing in the terminal editor. */
+    alternate?: { label: string; run: () => void };
   } = $props();
   let edited = $state<string | null>(null);
   let skipNext = $state(false);
@@ -60,6 +63,7 @@
       >{/if}
     <span class="keys">Ctrl+Enter {submitLabel.toLowerCase()} · Esc cancel</span>
     <button class="primary" disabled={busy} onclick={submit}>{submitLabel}</button>
+    {#if alternate}<button disabled={busy} onclick={alternate.run}>{alternate.label}</button>{/if}
     <button disabled={busy} onclick={cancel}>Cancel</button>
   </div>
 </div>

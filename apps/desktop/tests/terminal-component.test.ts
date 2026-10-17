@@ -268,6 +268,16 @@ describe('Terminal editor requests', () => {
     );
     expect(screen.queryByRole('dialog')).toBeNull();
   });
+  it('lets the user continue in the terminal editor instead', async () => {
+    await attached();
+    emit('host-editor-open', request());
+    await screen.findByRole('dialog');
+    await fireEvent.click(screen.getByRole('button', { name: 'Terminal editor' }));
+    await waitFor(() =>
+      expect(replies('editor_done')).toEqual([{ id, error: 'Opening the terminal editor.' }]),
+    );
+    expect(screen.queryByRole('dialog')).toBeNull();
+  });
   it('keeps the edit open with a warning when the text could not be returned', async () => {
     handlers.set('host_rpc', (args) => {
       if (args.method === 'editor_done' && (args.args as { text?: string }).text)

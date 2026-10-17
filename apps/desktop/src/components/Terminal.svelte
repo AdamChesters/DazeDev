@@ -1038,6 +1038,10 @@
         error={editing.error}
         onsubmit={(text) => void finishEdit({ text })}
         oncancel={() => void finishEdit({ cancelled: true })}
+        alternate={{
+          label: 'Terminal editor',
+          run: () => void finishEdit({ error: 'Opening the terminal editor.' }),
+        }}
       />{/if}
   {/key}
   {#if transcript}<div class="live-transcript" aria-live="off">
