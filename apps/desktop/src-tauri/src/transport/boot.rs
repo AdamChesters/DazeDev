@@ -5,7 +5,8 @@ use super::*;
 // The loader refuses Python older than 3.9 with a line the client can explain.
 pub(super) const HOST_LOADER: &str = "import sys;v=sys.version_info;v<(3,9) and (print('DAZED:'+sys.argv[1]+':python:%d.%d'%v[:2],flush=True),sys.exit(3));import base64;print();print('DAZED:'+sys.argv[1]+':bootstrap',flush=True);exec(compile(base64.b64decode(sys.stdin.buffer.readline().strip(),validate=True),'<dazedev-host>','exec'))";
 /// The script that starts the host helper. It is sent as one line of input,
-/// never as an argument, so it is always run by /bin/sh.
+/// never as an argument, so it is always run by /bin/sh. DAZED_EDITOR=1
+/// tells the helper this app shows editor requests (see editor.rs).
 pub(super) fn control_script(
     socket: &str,
     nonce: &str,
@@ -14,7 +15,7 @@ pub(super) fn control_script(
     binary: bool,
 ) -> String {
     format!(
-        "export DAZED_BROWSER_ENDPOINT={} DAZED_BROWSER_DESKTOP={}; export DAZED_TMUX_SOCKET={}; exec python3 -I -u -c {} {}{}",
+        "export DAZED_BROWSER_ENDPOINT={} DAZED_BROWSER_DESKTOP={} DAZED_EDITOR=1; export DAZED_TMUX_SOCKET={}; exec python3 -I -u -c {} {}{}",
         quote(endpoint),
         quote(desktop),
         quote(socket),
@@ -95,4 +96,13 @@ pub(super) fn pane_boot(held: &mut Vec<u8>, marker: &[u8]) -> Option<Vec<u8>> {
     output.extend_from_slice(&held[end..]);
     held.clear();
     Some(output)
+}
+/// Shell exports that make the host's editor shim $VISUAL and $EDITOR. The
+/// user's own editor, unless it is already a DazeDev shim (a nested
+/// session), becomes DAZEDEV_EDITOR_FALLBACK for the shim's terminal editor.
+pub(super) fn editor_exports(editor: &str) -> String {
+    format!(
+        "dazedev_fallback=; for dazedev_e in \"${{VISUAL:-}}\" \"${{EDITOR:-}}\"; do case \"$dazedev_e\" in ''|*dazedev-editor*) ;; *) [ -n \"$dazedev_fallback\" ] || dazedev_fallback=\"$dazedev_e\";; esac; done; case \"${{DAZEDEV_EDITOR_FALLBACK:-}}\" in *dazedev-editor*) DAZEDEV_EDITOR_FALLBACK=;; esac; export DAZEDEV_EDITOR_FALLBACK=\"${{dazedev_fallback:-${{DAZEDEV_EDITOR_FALLBACK:-}}}}\" VISUAL={0} EDITOR={0}; unset dazedev_fallback dazedev_e; ",
+        quote(editor)
+    )
 }

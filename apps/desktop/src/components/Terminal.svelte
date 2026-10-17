@@ -22,7 +22,13 @@
   import PasteConfirm from './PasteConfirm.svelte';
   import EditPane from './EditPane.svelte';
   import { pastePieces, pasteLength } from '../lib/paste';
-  import { editorRequests, type EditRequest, type EditorResult } from '../lib/editor-requests';
+  import {
+    CHOSE_TERMINAL,
+    MOVED_WINDOW,
+    editorRequests,
+    type EditRequest,
+    type EditorResult,
+  } from '../lib/editor-requests';
   import { onMount, tick } from 'svelte';
   import { AckBatcher, outputChannel } from '../lib/terminal-bytes';
   import { terminalBudget, type BudgetMember } from '../lib/terminal-budget';
@@ -384,10 +390,7 @@
   // A detached pane's workspace view is hidden: hand an open edit back so
   // the helper opens the terminal editor, which the terminal window shows.
   $effect(() => {
-    if (floating && editing && !editing.busy)
-      void finishEdit({
-        error: 'The terminal moved to its own window. Using the terminal editor.',
-      });
+    if (floating && editing && !editing.busy) void finishEdit({ error: MOVED_WINDOW });
   });
   function uploadDestination() {
     return !dead && opened && remoteReady && !detached
@@ -1040,7 +1043,7 @@
         oncancel={() => void finishEdit({ cancelled: true })}
         alternate={{
           label: 'Terminal editor',
-          run: () => void finishEdit({ error: 'Opening the terminal editor.' }),
+          run: () => void finishEdit({ error: CHOSE_TERMINAL }),
         }}
       />{/if}
   {/key}

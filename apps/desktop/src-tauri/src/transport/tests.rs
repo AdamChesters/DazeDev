@@ -273,6 +273,39 @@ fn remote_browser_program_routes_over_authenticated_protocol_after_reconnect() {
         old_nonce = nonce.into();
     }
     assert_eq!(opened, vec!["https://example.com/dazedev-bridge-test"; 2]);
+    // Ctrl+G in an agent: the pane's $VISUAL sends the file to this app,
+    // waits, and finds the saved text in the file when it returns.
+    let file = runtime.join("prompt.md");
+    let done = runtime.join("prompt.done");
+    std::fs::write(&file, "seed\r\ntext").unwrap();
+    transport
+        .input(
+            "browser-pane",
+            &format!(
+                "\"$VISUAL\" {} && touch {}\r",
+                quote(file.to_str().unwrap()),
+                quote(done.to_str().unwrap())
+            ),
+        )
+        .unwrap();
+    let request = await_event("host-editor-open");
+    assert_eq!(request["text"], "seed\r\ntext");
+    assert!(request["pid"].as_u64().unwrap() > 0);
+    let id = request["id"].as_str().unwrap();
+    transport
+        .rpc(&host.id, "editor_shown", json!({"id":id}))
+        .unwrap();
+    transport
+        .rpc(&host.id, "editor_done", json!({"id":id,"text":"edited\n"}))
+        .unwrap();
+    let deadline = std::time::Instant::now() + Duration::from_secs(10);
+    while !done.exists() && std::time::Instant::now() < deadline {
+        std::thread::sleep(Duration::from_millis(50));
+    }
+    assert_eq!(std::fs::read_to_string(&file).unwrap(), "edited\n");
+    assert!(transport
+        .rpc(&host.id, "editor_done", json!({"id":id,"text":"late"}))
+        .is_err());
     transport.close("browser-pane");
     transport.disconnect(&host.id);
     assert!(transport
@@ -1120,9 +1153,19 @@ fn shared_schema_lists_methods_the_desktop_calls() {
     let schema: Value =
         serde_json::from_str(include_str!("../../../../../shared/protocol/host-v2.json")).unwrap();
     assert_eq!(schema["protocol"].as_u64(), Some(HOST_PROTOCOL));
-    for method in ["ping", "browser_prepare", "browser_result"] {
+    for method in [
+        "ping",
+        "browser_prepare",
+        "browser_result",
+        "editor_shown",
+        "editor_done",
+    ] {
         assert_eq!(schema["methods"][method]["lane"], "inline", "{method}");
     }
+    assert!(schema["events"]
+        .as_array()
+        .unwrap()
+        .contains(&json!("editor-open")));
     let frame = request_frame(&json!({"id":"1"})).unwrap();
     assert_eq!(
         u32::from_be_bytes(frame[..4].try_into().unwrap()) as usize,
@@ -1205,4 +1248,55 @@ fn editor_open_events_parse() {
         Some(HostMessage::EditorOpen { id, pid, name, text })
             if id == "9" && pid == 7 && name == "n" && text == "t"
     ));
+}
+#[test]
+fn control_script_says_this_app_shows_editor_requests() {
+    assert!(
+        control_script("sock", "nonce", "endpoint", "desktop", true).contains(" DAZED_EDITOR=1;")
+    );
+}
+#[cfg(unix)]
+#[test]
+fn editor_exports_keep_the_users_editor_as_fallback_but_never_the_shim() {
+    let shim = "/run/user/1/dazedev-browser/shim-abc/dazedev-editor";
+    let run = |env: &[(&str, &str)]| {
+        let mut command = std::process::Command::new("/bin/sh");
+        command
+            .env_clear()
+            .env("PATH", "/usr/bin:/bin")
+            .arg("-c")
+            .arg(format!(
+                "{}printf '%s|%s|%s' \"$VISUAL\" \"$EDITOR\" \"$DAZEDEV_EDITOR_FALLBACK\"",
+                editor_exports(shim)
+            ));
+        for (key, value) in env {
+            command.env(key, value);
+        }
+        String::from_utf8(command.output().unwrap().stdout).unwrap()
+    };
+    let with = |fallback: &str| format!("{shim}|{shim}|{fallback}");
+    assert_eq!(
+        run(&[("VISUAL", "vim -p"), ("EDITOR", "nano")]),
+        with("vim -p")
+    );
+    assert_eq!(run(&[("EDITOR", "nano")]), with("nano"));
+    // A nested session: the outer shim is skipped, the user's editor kept.
+    assert_eq!(
+        run(&[
+            ("VISUAL", "/old/dazedev-editor"),
+            ("EDITOR", "/old/dazedev-editor"),
+            ("DAZEDEV_EDITOR_FALLBACK", "micro")
+        ]),
+        with("micro")
+    );
+    assert_eq!(
+        run(&[
+            ("VISUAL", "/old/dazedev-editor"),
+            ("DAZEDEV_EDITOR_FALLBACK", "/old/dazedev-editor")
+        ]),
+        with("")
+    );
+    assert_eq!(run(&[]), with(""));
+    // The shim path is quoted for the shell.
+    assert!(editor_exports("/tmp/a b/dazedev-editor").contains("VISUAL='/tmp/a b/dazedev-editor'"));
 }

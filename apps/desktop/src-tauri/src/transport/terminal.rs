@@ -237,9 +237,20 @@ impl Transport {
                 uuid::Uuid::parse_str(endpoint).map_err(|_| "Invalid browser bridge endpoint")?;
                 let folder = std::path::Path::new(executable)
                     .parent()
-                    .ok_or("Invalid browser bridge directory")?
-                    .to_string_lossy();
-                format!("export BROWSER={}; export PATH={}:\"$PATH\"; export DAZEDEV_BROWSER_TTY=\"$(tty)\" DAZEDEV_BROWSER_PID=\"$$\"; \"$BROWSER\" --dazedev-register {} \"$$\" \"$DAZEDEV_BROWSER_TTY\"; {script}", quote(executable), quote(&folder), quote(endpoint))
+                    .ok_or("Invalid browser bridge directory")?;
+                // Helpers older than the editor bridge return no editor.
+                let editor = match browser["editor"].as_str() {
+                    Some(editor) => {
+                        checked(editor)?;
+                        if std::path::Path::new(editor).parent() != Some(folder) {
+                            return Err("Invalid editor bridge command".into());
+                        }
+                        editor_exports(editor)
+                    }
+                    None => String::new(),
+                };
+                let folder = folder.to_string_lossy();
+                format!("export BROWSER={}; export PATH={}:\"$PATH\"; {editor}export DAZEDEV_BROWSER_TTY=\"$(tty)\" DAZEDEV_BROWSER_PID=\"$$\"; \"$BROWSER\" --dazedev-register {} \"$$\" \"$DAZEDEV_BROWSER_TTY\"; {script}", quote(executable), quote(&folder), quote(endpoint))
             }
             Err(error) if error.starts_with("Desktop browser bridge unavailable:") => {
                 format!("printf '%s\\n' {} >&2; {script}", quote(&error))

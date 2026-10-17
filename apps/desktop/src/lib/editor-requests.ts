@@ -27,10 +27,12 @@ export interface EditorView {
 
 export type EditorResult = { text: string } | { cancelled: true } | { error: string };
 
-export const NO_TERMINAL =
-  'No DazeDev terminal on this desktop is showing this session. Using the terminal editor.';
-export const ALREADY_EDITING =
-  'This terminal already has an editor open in DazeDev. Using the terminal editor.';
+// Errors name the reason only; the host helper adds that it is opening the
+// terminal editor.
+export const NO_TERMINAL = 'No DazeDev terminal on this desktop is showing this session.';
+export const ALREADY_EDITING = 'This terminal already has a file open in DazeDev.';
+export const MOVED_WINDOW = 'The terminal moved to its own window.';
+export const CHOSE_TERMINAL = 'You chose the terminal editor.';
 
 export function parseEditRequest(value: unknown): EditRequest | null {
   if (!value || typeof value !== 'object') return null;
