@@ -54,7 +54,7 @@ with tempfile.TemporaryDirectory(prefix="dazedev-android-checks-") as scratch:
         result = subprocess.call(["node", "--test", *sorted(str(p) for p in (root / "terminal").glob("*.test.mjs"))], cwd=root, env=env)
         if result == 0:
             # One JVM: Kotlin compiles inside Gradle instead of a second 2 GB daemon, so the
-            # whole check fits the self-hosted runner's 5 GB memory limit.
+            # whole check fits in about 5 GB of memory.
             result = subprocess.call([str(root / "gradlew"), "--offline", "--no-daemon", "--max-workers=2",
                 "-Pkotlin.compiler.execution.strategy=in-process",
                 "-Dorg.gradle.jvmargs=-Xmx3g -XX:MaxMetaspaceSize=768m -Dfile.encoding=UTF-8",

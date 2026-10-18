@@ -8,8 +8,8 @@ export default defineConfig({
   clearScreen: false,
   build: { target: 'es2022' },
   test: {
-    // The CI runner shares Devbox with other builds; component tests that pass
-    // in under a second can exceed the 5 s default when the machine is busy.
+    // On a shared build machine, component tests that pass in under a second
+    // can exceed the 5 s default when the machine is busy.
     testTimeout: process.env.CI ? 30_000 : 5_000,
     // The package's "main" file is not published; Vite builds use "module".
     alias: { '@xterm/addon-ligatures': '@xterm/addon-ligatures/lib/addon-ligatures.mjs' },
