@@ -24,6 +24,12 @@ class TerminalDestinationTest {
         assertEquals("other-socket", target.profile().socket)
     }
 
+    @Test fun desktopPlainShellsSayTheyCannotBeJoined() {
+        val target = DazeDevMobileUiState(profile = owner).destination(row().copy(sessionId = "", plainShell = true))
+        assertEquals("Desktop only", target.action)
+        assertEquals("Plain shell in the desktop app", target.status)
+    }
+
     @Test fun freshPhoneUsesNonSecretTailscaleDetails() {
         val details = HostReference("Workstation", "tailscale", "workstation.example.ts.net", "user", 2222, "work")
         val target = DazeDevMobileUiState(profile = owner).destination(row(details = details))

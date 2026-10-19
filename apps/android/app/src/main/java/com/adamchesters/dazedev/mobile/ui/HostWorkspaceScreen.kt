@@ -46,6 +46,22 @@ fun HostWorkspaceScreen(
     var history by remember { mutableStateOf(false) }
     var creatingGroup by remember { mutableStateOf(false) }
     var groupName by remember { mutableStateOf("") }
+    var newTerminal by remember { mutableStateOf<String?>(null) }
+    newTerminal?.let { workspace ->
+        NewSessionDialog(
+            defaultDirectory = state.profile.workingDirectory,
+            isCreating = state.isCreating,
+            repositories = state.repositories,
+            agents = state.agents,
+            folders = state.folders,
+            onDismiss = { newTerminal = null },
+            onCreate = { launch ->
+                newTerminal = null
+                viewModel.createSession(launch)
+            },
+            initialWorkspace = workspace,
+        )
+    }
     if (creatingGroup) {
         AlertDialog(onDismissRequest = { creatingGroup = false }, title = { Text("New hostless workspace") }, text = { OutlinedTextField(groupName, { groupName = it }, label = { Text("Name") }, singleLine = true) }, confirmButton = {
             TextButton(onClick = {
@@ -164,7 +180,8 @@ fun HostWorkspaceScreen(
                 val folder = state.folders.firstOrNull { it.id == state.selectedFolder }
                 Row(Modifier.fillMaxWidth().padding(horizontal = 8.dp), verticalAlignment = Alignment.CenterVertically) {
                     TextButton(onClick = { viewModel.selectFolder(null) }) { Text("‹ Workspaces") }
-                    Text(folder?.name.orEmpty(), style = MaterialTheme.typography.titleMedium, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                    Text(folder?.name.orEmpty(), style = MaterialTheme.typography.titleMedium, maxLines = 1, overflow = TextOverflow.Ellipsis, modifier = Modifier.weight(1f))
+                    if (folder != null) TextButton(onClick = { newTerminal = folder.id }, enabled = !state.isCreating) { Text("+ Terminal") }
                 }
                 WorkspaceTerminals(state, folder, viewModel, Modifier.weight(1f))
             }

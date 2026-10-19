@@ -28,6 +28,12 @@ body {
 .xterm-screen {
   touch-action: none;
 }
+/* With no size, Chromium moves the keyboard's caret to the start of the text after each word.
+   xterm sizes this box only while its own composition handling runs, which ime-input.js replaces. */
+.xterm .xterm-helper-textarea {
+  min-width: 1px;
+  min-height: 1px;
+}
 #keys {
   flex: none;
   max-height: 40vh;

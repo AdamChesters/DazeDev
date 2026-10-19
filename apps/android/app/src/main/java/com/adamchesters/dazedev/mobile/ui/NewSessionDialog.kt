@@ -80,8 +80,9 @@ internal fun NewSessionDialog(
     folders: List<WorkspaceFolder>,
     onDismiss: () -> Unit,
     onCreate: (SessionLaunch) -> Unit,
+    initialWorkspace: String = "",
 ) {
-    var workspace by rememberSaveable { mutableStateOf("") }
+    var workspace by rememberSaveable { mutableStateOf(initialWorkspace) }
     var workspaceName by rememberSaveable { mutableStateOf("") }
     var count by rememberSaveable { mutableStateOf("1") }
     var step by rememberSaveable { mutableStateOf(0) }

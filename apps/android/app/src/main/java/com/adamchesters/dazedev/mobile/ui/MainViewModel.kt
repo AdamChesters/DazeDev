@@ -175,6 +175,8 @@ class MainViewModel(
 
     fun removeLocalTerminalView(pane: String) = workspace.removeLocalTerminalView(pane)
 
+    fun removeTerminal(pane: String) = workspace.removeTerminal(pane)
+
     fun showHosts() = connections.showHosts()
 
     /** Back: leaves the terminal, cancels a connection, closes the folder, then returns to the host list. */

@@ -143,6 +143,31 @@ class TerminalBridgeDeviceTest {
         assertEquals("ls", sentUntil { it.length >= 2 })
     }
 
+    @Test fun editingEarlierKeyboardTextChangesOnlyThatText() {
+        output("", "ime-edit-ready")
+        js("window.daze.focus()")
+        compose.waitUntil(5_000) { js("document.activeElement === document.querySelector('textarea')") == "true" }
+        compose.runOnUiThread {
+            val web = page.web!!
+            web.requestFocus()
+            val connection = web.onCreateInputConnection(EditorInfo())!!
+            connection.commitText("hello world ", 1)
+            // Backspace into "world" and retype it, as the keyboard does.
+            connection.deleteSurroundingText(1, 0)
+            connection.setComposingRegion(6, 11)
+            connection.setComposingText("worlds", 1)
+            connection.finishComposingText()
+        }
+
+        fun line(sent: String) =
+            sent
+                .fold(StringBuilder()) { line, c ->
+                    if (c == '\u007f') line.setLength(maxOf(0, line.length - 1)) else line.append(c)
+                    line
+                }.toString()
+        assertEquals("hello worlds", line(sentUntil { line(it) == "hello worlds" }))
+    }
+
     @Test fun aTapOnAPathOpensTheLinkSheetAndNothingElse() {
         output("\u001b[2J\u001b[Hsee ./out/shot.png now\r\n", "tap-ready")
         val cols = link.size!!.first

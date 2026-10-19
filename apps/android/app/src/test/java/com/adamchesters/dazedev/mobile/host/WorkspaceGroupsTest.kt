@@ -52,6 +52,50 @@ class WorkspaceGroupsTest {
         assertThrows(IllegalArgumentException::class.java) { profile.rebindPaneSession(row.paneId, "other", "stamp") }
     }
 
+    @Test fun hostWorkspaceTerminalsCanBeRemovedAndDesktopPlainShellsAreMarked() {
+        val profile = source()
+        val folder = profile.folders().single()
+        profile.addSession("host", "machine:user:socket", JSONObject().put("id", "$2").put("stamp", "stamp-2").put("name", "Second"), "/dev", folder.id)
+        // A desktop plain shell has no tmux session; a tmux shell has one.
+        val shell =
+            JSONObject()
+                .put("id", "shell-pane")
+                .put("hostId", "host")
+                .put("hostKey", "machine:user:socket")
+                .put("name", "Terminal")
+                .put("sessionId", "")
+                .put("shell", true)
+        profile.workspace(folder.id).getJSONArray("panes").put(shell)
+        val rows = profile.folders().single().rows
+        assertEquals(listOf(false, false, true), rows.map { it.plainShell })
+        profile.groupTabs(folder.id, rows.take(2).map { it.paneId })
+        profile.removePane(folder.id, rows[0].paneId)
+        val after = SharedProfile(profile.document).folders().single()
+        assertEquals(listOf(rows[1].paneId, "shell-pane"), after.rows.map { it.paneId })
+        assertTrue(after.tabGroups.isEmpty())
+        assertFalse(
+            profile
+                .workspace(folder.id)
+                .getJSONObject("layout")
+                .toString()
+                .contains(rows[0].paneId),
+        )
+        profile.removePane(folder.id, rows[1].paneId)
+        profile.removePane(folder.id, "shell-pane")
+        // An empty workspace keeps the layout the desktop uses for one.
+        val layout = profile.workspace(folder.id).getJSONObject("layout")
+        assertEquals("pane", layout.getString("kind"))
+        assertEquals("", layout.getString("id"))
+        assertTrue(
+            SharedProfile(profile.document)
+                .folders()
+                .single()
+                .rows
+                .isEmpty(),
+        )
+        assertThrows(IllegalArgumentException::class.java) { profile.removePane(folder.id, "shell-pane") }
+    }
+
     private fun source(): SharedProfile {
         val profile = SharedProfile.empty()
         profile.addSession("host", "machine:user:socket", JSONObject().put("id", "$1").put("stamp", "stamp").put("name", "Session"), "/dev")

@@ -15,6 +15,7 @@ data class TerminalDestination(
     val label: String get() = reference.name.ifBlank { reference.address.ifBlank { "Unconfigured host" } }
     val status: String get() =
         when {
+            row.plainShell -> "Plain shell in the desktop app"
             connected -> "Connected"
             host?.phase == ConnectionPhase.Connecting -> "Connecting"
             host != null -> "Saved · reconnect"
@@ -22,6 +23,7 @@ data class TerminalDestination(
         }
     val action: String get() =
         when {
+            row.plainShell -> "Desktop only"
             connected -> "Open"
             host != null -> "Connect"
             else -> "Set up host"

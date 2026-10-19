@@ -7,6 +7,7 @@ import "@xterm/xterm/css/xterm.css";
 import "./terminal.css";
 import { installTouchScroll, wheelAccumulator } from "./touch-scroll.js";
 import { installTapKey } from "./tap-keys.js";
+import { installImeInput } from "./ime-input.js";
 const term = new Terminal({
   cursorBlink: false,
   scrollback: 5000,
@@ -76,7 +77,8 @@ const clearOnce = () => {
   for (const m in mods) if (mods[m] === 1) mods[m] = 0;
   updateMods();
 };
-term.onData((data) => {
+// Terminal input, from xterm and from the phone keyboard.
+function typed(data) {
   if (submission !== null) {
     submission.push(data);
     return;
@@ -87,6 +89,7 @@ term.onData((data) => {
     !dispatching &&
     [...data].length === 1 &&
     data.codePointAt(0) >= 32 &&
+    data !== "\x7f" &&
     (mods.Control || mods.Alt || mods.Shift)
   ) {
     key(data);
@@ -94,7 +97,9 @@ term.onData((data) => {
   }
   bridge("input", data);
   clearOnce();
-});
+}
+term.onData(typed);
+const ime = installImeInput(term.element, term.textarea, typed);
 term.onBinary((data) => bridge("binary", data));
 term.onResize((size) => {
   if (ready) bridge("resize", size);
@@ -396,11 +401,13 @@ window.daze = {
     term.blur();
   },
   paste: (text) => {
+    ime.reset();
     returnToLive();
     term.paste(text);
   },
   submit: (text) => {
     if (!ready || typeof text !== "string" || !text.trim()) return false;
+    ime.reset();
     returnToLive();
     submission = [];
     let payload;
@@ -433,6 +440,7 @@ window.daze = {
     layout();
   },
   dispose: () => {
+    ime.dispose();
     disposeTouchScroll();
     stopRepeat();
     term.dispose();

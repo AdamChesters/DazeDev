@@ -9,6 +9,8 @@ data class TerminalRow(
     val hostKey: String,
     val directory: String,
     val hostDetails: HostReference? = null,
+    /** A desktop plain shell: it runs inside the desktop app, with no tmux session to join. */
+    val plainShell: Boolean = false,
 )
 
 data class TerminalTabGroup(

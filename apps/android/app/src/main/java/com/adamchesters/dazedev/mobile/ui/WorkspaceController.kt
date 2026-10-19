@@ -13,6 +13,7 @@ import com.adamchesters.dazedev.mobile.host.createLocalWorkspace
 import com.adamchesters.dazedev.mobile.host.editWorkspace
 import com.adamchesters.dazedev.mobile.host.groupTabs
 import com.adamchesters.dazedev.mobile.host.removeLocalView
+import com.adamchesters.dazedev.mobile.host.removePane
 import com.adamchesters.dazedev.mobile.host.ungroupTab
 import com.adamchesters.dazedev.mobile.tmux.TmuxSession
 import kotlinx.coroutines.CoroutineScope
@@ -127,6 +128,12 @@ class WorkspaceController(
         } catch (e: Exception) {
             ui.message(e.message ?: "Could not remove this terminal view.")
         }
+    }
+
+    /** Takes a terminal out of the selected host workspace on every device; its tmux session keeps running. */
+    fun removeTerminal(pane: String) {
+        val folder = ui.value.selectedFolder ?: return
+        editShared("Could not remove this terminal. Draft retained.") { it.removePane(folder, pane) }
     }
 
     private fun editTabs(edit: (SharedProfile, String) -> Unit) {

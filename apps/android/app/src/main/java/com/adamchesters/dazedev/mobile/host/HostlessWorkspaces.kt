@@ -110,11 +110,19 @@ fun SharedProfile.removeLocalView(
     workspaceId: String,
     paneId: String,
 ) {
+    require(workspace(workspaceId).getString("hostId") == SharedProfile.LOCAL_OWNER) { "Choose a hostless workspace." }
+    removePane(workspaceId, paneId)
+}
+
+/** Takes a terminal out of a workspace and its layout. Its tmux session keeps running. */
+fun SharedProfile.removePane(
+    workspaceId: String,
+    paneId: String,
+) {
     val folder = workspace(workspaceId)
-    require(folder.getString("hostId") == SharedProfile.LOCAL_OWNER) { "Choose a hostless workspace." }
     val panes = folder.getJSONArray("panes")
     val remaining = (0 until panes.length()).map { panes.getJSONObject(it) }.filterNot { it.getString("id") == paneId }
-    require(remaining.size < panes.length()) { "Terminal view no longer exists." }
+    require(remaining.size < panes.length()) { "This terminal is no longer in the workspace." }
 
     fun remove(node: JSONObject): JSONObject? =
         when (node.optString("kind")) {

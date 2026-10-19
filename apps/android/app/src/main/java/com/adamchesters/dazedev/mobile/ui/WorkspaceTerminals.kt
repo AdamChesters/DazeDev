@@ -21,6 +21,15 @@ fun WorkspaceTerminals(
 ) {
     var grouping by remember(folder?.id) { mutableStateOf(false) }
     var selected by remember(folder?.id) { mutableStateOf(setOf<String>()) }
+    var removing by remember(folder?.id) { mutableStateOf<TerminalRow?>(null) }
+    removing?.let { row ->
+        AlertDialog(onDismissRequest = { removing = null }, title = { Text("Remove from workspace?") }, text = { Text("Remove ${row.name} from ${folder?.name.orEmpty()} on every device. Its tmux session keeps running, and + Terminal on the Workspaces screen still lists it.") }, confirmButton = {
+            TextButton(onClick = {
+                viewModel.removeTerminal(row.paneId)
+                removing = null
+            }) { Text("Remove") }
+        }, dismissButton = { TextButton(onClick = { removing = null }) { Text("Cancel") } })
+    }
     Column(modifier) {
         Row(Modifier.padding(horizontal = 16.dp), verticalAlignment = Alignment.CenterVertically) {
             if (grouping) {
@@ -46,7 +55,8 @@ fun WorkspaceTerminals(
                     Row(verticalAlignment = Alignment.CenterVertically) {
                         if (grouping) Checkbox(checked = row.paneId in selected, onCheckedChange = { checked -> selected = if (checked) selected + row.paneId else selected - row.paneId })
                         Box(Modifier.weight(1f)) { TerminalHostCard(state, row, { if (grouping) selected = if (row.paneId in selected) selected - row.paneId else selected + row.paneId else viewModel.selectPane(row) }, if (group == null) "" else "Tab group ${folder!!.tabGroups.indexOf(group) + 1}") }
-                        if (!grouping && (group != null || state.localGroupId != null)) {
+                        val local = state.localGroupId != null
+                        if (!grouping && (group != null || local || !row.plainShell)) {
                             Box {
                                 IconButton(onClick = { menu = true }) { Icon(Icons.Default.MoreVert, contentDescription = "${row.name} options") }
                                 DropdownMenu(expanded = menu, onDismissRequest = { menu = false }) {
@@ -56,10 +66,15 @@ fun WorkspaceTerminals(
                                             viewModel.ungroupTerminalTab(row.paneId)
                                         })
                                     }
-                                    if (state.localGroupId != null) {
+                                    if (local) {
                                         DropdownMenuItem(text = { Text("Remove view from this group") }, onClick = {
                                             menu = false
                                             viewModel.removeLocalTerminalView(row.paneId)
+                                        })
+                                    } else if (!row.plainShell) {
+                                        DropdownMenuItem(text = { Text("Remove from workspace") }, onClick = {
+                                            menu = false
+                                            removing = row
                                         })
                                     }
                                 }

@@ -105,6 +105,10 @@ class ConnectionController(
     }
 
     fun selectPane(row: TerminalRow) {
+        if (row.plainShell) {
+            ui.message("${row.name} is a plain shell inside the desktop app, so other devices cannot join it. On the desktop, use its tmux button to run it in a tmux session.")
+            return
+        }
         if (row.hostKey.isBlank()) {
             ui.message("This terminal has no saved host identity. Open its host's session list and adopt it again.")
             return

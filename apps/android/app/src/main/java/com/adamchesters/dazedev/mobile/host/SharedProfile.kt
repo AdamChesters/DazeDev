@@ -123,7 +123,7 @@ class SharedProfile(
                 folder.getString("id"),
                 folder.optString("name", "Workspace"),
                 order.distinct().mapNotNull { id ->
-                    byId[id]?.let { p -> TerminalRow(id, p.optString("name", "Terminal"), p.optString("sessionId"), p.optString("stamp"), p.optString("hostId"), p.optString("hostKey"), p.optString("directory"), p.optJSONObject("hostDetails")?.let(HostReference::fromJson)) }
+                    byId[id]?.let { p -> TerminalRow(id, p.optString("name", "Terminal"), p.optString("sessionId"), p.optString("stamp"), p.optString("hostId"), p.optString("hostKey"), p.optString("directory"), p.optJSONObject("hostDetails")?.let(HostReference::fromJson), p.optBoolean("shell") && p.optString("sessionId").isBlank()) }
                 },
                 folder.optJSONObject("colors")?.optString("background").orEmpty(),
                 groups,
