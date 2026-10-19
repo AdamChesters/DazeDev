@@ -4,7 +4,7 @@
     "version": "0.1.0-alpha.11",
     "date": "2026-10-19",
     "channel": "development",
-    "notes": "Typing fixes and workspace terminals\n\n• Editing earlier text with the phone keyboard no longer repeats sentences or adds stray characters. Backspacing into a word, moving the cursor and autocorrect now change only the text you edited.\n• Inside a workspace, + Terminal starts a new terminal in that workspace.\n• A terminal's menu can remove it from its workspace. Its tmux session keeps running.\n• Plain shells from the desktop app show as Desktop only, with how to share them, instead of an error and a Reconnect button that could not work."
+    "notes": "Typing, wrapped links and workspace terminals\n\n• Editing earlier text with the phone keyboard no longer repeats sentences or adds stray characters. Backspacing into a word, moving the cursor and autocorrect now change only the text you edited.\n• Inside a workspace, + Terminal starts a new terminal in that workspace.\n• A terminal's menu can remove it from its workspace. Its tmux session keeps running.\n• Plain shells from the desktop app show as Desktop only, with how to share them, instead of an error and a Reconnect button that could not work.\n• A web address that an app wraps onto the next line now opens whole when tapped, as on desktop, instead of stopping at the end of the first line."
   },
   {
     "platform": "mobile",

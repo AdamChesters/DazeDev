@@ -198,7 +198,7 @@ fun HostWorkspaceScreen(
             TextButton(onClick = { viewModel.setExtraKeys(!state.extraKeys) }, modifier = Modifier.semantics { contentDescription = if (state.extraKeys) "Extra keys above the keyboard are on." else "Extra keys above the keyboard are off." }) { Text(if (state.extraKeys) "Keys above keyboard: on" else "Keys above keyboard: off") }
             TextButton(onClick = {
                 val assets = context.assets
-                val paths = listOf("moonshine-license.txt", "xterm-license.txt", "addon-fit-license.txt", "addon-unicode11-license.txt", "addon-web-links-license.txt") + assets.list("licenses").orEmpty().map { "licenses/$it" }
+                val paths = listOf("moonshine-license.txt", "xterm-license.txt", "addon-fit-license.txt", "addon-unicode11-license.txt") + assets.list("licenses").orEmpty().map { "licenses/$it" }
                 notices = paths.joinToString("\n\n") { path -> assets.open(path).bufferedReader().use { it.readText() } }
             }) { Text("Licenses and credits") }
         }

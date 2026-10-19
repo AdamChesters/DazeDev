@@ -147,6 +147,8 @@ val mobileAssets =
         inputs.file(rootProject.file("../../shared/releases/changelog.json"))
         inputs.files(rootProject.file("../../scripts/stage-android-assets.mjs"), rootProject.file("../desktop/public/brand.svg"), rootProject.file("../desktop/package-lock.json"))
         inputs.dir(rootProject.file("terminal"))
+        // The terminal page bundles the desktop's web-link detection.
+        inputs.dir(rootProject.file("../desktop/src/lib"))
         outputs.dir(layout.buildDirectory.dir("generated/mobile"))
         commandLine(
             "node",

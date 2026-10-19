@@ -1,13 +1,13 @@
 import { Terminal } from "@xterm/xterm";
 import { FitAddon } from "@xterm/addon-fit";
 import { Unicode11Addon } from "@xterm/addon-unicode11";
-import { WebLinksAddon } from "@xterm/addon-web-links";
 import { WebglAddon } from "@xterm/addon-webgl";
 import "@xterm/xterm/css/xterm.css";
 import "./terminal.css";
 import { installTouchScroll, wheelAccumulator } from "./touch-scroll.js";
 import { installTapKey } from "./tap-keys.js";
 import { installImeInput } from "./ime-input.js";
+import { registerWebLinks } from "../../desktop/src/lib/web-links.ts";
 const term = new Terminal({
   cursorBlink: false,
   scrollback: 5000,
@@ -63,7 +63,8 @@ if (window.DazeBridge)
     const size = data.length;
     term.write(data, () => bridge("ack", size));
   };
-term.loadAddon(new WebLinksAddon((_event, url) => linkActivated(url)));
+// The desktop's web links: an address an app wrapped onto the next row itself opens whole.
+registerWebLinks(term, (_event, url) => linkActivated(url), () => {});
 const mods = { Control: 0, Alt: 0, Shift: 0 };
 let ready = false,
   dispatching = false;

@@ -116,7 +116,7 @@ await cp(
   resolve(out, "assets/xterm-license.txt"),
 );
 
-for (const name of ["addon-fit", "addon-unicode11", "addon-web-links"])
+for (const name of ["addon-fit", "addon-unicode11"])
   await cp(
     resolve(root, `apps/desktop/node_modules/@xterm/${name}/LICENSE`),
     resolve(out, `assets/${name}-license.txt`),
