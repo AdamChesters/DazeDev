@@ -13,7 +13,7 @@ The terminal uses the same pinned xterm implementation as desktop, with a Keys p
 
 Moonshine English Medium Streaming provides local speech input after explicit preparation. First use downloads approximately 269 MB. Transcripts remain editable drafts and are pasted without automatically pressing Enter. Other speech models and local cleanup are not offered until device performance and correctness are verified.
 
-Android and desktop releases are independent. Android tags use `android/v…`; desktop tags use `v…`. Android packages must never contain the desktop updater's `latest.json`.
+Android and desktop releases are independent. Android tags use `android/v…`; desktop tags use `v…`. A desktop release may also attach the APK with its checksum line, and the phone updates from whichever release has the newer APK. Android packages must never contain the desktop updater's `latest.json`.
 
 ## Linux desktop test packages
 

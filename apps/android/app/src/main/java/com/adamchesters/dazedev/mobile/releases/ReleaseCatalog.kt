@@ -8,6 +8,10 @@ import javax.net.ssl.HttpsURLConnection
 private const val REPOSITORY = "AdamChesters/DazeDev"
 private const val MAX_METADATA = 1024 * 1024
 private const val MAX_SUMS = 64 * 1024
+private val MOBILE_APK = Regex("^DazeDev-Mobile-(.+)\\.apk$")
+
+// Android releases attach SHA256SUMS; desktop releases attach SHA256SUMS.txt.
+private val SUMS_NAMES = listOf("SHA256SUMS", "SHA256SUMS.txt")
 
 data class ReleaseEntry(
     val platform: String,
@@ -21,7 +25,7 @@ data class MobileUpdate(
     val version: String,
     val url: String,
     val notes: String,
-    /** The release's SHA256SUMS asset, or null when the release has none. */
+    /** The release's SHA256SUMS (or SHA256SUMS.txt) asset, or null when the release has none. */
     val checksums: String? = null,
     val page: String = "",
 ) {
@@ -135,15 +139,24 @@ fun findMobileUpdate(
     for (i in 0 until releases.length()) {
         val release = releases.optJSONObject(i) ?: continue
         val tag = release.optString("tag_name")
-        if (release.optBoolean("draft") || !tag.startsWith("android/v")) continue
-        val label = tag.removePrefix("android/v")
-        val version = Version.parse(label) ?: continue
-        if (version <= installed || (installed.pre.isEmpty() && (version.pre.isNotEmpty() || release.optBoolean("prerelease")))) continue
+        if (release.optBoolean("draft")) continue
         val assets = release.optJSONArray("assets") ?: continue
         val list = (0 until assets.length()).mapNotNull(assets::optJSONObject)
-        val apk = list.firstNotNullOfOrNull { releaseAsset(it, tag, "DazeDev-Mobile-$label.apk", 512L * 1024 * 1024) } ?: continue
-        val sums = list.firstNotNullOfOrNull { releaseAsset(it, tag, "SHA256SUMS", MAX_SUMS.toLong()) }
-        candidates.add(version to MobileUpdate(label, apk, release.optString("body").take(50000), sums, "https://github.com/$REPOSITORY/releases/tag/$tag"))
+        // Android releases name the APK's version in the tag. Desktop releases (v…) may carry
+        // the APK beside the desktop app, so their APK file name gives the Android version.
+        val labels =
+            when {
+                tag.startsWith("android/v") -> listOf(tag.removePrefix("android/v"))
+                tag.startsWith("v") -> list.mapNotNull { MOBILE_APK.matchEntire(it.optString("name"))?.groupValues?.get(1) }
+                else -> emptyList()
+            }
+        for (label in labels) {
+            val version = Version.parse(label) ?: continue
+            if (version <= installed || (installed.pre.isEmpty() && (version.pre.isNotEmpty() || release.optBoolean("prerelease")))) continue
+            val apk = list.firstNotNullOfOrNull { releaseAsset(it, tag, "DazeDev-Mobile-$label.apk", 512L * 1024 * 1024) } ?: continue
+            val sums = SUMS_NAMES.firstNotNullOfOrNull { name -> list.firstNotNullOfOrNull { releaseAsset(it, tag, name, MAX_SUMS.toLong()) } }
+            candidates.add(version to MobileUpdate(label, apk, release.optString("body").take(50000), sums, "https://github.com/$REPOSITORY/releases/tag/$tag"))
+        }
     }
     return candidates.maxByOrNull { it.first }?.second
 }

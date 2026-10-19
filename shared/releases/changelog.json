@@ -1,5 +1,12 @@
 [
   {
+    "platform": "mobile",
+    "version": "0.1.0-alpha.10",
+    "date": "2026-10-19",
+    "channel": "development",
+    "notes": "Updates from desktop releases\n\n• The app now finds updates in DazeDev desktop releases that include the Android app, as well as in Android-only releases, and offers whichever is newer.\n• As before, the download is checked against the release's checksum file before Android installs it."
+  },
+  {
     "platform": "desktop",
     "version": "0.3.9-alpha.0",
     "date": "2026-10-17",
