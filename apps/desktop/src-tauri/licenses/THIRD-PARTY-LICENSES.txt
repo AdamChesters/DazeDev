@@ -784,7 +784,7 @@ Monaco Editor 0.57.0: MIT, Microsoft Corporation.
 https://github.com/microsoft/monaco-editor
 See monaco-editor-LICENSE.txt and monaco-editor-ThirdPartyNotices.txt in this directory.
 
-DOMPurify 3.4.16: Apache-2.0 OR MPL-2.0, Cure53 and contributors.
+DOMPurify 3.4.17: Apache-2.0 OR MPL-2.0, Cure53 and contributors.
 https://github.com/cure53/DOMPurify
 See DOMPurify-LICENSE.txt in this directory. DazeDev uses the Apache-2.0 option.
 
