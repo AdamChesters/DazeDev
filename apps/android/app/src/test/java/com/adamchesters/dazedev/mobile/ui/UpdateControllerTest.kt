@@ -23,10 +23,11 @@ import java.security.MessageDigest
 
 @OptIn(ExperimentalCoroutinesApi::class)
 class UpdateControllerTest {
-    private class Store : UpdateStore {
+    private class Store(
+        private val clock: () -> Long,
+    ) : UpdateStore {
         var history = "[]"
         var lastCheck = 0L
-        var ignored = ""
 
         override fun releaseHistory() = history
 
@@ -37,13 +38,7 @@ class UpdateControllerTest {
         override fun lastUpdateCheck() = lastCheck
 
         override fun checkedUpdates() {
-            lastCheck = 1
-        }
-
-        override fun ignoredUpdate() = ignored
-
-        override fun ignoreUpdate(version: String) {
-            ignored = version
+            lastCheck = clock()
         }
     }
 
@@ -83,12 +78,13 @@ class UpdateControllerTest {
 
     private inner class Setup(
         test: TestScope,
-        now: Long = 0,
+        var now: Long = 0,
+        shared: Store? = null,
     ) {
+        val store = shared ?: Store { now }
         val dispatcher = StandardTestDispatcher(test.testScheduler)
         val scope = CoroutineScope(SupervisorJob() + dispatcher)
         val ui = UiStore(DazeDevMobileUiState())
-        val store = Store()
         val source = Source()
         val folder: File = temp.newFolder()
         val updates = UpdateController(ui, scope, store, source, "0.1.0", dispatcher, folder) { now }
@@ -165,25 +161,14 @@ class UpdateControllerTest {
         runTest {
             val s = Setup(this)
             s.source.update = release
-            s.store.ignored = "0.2.0"
+            s.updates.checkUpdates(false)
+            advanceUntilIdle()
+            s.updates.dismissUpdate()
             s.updates.checkUpdates()
             assertTrue(s.ui.value.checkingUpdates)
             advanceUntilIdle()
             assertFalse(s.ui.value.checkingUpdates)
             assertEquals(release, s.ui.value.mobileUpdate)
-            assertEquals(1L, s.store.lastCheck)
-            s.scope.cancel()
-        }
-
-    @Test fun automaticCheckSkipsAnIgnoredVersionQuietly() =
-        runTest {
-            val s = Setup(this)
-            s.source.update = release
-            s.store.ignored = "0.2.0"
-            s.updates.checkUpdates(false)
-            advanceUntilIdle()
-            assertNull(s.ui.value.mobileUpdate)
-            assertNull(s.ui.value.message)
             s.scope.cancel()
         }
 
@@ -209,31 +194,53 @@ class UpdateControllerTest {
             s.scope.cancel()
         }
 
-    @Test fun dismissingRemembersTheVersion() =
+    @Test fun laterHidesTheVersionUntilTheNextLaunch() =
         runTest {
             val s = Setup(this)
             s.source.update = release
-            s.updates.checkUpdates()
+            s.updates.start("[]")
             advanceUntilIdle()
+            assertEquals(release, s.ui.value.mobileUpdate)
             s.updates.dismissUpdate()
             assertNull(s.ui.value.mobileUpdate)
-            assertEquals("0.2.0", s.store.ignored)
+            s.updates.checkUpdates(false)
+            advanceUntilIdle()
+            assertNull(s.ui.value.mobileUpdate)
+            assertNull(s.ui.value.message)
+            val relaunch = Setup(this, shared = s.store)
+            relaunch.source.update = release
+            relaunch.updates.start("[]")
+            advanceUntilIdle()
+            assertEquals(release, relaunch.ui.value.mobileUpdate)
+            s.scope.cancel()
+            relaunch.scope.cancel()
+        }
+
+    @Test fun startChecksOnEveryLaunch() =
+        runTest {
+            val s = Setup(this, now = 1_000L)
+            s.store.lastCheck = 999L
+            s.updates.start("[]")
+            advanceUntilIdle()
+            assertEquals(1, s.source.checks)
             s.scope.cancel()
         }
 
-    @Test fun startChecksOnlyOnceADay() =
+    @Test fun returningChecksAgainOnceTheLastCheckIsAnHourOld() =
         runTest {
-            val s = Setup(this, now = 1_000L)
-            s.store.lastCheck = 0
+            val s = Setup(this)
             s.updates.start("[]")
             advanceUntilIdle()
-            assertEquals(0, s.source.checks)
-            val later = Setup(this, now = 25 * 60 * 60 * 1000L)
-            later.updates.start("[]")
+            assertEquals(1, s.source.checks)
+            s.now = 59 * 60 * 1000L
+            s.updates.returned()
             advanceUntilIdle()
-            assertEquals(1, later.source.checks)
+            assertEquals(1, s.source.checks)
+            s.now = 61 * 60 * 1000L
+            s.updates.returned()
+            advanceUntilIdle()
+            assertEquals(2, s.source.checks)
             s.scope.cancel()
-            later.scope.cancel()
         }
 
     @Test fun releaseHistoryMergesPublicEntriesAndKeepsThemOnBadData() =

@@ -1,6 +1,13 @@
 [
   {
     "platform": "mobile",
+    "version": "0.1.0-alpha.12",
+    "date": "2026-10-22",
+    "channel": "development",
+    "notes": "Update prompts and a simpler terminal bar\n\n• The app checks for a new version every time it starts, and again when you come back after an hour. Later now waits until the next start instead of hiding that version for good.\n• The bar under the terminal no longer scrolls sideways. It shows Keys, Paste, Copy, More and Voice; More groups the other terminal actions, including those from the old ⋮ menu.\n• Choose target, Restore transcript and Clear draft and transcript moved into the voice draft."
+  },
+  {
+    "platform": "mobile",
     "version": "0.1.0-alpha.11",
     "date": "2026-10-19",
     "channel": "development",

@@ -146,13 +146,12 @@ class ProfileStore(
     override fun lastUpdateCheck(): Long = prefs.getLong("last-update-check", 0L)
 
     override fun checkedUpdates() {
-        prefs.edit().putLong("last-update-check", System.currentTimeMillis()).apply()
-    }
-
-    override fun ignoredUpdate(): String = prefs.getString("ignored-update", "") ?: ""
-
-    override fun ignoreUpdate(version: String) {
-        prefs.edit().putString("ignored-update", version).apply()
+        // "ignored-update" held a version dismissed for good before 0.1.0-alpha.12.
+        prefs
+            .edit()
+            .putLong("last-update-check", System.currentTimeMillis())
+            .remove("ignored-update")
+            .apply()
     }
 
     fun launchOperation(

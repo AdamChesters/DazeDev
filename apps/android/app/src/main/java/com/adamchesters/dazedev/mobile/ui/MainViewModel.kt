@@ -365,7 +365,10 @@ class MainViewModel(
         registry.setForeground(value)
         registry.prompts.foreground = value
         terminal.setForeground(value)
-        if (value) alerts.returned()
+        if (value) {
+            alerts.returned()
+            updates.returned()
+        }
     }
 
     fun dismissAuthNotice() = registry.prompts.dismissAuthNotice()

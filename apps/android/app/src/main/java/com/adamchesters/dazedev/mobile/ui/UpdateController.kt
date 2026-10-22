@@ -25,10 +25,18 @@ class UpdateController(
     private val downloads: File = File(System.getProperty("java.io.tmpdir"), "dazedev-updates"),
     private val now: () -> Long = System::currentTimeMillis,
 ) {
-    /** Shows saved and bundled history, then checks for updates once a day. */
+    /** The version whose prompt was put off with Later; it is offered again on the next launch. */
+    private var dismissed: String? = null
+
+    /** Shows saved and bundled history, then checks for updates on every launch. */
     fun start(bundledHistory: String) {
         ui.update { it.copy(releaseHistory = mergeHistory(store.releaseHistory(), mergeHistory(bundledHistory))) }
-        if (now() - store.lastUpdateCheck() > DAY_MS) checkUpdates(false)
+        checkUpdates(false)
+    }
+
+    /** Checks again on return to the app once the last check is an hour old. */
+    fun returned() {
+        if (now() - store.lastUpdateCheck() > HOUR_MS) checkUpdates(false)
     }
 
     fun checkUpdates(manual: Boolean = true) {
@@ -38,7 +46,7 @@ class UpdateController(
             try {
                 store.checkedUpdates()
                 val update = withContext(io) { source.updates(version) }
-                if (update != null && (manual || update.version != store.ignoredUpdate())) {
+                if (update != null && (manual || update.version != dismissed)) {
                     ui.update { it.copy(mobileUpdate = update) }
                 } else if (manual) {
                     ui.message("No newer public Android release is available. Development APKs can be installed offline.")
@@ -54,7 +62,7 @@ class UpdateController(
 
     fun dismissUpdate() {
         if (ui.value.updateProgress != null) return
-        ui.value.mobileUpdate?.let { store.ignoreUpdate(it.version) }
+        ui.value.mobileUpdate?.let { dismissed = it.version }
         ui.update { it.copy(mobileUpdate = null, updateError = null, verifiedUpdate = null) }
     }
 
@@ -118,7 +126,7 @@ class UpdateController(
     }
 
     private companion object {
-        const val DAY_MS = 24 * 60 * 60 * 1000L
+        const val HOUR_MS = 60 * 60 * 1000L
         const val CHECKING = "Checking public release history…"
     }
 }

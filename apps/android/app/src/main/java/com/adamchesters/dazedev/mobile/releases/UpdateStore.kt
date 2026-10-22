@@ -9,10 +9,6 @@ interface UpdateStore {
     fun lastUpdateCheck(): Long
 
     fun checkedUpdates()
-
-    fun ignoredUpdate(): String
-
-    fun ignoreUpdate(version: String)
 }
 
 /** Where public release information comes from. */

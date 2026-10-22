@@ -9,6 +9,8 @@ import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.ExperimentalLayoutApi
+import androidx.compose.foundation.layout.FlowRow
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
@@ -29,15 +31,17 @@ import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.rounded.ArrowBack
 import androidx.compose.material.icons.automirrored.rounded.Send
+import androidx.compose.material.icons.rounded.ContentCopy
+import androidx.compose.material.icons.rounded.ContentPaste
+import androidx.compose.material.icons.rounded.Keyboard
+import androidx.compose.material.icons.rounded.KeyboardHide
 import androidx.compose.material.icons.rounded.Mic
-import androidx.compose.material.icons.rounded.MoreVert
+import androidx.compose.material.icons.rounded.MoreHoriz
 import androidx.compose.material.icons.rounded.Refresh
 import androidx.compose.material.icons.rounded.Stop
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
 import androidx.compose.material3.CircularProgressIndicator
-import androidx.compose.material3.DropdownMenu
-import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.FilledIconButton
 import androidx.compose.material3.FilledTonalButton
@@ -66,6 +70,7 @@ import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.semantics
@@ -93,7 +98,7 @@ import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import kotlinx.coroutines.withTimeoutOrNull
 
-@OptIn(ExperimentalMaterial3Api::class)
+@OptIn(ExperimentalMaterial3Api::class, ExperimentalLayoutApi::class)
 @Composable
 fun TerminalScreen(
     uiState: TerminalScreenState,
@@ -164,6 +169,23 @@ fun TerminalScreen(
     var more by remember { mutableStateOf(false) }
     var showFind by remember { mutableStateOf(false) }
     var exportText by remember { mutableStateOf<String?>(null) }
+
+    fun pasteClipboard() {
+        val clipboard = context.getSystemService(android.content.Context.CLIPBOARD_SERVICE) as android.content.ClipboardManager
+        val clip = clipboard.primaryClip
+        val uri = clip?.getItemAt(0)?.uri
+        val description = clip?.description
+        // A copied image or file is uploaded (after confirmation) and its path pasted; text is pasted as before.
+        if (uri != null && uri.scheme == "content" && description != null && (0 until description.mimeTypeCount).any { !description.getMimeType(it).startsWith("text/") }) {
+            tools.clipboardFile(uri)
+        } else {
+            clip
+                ?.getItemAt(0)
+                ?.coerceToText(context)
+                ?.toString()
+                ?.let { if (!terminalController.paste(it)) onMessage("Clipboard was not pasted. Wait for the terminal, or choose text smaller than 64 KiB.") }
+        }
+    }
 
     suspend fun terminalText(): String? = terminalController.evaluate("window.daze?.text()", 10_000).also { if (it == null) onMessage("The terminal did not answer. Try again.") }
     val saveExport =
@@ -428,48 +450,6 @@ fun TerminalScreen(
                     IconButton(onClick = onRefresh) {
                         Icon(Icons.Rounded.Refresh, contentDescription = "Refresh terminal")
                     }
-                    Box {
-                        IconButton(onClick = { more = true }) { Icon(Icons.Rounded.MoreVert, contentDescription = "More terminal actions") }
-                        DropdownMenu(expanded = more, onDismissRequest = { more = false }) {
-                            DropdownMenuItem(text = { Text("Find in terminal") }, onClick = {
-                                more = false
-                                showFind = true
-                            })
-                            DropdownMenuItem(text = { Text("Share output") }, onClick = {
-                                more = false
-                                scope.launch {
-                                    val text = terminalText() ?: return@launch
-                                    val name = TerminalExport.fileName(uiState.selectedSessionName.orEmpty(), java.time.LocalDateTime.now())
-                                    runCatching { context.startActivity(withContext(Dispatchers.IO) { TerminalExport.share(context, name, text) }) }.onFailure { onMessage("Could not share the terminal output.") }
-                                }
-                            })
-                            DropdownMenuItem(text = { Text("Save output…") }, onClick = {
-                                more = false
-                                scope.launch {
-                                    exportText = terminalText() ?: return@launch
-                                    saveExport.launch(TerminalExport.fileName(uiState.selectedSessionName.orEmpty(), java.time.LocalDateTime.now()))
-                                }
-                            })
-                            DropdownMenuItem(text = { Text("Clear local scrollback") }, onClick = {
-                                more = false
-                                scope.launch {
-                                    when (terminalController.evaluate("window.daze?.clearScrollback()")) {
-                                        "true" -> onMessage("Cleared this phone's copy of the scrollback. Nothing was sent to the host.")
-                                        "false" -> onMessage("This program uses the full screen, so the phone keeps no scrollback for it.")
-                                        else -> onMessage("The terminal did not answer. Try again.")
-                                    }
-                                }
-                            })
-                            DropdownMenuItem(text = { Text("Broadcast") }, onClick = {
-                                more = false
-                                tools.broadcast("")
-                            })
-                            DropdownMenuItem(text = { Text("Upload file") }, onClick = {
-                                more = false
-                                uploadPicker.launch(arrayOf("*/*"))
-                            })
-                        }
-                    }
                 }
             },
         )
@@ -556,65 +536,13 @@ fun TerminalScreen(
             horizontalArrangement = Arrangement.spacedBy(8.dp),
             verticalAlignment = Alignment.CenterVertically,
         ) {
-            Row(Modifier.weight(1f).horizontalScroll(rememberScrollState())) {
-                TextButton(onClick = { terminalController.call("bottom") }) { Text("Latest output") }
-                TextButton(onClick = {
-                    showKeys = !showKeys
-                    terminalController.call("keys", showKeys.toString())
-                }) { Text(if (showKeys) "Hide keys" else "Keys") }
-                TextButton(onClick = onWindows) { Text("Windows") }
-                TextButton(onClick = onSettings) { Text("Settings") }
-                TextButton(onClick = {
-                    scope.launch {
-                        try {
-                            frozenTarget = onPrepareTarget()
-                            drafts.edit().putString("target:$draftKey", frozenTarget).apply()
-                            onMessage("Draft now targets the current terminal.")
-                        } catch (e: Exception) {
-                            onMessage("Current target is unavailable.")
-                        }
-                    }
-                }) { Text("Choose target") }
-                TextButton(onClick = {
-                    input = drafts.getString("original:$draftKey", input).orEmpty()
-                    showDraft = true
-                }) { Text("Restore transcript") }
-                TextButton(onClick = {
-                    cancelVoiceStart()
-                    voiceController.cancelCapture()
-                    voiceController.clearTranscript()
-                    input = ""
-                    voicePrefix = ""
-                    frozenTarget = null
-                    drafts
-                        .edit()
-                        .remove(draftKey)
-                        .remove("original:$draftKey")
-                        .remove("target:$draftKey")
-                        .remove("saved:$draftKey")
-                        .apply()
-                }) { Text("Clear draft and transcript") }
-                Text("Drafts and original transcripts stay on this device. Clear removes both; inactive entries expire after 7 days.")
-                TextButton(onClick = { terminalController.call("selectAll") }) { Text("Select all") }
-                TextButton(onClick = { terminalController.call("clearSelection") }) { Text("Clear selection") }
-                TextButton(onClick = { terminalController.call("copy") }) { Text("Copy") }
-                TextButton(onClick = {
-                    val clipboard = context.getSystemService(android.content.Context.CLIPBOARD_SERVICE) as android.content.ClipboardManager
-                    val clip = clipboard.primaryClip
-                    val uri = clip?.getItemAt(0)?.uri
-                    val description = clip?.description
-                    // A copied image or file is uploaded (after confirmation) and its path pasted; text is pasted as before.
-                    if (uri != null && uri.scheme == "content" && description != null && (0 until description.mimeTypeCount).any { !description.getMimeType(it).startsWith("text/") }) {
-                        tools.clipboardFile(uri)
-                    } else {
-                        clip
-                            ?.getItemAt(0)
-                            ?.coerceToText(context)
-                            ?.toString()
-                            ?.let { if (!terminalController.paste(it)) onMessage("Clipboard was not pasted. Wait for the terminal, or choose text smaller than 64 KiB.") }
-                    }
-                }) { Text("Paste clipboard") }
+            ToolbarAction(if (showKeys) Icons.Rounded.KeyboardHide else Icons.Rounded.Keyboard, "Keys", Modifier.weight(1f), if (showKeys) "Hide keys" else "Show keys") {
+                showKeys = !showKeys
+                terminalController.call("keys", showKeys.toString())
             }
+            ToolbarAction(Icons.Rounded.ContentPaste, "Paste", Modifier.weight(1f), "Paste clipboard", ::pasteClipboard)
+            ToolbarAction(Icons.Rounded.ContentCopy, "Copy", Modifier.weight(1f), "Copy selection") { terminalController.call("copy") }
+            ToolbarAction(Icons.Rounded.MoreHoriz, "More", Modifier.weight(1f), "More terminal actions") { more = true }
             FilledTonalButton(onClick = {
                 showDraft = true
                 draftMessage = ""
@@ -623,6 +551,65 @@ fun TerminalScreen(
                 Icon(Icons.Rounded.Mic, contentDescription = null)
                 Spacer(Modifier.size(8.dp))
                 Text("Voice")
+            }
+        }
+
+        if (more) {
+            ModalBottomSheet(onDismissRequest = { more = false }) {
+                fun act(block: () -> Unit) {
+                    more = false
+                    block()
+                }
+                Column(
+                    Modifier
+                        .fillMaxWidth()
+                        .padding(horizontal = 20.dp)
+                        .padding(bottom = 16.dp)
+                        .verticalScroll(rememberScrollState()),
+                    verticalArrangement = Arrangement.spacedBy(4.dp),
+                ) {
+                    SheetGroup("Terminal") {
+                        TextButton(onClick = { act(onWindows) }) { Text("Windows") }
+                        TextButton(onClick = { act { showFind = true } }) { Text("Find") }
+                        TextButton(onClick = { act { terminalController.call("selectAll") } }) { Text("Select all") }
+                        TextButton(onClick = { act { terminalController.call("clearSelection") } }) { Text("Clear selection") }
+                    }
+                    SheetGroup("Output") {
+                        TextButton(onClick = {
+                            act {
+                                scope.launch {
+                                    val text = terminalText() ?: return@launch
+                                    val name = TerminalExport.fileName(uiState.selectedSessionName.orEmpty(), java.time.LocalDateTime.now())
+                                    runCatching { context.startActivity(withContext(Dispatchers.IO) { TerminalExport.share(context, name, text) }) }.onFailure { onMessage("Could not share the terminal output.") }
+                                }
+                            }
+                        }) { Text("Share") }
+                        TextButton(onClick = {
+                            act {
+                                scope.launch {
+                                    exportText = terminalText() ?: return@launch
+                                    saveExport.launch(TerminalExport.fileName(uiState.selectedSessionName.orEmpty(), java.time.LocalDateTime.now()))
+                                }
+                            }
+                        }) { Text("Save…") }
+                        TextButton(onClick = {
+                            act {
+                                scope.launch {
+                                    when (terminalController.evaluate("window.daze?.clearScrollback()")) {
+                                        "true" -> onMessage("Cleared this phone's copy of the scrollback. Nothing was sent to the host.")
+                                        "false" -> onMessage("This program uses the full screen, so the phone keeps no scrollback for it.")
+                                        else -> onMessage("The terminal did not answer. Try again.")
+                                    }
+                                }
+                            }
+                        }) { Text("Clear scrollback") }
+                    }
+                    SheetGroup("Send") {
+                        TextButton(onClick = { act { tools.broadcast("") } }) { Text("Broadcast") }
+                        TextButton(onClick = { act { uploadPicker.launch(arrayOf("*/*")) } }) { Text("Upload file") }
+                    }
+                    TextButton(onClick = { act(onSettings) }) { Text("Settings") }
+                }
             }
         }
 
@@ -726,6 +713,40 @@ fun TerminalScreen(
                     }
                     Text("Moonshine Medium runs on this phone. Installed models work offline.", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
                     TextButton(onClick = tools.openDictionary) { Text("Dictionary: preferred spellings") }
+                    FlowRow {
+                        TextButton(onClick = {
+                            scope.launch {
+                                try {
+                                    frozenTarget = onPrepareTarget()
+                                    drafts.edit().putString("target:$draftKey", frozenTarget).apply()
+                                    reportDraft("Draft now targets the current terminal.")
+                                } catch (e: Exception) {
+                                    reportDraft("Current target is unavailable.")
+                                }
+                            }
+                        }, enabled = !submitting) { Text("Choose target") }
+                        TextButton(onClick = {
+                            cancelVoiceStart()
+                            voiceController.cancelCapture()
+                            input = drafts.getString("original:$draftKey", input).orEmpty()
+                        }, enabled = !submitting) { Text("Restore transcript") }
+                        TextButton(onClick = {
+                            cancelVoiceStart()
+                            voiceController.cancelCapture()
+                            voiceController.clearTranscript()
+                            input = ""
+                            voicePrefix = ""
+                            frozenTarget = null
+                            drafts
+                                .edit()
+                                .remove(draftKey)
+                                .remove("original:$draftKey")
+                                .remove("target:$draftKey")
+                                .remove("saved:$draftKey")
+                                .apply()
+                        }, enabled = !submitting) { Text("Clear draft and transcript") }
+                    }
+                    Text("Drafts and original transcripts stay on this device. Clear removes both; inactive entries expire after 7 days.", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
                     Spacer(Modifier.size(8.dp))
                 }
             }
@@ -745,5 +766,35 @@ fun TerminalScreen(
             },
             dismissButton = { TextButton(onClick = { voiceConsent = false }) { Text("Cancel") } },
         )
+    }
+}
+
+/** One bottom-bar action: an icon over a short label, sharing the row's width with the others. */
+@Composable
+private fun ToolbarAction(
+    icon: ImageVector,
+    label: String,
+    modifier: Modifier,
+    description: String,
+    onClick: () -> Unit,
+) {
+    TextButton(onClick = onClick, modifier = modifier.heightIn(min = 56.dp).semantics { contentDescription = description }, contentPadding = PaddingValues(horizontal = 2.dp, vertical = 4.dp)) {
+        Column(horizontalAlignment = Alignment.CenterHorizontally) {
+            Icon(icon, contentDescription = null)
+            Text(label, style = MaterialTheme.typography.labelMedium, maxLines = 1)
+        }
+    }
+}
+
+/** A titled group of More actions that wraps onto further rows on narrow screens. */
+@OptIn(ExperimentalLayoutApi::class)
+@Composable
+private fun SheetGroup(
+    title: String,
+    content: @Composable () -> Unit,
+) {
+    Column {
+        Text(title, Modifier.padding(start = 12.dp, top = 8.dp), style = MaterialTheme.typography.labelLarge, color = MaterialTheme.colorScheme.onSurfaceVariant)
+        FlowRow { content() }
     }
 }
