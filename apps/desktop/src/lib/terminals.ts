@@ -71,6 +71,8 @@ export function reviewPasteText(text: string, bracketed: boolean): string {
 }
 export interface TerminalSettings {
   screenReader?: boolean;
+  /** A name from terminalFonts; unset uses the default font. */
+  fontFamily?: string;
   fontSize: number;
   scrollback: number;
   gpu: boolean;

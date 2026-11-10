@@ -17,6 +17,7 @@ data class TerminalScreenState(
     val tabs: List<com.adamchesters.dazedev.mobile.host.TerminalRow>,
     val hostActivity: TerminalHostActivity = TerminalHostActivity.None,
     val extraKeys: Boolean = true,
+    val terminalFont: String = "cascadia",
 )
 
 fun DazeDevMobileUiState.terminalScreenState(terminal: com.adamchesters.dazedev.mobile.ssh.TerminalLink?) =
@@ -35,4 +36,5 @@ fun DazeDevMobileUiState.terminalScreenState(terminal: com.adamchesters.dazedev.
         terminalTabs(),
         terminalHostActivity(),
         extraKeys,
+        terminalFont,
     )

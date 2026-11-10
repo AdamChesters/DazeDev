@@ -35,7 +35,7 @@ class MainViewModel(
     private val registry = (application as DazeDevApplication).hosts
     private val credentials = (application as DazeDevApplication).credentials
     private val store = ProfileStore(application)
-    private val ui = UiStore(DazeDevMobileUiState(profile = store.load(), secureScreen = store.secureScreen, backgroundWindow = registry.backgroundWindow.value, keepOtherSize = store.keepOtherSize, extraKeys = store.extraKeys, alertNotifications = store.alertNotifications))
+    private val ui = UiStore(DazeDevMobileUiState(profile = store.load(), secureScreen = store.secureScreen, backgroundWindow = registry.backgroundWindow.value, keepOtherSize = store.keepOtherSize, terminalFont = store.terminalFont, extraKeys = store.extraKeys, alertNotifications = store.alertNotifications))
     val uiState: StateFlow<DazeDevMobileUiState> = ui.state.asStateFlow()
     private val terminal = TerminalController(ui, registry, viewModelScope)
 
@@ -400,6 +400,11 @@ class MainViewModel(
     fun setAlertNotifications(value: Boolean) {
         store.alertNotifications = value
         ui.update { it.copy(alertNotifications = value) }
+    }
+
+    fun setTerminalFont(value: String) {
+        store.terminalFont = value
+        ui.update { it.copy(terminalFont = value) }
     }
 
     /** Applies to terminals opened from now on. */

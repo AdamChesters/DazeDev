@@ -486,7 +486,7 @@ fun TerminalScreen(
                     InteractiveTerminal(stream, terminalController, { cols, rows -> onMeasured(uiState.terminalEpoch, cols, rows) }, { scrolledBack = it }, onMessage, {
                         onMessage("The terminal view stopped. Reconnecting.")
                         onReconnect()
-                    }, Modifier.fillMaxSize(), uiState.extraKeys, tools.link)
+                    }, Modifier.fillMaxSize(), uiState.extraKeys, tools.link, uiState.terminalFont)
                 }
                 val problem = uiState.terminalError ?: if (stream != null && !connected) "Terminal disconnected. Input typed now is not sent." else null
                 if (activity != TerminalHostActivity.None) {

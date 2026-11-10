@@ -41,6 +41,13 @@ class ProfileStore(
             prefs.edit().putBoolean("secure_screen", value).apply()
         }
 
+    /** "cascadia" (bundled Cascadia Mono, the default) or "system" (the phone's fixed-width font). */
+    var terminalFont: String
+        get() = if (prefs.getString("terminal_font", null) == "system") "system" else "cascadia"
+        set(value) {
+            prefs.edit().putString("terminal_font", value).apply()
+        }
+
     var keepOtherSize: Boolean
         get() = prefs.getBoolean("keep_other_size", false)
         set(value) {

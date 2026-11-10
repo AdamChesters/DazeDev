@@ -33,6 +33,9 @@ await build({
   define: { DAZEDEV_COLORS: JSON.stringify(colors) },
   entryPoints: [resolve(root, "apps/android/terminal/index.js")],
   bundle: true,
+  // The terminal font files sit beside the page, under their own names.
+  loader: { ".woff2": "file" },
+  assetNames: "[name]",
   minify: true,
   outfile: resolve(out, "assets/terminal/index.js"),
   nodePaths: [resolve(root, "apps/desktop/node_modules")],

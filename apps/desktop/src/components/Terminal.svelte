@@ -16,6 +16,7 @@
     clampScrollback,
     macPlatform as isMac,
     remoteClipboard,
+    terminalFontFamily,
     terminalOptions,
     terminalTheme,
   } from '../lib/terminal-setup';
@@ -994,6 +995,7 @@
       bind:this={retainedView}
       tabindex="0"
       aria-label="Last received terminal output, offline"
+      style:font-family={terminalFontFamily(settings.fontFamily)}
       style:font-size={`${settings.fontSize || 13}px`}
     >
       {retainedOutput}

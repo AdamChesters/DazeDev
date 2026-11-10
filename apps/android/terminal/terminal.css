@@ -1,3 +1,15 @@
+@font-face {
+  font-family: "Cascadia Mono";
+  src: url("./fonts/CascadiaMono.woff2") format("woff2");
+  font-weight: 200 700;
+  font-style: normal;
+}
+@font-face {
+  font-family: "Cascadia Mono";
+  src: url("./fonts/CascadiaMonoItalic.woff2") format("woff2");
+  font-weight: 200 700;
+  font-style: italic;
+}
 :root {
   color-scheme: dark;
 }

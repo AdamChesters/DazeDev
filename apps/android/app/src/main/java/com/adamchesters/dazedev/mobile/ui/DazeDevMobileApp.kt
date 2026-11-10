@@ -135,6 +135,7 @@ fun DazeDevMobileApp(viewModel: MainViewModel) {
             uiState.localGroupId,
             hostActivity,
             uiState.extraKeys,
+            uiState.terminalFont,
         ) { uiState.terminalScreenState(terminalLink) }
     Scaffold(
         snackbarHost = { SnackbarHost(snackbarHostState) },

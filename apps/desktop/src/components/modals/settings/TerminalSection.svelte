@@ -2,6 +2,7 @@
   import ClipboardOptions from './ClipboardOptions.svelte';
   import type { Device } from '../../../lib/types';
   import { appShortcut } from '../../../lib/app-shortcuts';
+  import { installedTerminalFonts } from '../../../lib/terminal-setup';
   let {
     device = $bindable(),
     fail,
@@ -13,6 +14,13 @@
     setPasteConfirmation: (confirm: boolean) => void;
     softAlert: () => Promise<void>;
   } = $props();
+  const installed = installedTerminalFonts();
+  // A font saved on this device stays listed even if it has since been removed.
+  const fonts = $derived(
+    device.terminal?.fontFamily && !installed.includes(device.terminal.fontFamily as never)
+      ? [device.terminal.fontFamily, ...installed]
+      : installed,
+  );
 </script>
 
 {#if device.terminal}<details class="settings-section settings-disclosure">
@@ -47,6 +55,21 @@
       the agent or shell integration; DazeDev does not infer completion from inactivity. "Command
       finished" shows when you are not watching that terminal or the command ran for 10 seconds or
       more. Each terminal alerts at most once every three seconds.
+    </p>
+    <label
+      >Font<select
+        value={device.terminal.fontFamily || ''}
+        onchange={(e) => {
+          if (device.terminal) device.terminal.fontFamily = e.currentTarget.value || undefined;
+        }}
+      >
+        <option value="">Default (Cascadia Code)</option>
+        {#each fonts as font (font)}<option value={font}>{font}</option>{/each}
+      </select></label
+    >
+    <p class="hint">
+      Lists the fixed-width fonts found on this computer. The default uses Cascadia Code, or SF Mono
+      or Consolas where it is not installed.
     </p>
     <div class="form-row">
       <label

@@ -5,7 +5,10 @@ import {
   ResizeSender,
   applyTerminalSettings,
   clampScrollback,
+  installedTerminalFonts,
   remoteClipboard,
+  terminalFont,
+  terminalFontFamily,
   terminalOptions,
   themeFromStyle,
 } from '../src/lib/terminal-setup';
@@ -39,11 +42,48 @@ describe('shared terminal setup', () => {
     expect(options.fontSize).toBe(32);
     expect(options.scrollback).toBe(100000);
     expect(clampScrollback(Number.NaN)).toBe(10000);
-    const term = { options: { fontSize: 13, scrollback: 1000, screenReaderMode: false } };
+    const term = {
+      options: {
+        fontFamily: terminalFont,
+        fontSize: 13,
+        scrollback: 1000,
+        screenReaderMode: false,
+      },
+    };
     applyTerminalSettings(term as never, { fontSize: 2, scrollback: 50, screenReader: true });
-    expect(term.options).toEqual({ fontSize: 8, scrollback: 100, screenReaderMode: true });
+    expect(term.options).toEqual({
+      fontFamily: terminalFont,
+      fontSize: 8,
+      scrollback: 100,
+      screenReaderMode: true,
+    });
     applyTerminalSettings(term as never, { fontSize: 13, scrollback: 50000 }, 20000);
     expect(term.options.scrollback).toBe(20000);
+  });
+  it('puts a listed font ahead of the default and ignores anything else', () => {
+    expect(terminalFontFamily()).toBe(terminalFont);
+    expect(terminalFontFamily('Consolas')).toBe(`"Consolas", ${terminalFont}`);
+    expect(terminalFontFamily('x", serif; color: red')).toBe(terminalFont);
+    expect(
+      terminalOptions({ fontFamily: 'Hack', fontSize: 13, scrollback: 1000 }, undefined),
+    ).toMatchObject({ fontFamily: `"Hack", ${terminalFont}` });
+    const term = { options: { fontFamily: terminalFont, fontSize: 13, scrollback: 1000 } };
+    applyTerminalSettings(term as never, { fontFamily: 'Menlo', fontSize: 13, scrollback: 1000 });
+    expect(term.options.fontFamily).toBe(`"Menlo", ${terminalFont}`);
+    applyTerminalSettings(term as never, { fontSize: 13, scrollback: 1000 });
+    expect(term.options.fontFamily).toBe(terminalFont);
+  });
+  it('lists only the fonts this computer has', () => {
+    // Consolas is this machine's generic monospace, so only the serif comparison shows it.
+    const width = (font: string) =>
+      font.startsWith('"Consolas"') || font === 'monospace'
+        ? 10
+        : font.startsWith('"Hack"')
+          ? 12
+          : font.endsWith('monospace')
+            ? 10
+            : 7;
+    expect(installedTerminalFonts(width)).toEqual(['Consolas', 'Hack']);
   });
 });
 

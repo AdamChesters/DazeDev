@@ -7,6 +7,7 @@ import "./terminal.css";
 import { installTouchScroll, wheelAccumulator } from "./touch-scroll.js";
 import { installTapKey } from "./tap-keys.js";
 import { installImeInput } from "./ime-input.js";
+import { bundledFont, fontChoice, fontFamily } from "./fonts.js";
 import { registerWebLinks } from "../../desktop/src/lib/web-links.ts";
 const term = new Terminal({
   cursorBlink: false,
@@ -26,6 +27,20 @@ const term = new Terminal({
     allowNonHttpProtocols: false,
   },
 });
+const systemFont = term.options.fontFamily;
+// xterm measures a cell once per font setting, so the bundled font is set only after it has
+// loaded; if it cannot load, the phone's own font stays.
+async function setFont(choice) {
+  if (choice !== "system")
+    await Promise.race([
+      Promise.all([
+        document.fonts.load(`14px "${bundledFont}"`),
+        document.fonts.load(`italic 14px "${bundledFont}"`),
+      ]),
+      new Promise((resolve) => setTimeout(resolve, 2000)),
+    ]).catch(() => {});
+  term.options.fontFamily = fontFamily(choice, systemFont);
+}
 for (const [name, value] of Object.entries(DAZEDEV_COLORS))
   document.documentElement.style.setProperty(`--${name}`, value);
 const fit = new FitAddon();
@@ -431,6 +446,7 @@ window.daze = {
     term.options.fontSize = Math.min(28, Math.max(14, 14 * scale));
     fit.fit();
   },
+  fontFamily: (choice) => setFont(choice).then(() => fit.fit()),
   viewport: (width, height, keyboard) => {
     // Android may lay out the WebView after its first document measurement.
     nativeViewport = {
@@ -450,12 +466,15 @@ window.daze = {
 new ResizeObserver(() => fit.fit()).observe(
   document.getElementById("terminal"),
 );
-requestAnimationFrame(() => {
-  layout();
-  fit.fit();
-  ready = true;
-  bridge("ready", { cols: term.cols, rows: term.rows });
-});
+// The first measurement uses the chosen font, so the host is told a single terminal size.
+setFont(fontChoice(location.search)).then(() =>
+  requestAnimationFrame(() => {
+    layout();
+    fit.fit();
+    ready = true;
+    bridge("ready", { cols: term.cols, rows: term.rows });
+  }),
+);
 
 const screen = document.querySelector(".xterm-screen");
 let selectionStart = null,

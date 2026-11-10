@@ -111,6 +111,7 @@ fun InteractiveTerminal(
     modifier: Modifier = Modifier,
     extraKeys: Boolean = true,
     onLink: (TerminalTarget) -> Unit = {},
+    font: String = "cascadia",
 ) {
     val context = LocalContext.current
     val fontScale = LocalConfiguration.current.fontScale
@@ -146,14 +147,15 @@ fun InteractiveTerminal(
                         ): WebResourceResponse {
                             val uri = request.url
                             val path = uri.path.orEmpty().removePrefix("/")
-                            if (uri.scheme != "https" || uri.host != "terminal.dazedev.invalid" || path !in setOf("index.html", "index.js", "index.css")) return WebResourceResponse("text/plain", "UTF-8", 403, "Blocked", emptyMap(), ByteArrayInputStream(ByteArray(0)))
+                            if (uri.scheme != "https" || uri.host != "terminal.dazedev.invalid" || path !in setOf("index.html", "index.js", "index.css", "CascadiaMono.woff2", "CascadiaMonoItalic.woff2")) return WebResourceResponse("text/plain", "UTF-8", 403, "Blocked", emptyMap(), ByteArrayInputStream(ByteArray(0)))
                             val mime =
                                 when (path) {
                                     "index.html" -> "text/html"
                                     "index.css" -> "text/css"
-                                    else -> "text/javascript"
+                                    "index.js" -> "text/javascript"
+                                    else -> "font/woff2"
                                 }
-                            return WebResourceResponse(mime, "UTF-8", context.assets.open("terminal/$path"))
+                            return WebResourceResponse(mime, if (mime == "font/woff2") null else "UTF-8", context.assets.open("terminal/$path"))
                         }
 
                         // A killed renderer must not take the app down; the caller reattaches with a new view.
@@ -253,7 +255,8 @@ fun InteractiveTerminal(
                     post { onMessage("Update Android System WebView to use the terminal.") }
                 }
                 controller.web = this
-                loadUrl("$ORIGIN/index.html" + if (accessibility) "#a11y" else "")
+                // The page reads the font before its first measurement.
+                loadUrl("$ORIGIN/index.html" + (if (font == "system") "?font=system" else "") + if (accessibility) "#a11y" else "")
             }
         }
     LaunchedEffect(web, stream) {
@@ -288,6 +291,11 @@ fun InteractiveTerminal(
             controller.ready = false
             stream.close()
         }
+    }
+    // A font changed in Settings while this terminal is open.
+    LaunchedEffect(web, font) {
+        withTimeoutOrNull(15_000) { reply.filterNotNull().first() } ?: return@LaunchedEffect
+        controller.call("fontFamily", JSONObject.quote(font))
     }
     LaunchedEffect(web, fontScale) {
         withTimeoutOrNull(15_000) { reply.filterNotNull().first() } ?: return@LaunchedEffect

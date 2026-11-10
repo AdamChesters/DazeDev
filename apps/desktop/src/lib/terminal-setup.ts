@@ -4,6 +4,47 @@ import { remoteClipboardWrite, type TerminalSettings } from './terminals';
 // Shared by the workspace terminal and the detached terminal window, so both
 // render the same palette, font, limits and add-ons.
 export const terminalFont = '"Cascadia Code", "SFMono-Regular", Consolas, monospace';
+/** Fonts Settings can offer. Only the ones installed on this computer are listed. */
+export const terminalFonts = [
+  'Cascadia Code',
+  'Cascadia Mono',
+  'Consolas',
+  'Courier New',
+  'Lucida Console',
+  'Menlo',
+  'Monaco',
+  'DejaVu Sans Mono',
+  'Liberation Mono',
+  'Ubuntu Mono',
+  'JetBrains Mono',
+  'Fira Code',
+  'Source Code Pro',
+  'Hack',
+] as const;
+/** The chosen font ahead of the default stack; anything not on the list means the default. */
+export function terminalFontFamily(name?: string): string {
+  return name && (terminalFonts as readonly string[]).includes(name)
+    ? `"${name}", ${terminalFont}`
+    : terminalFont;
+}
+function textWidth(font: string): number {
+  const context = document.createElement('canvas').getContext('2d');
+  if (!context) return 0;
+  context.font = `72px ${font}`;
+  return context.measureText('mmmmmmmmmmlliWW@#0O').width;
+}
+/**
+ * The listed fonts this computer has. A missing font falls back to the generic family, so its
+ * text is as wide as the generic one against both monospace and serif.
+ */
+export function installedTerminalFonts(width: (font: string) => number = textWidth): string[] {
+  const generic = { monospace: width('monospace'), serif: width('serif') };
+  return terminalFonts.filter(
+    (name) =>
+      width(`"${name}", monospace`) !== generic.monospace ||
+      width(`"${name}", serif`) !== generic.serif,
+  );
+}
 export const maxScrollback = 100000;
 const themeKeys = [
   'background',
@@ -52,11 +93,11 @@ export const clampScrollback = (value: number) =>
   Math.max(100, Math.min(maxScrollback, Number.isFinite(value) ? Math.round(value) : 10000));
 
 export function terminalOptions(
-  settings: Pick<TerminalSettings, 'fontSize' | 'scrollback' | 'screenReader'>,
+  settings: Pick<TerminalSettings, 'fontFamily' | 'fontSize' | 'scrollback' | 'screenReader'>,
   linkHandler: ITerminalOptions['linkHandler'],
 ): ITerminalOptions {
   return {
-    fontFamily: terminalFont,
+    fontFamily: terminalFontFamily(settings.fontFamily),
     fontSize: clampFontSize(settings.fontSize),
     lineHeight: 1.2,
     scrollback: clampScrollback(settings.scrollback),
@@ -72,12 +113,14 @@ export function terminalOptions(
 /** `scrollbackLimit` is the terminal's share of the window's memory budget. */
 export function applyTerminalSettings(
   term: Pick<Terminal, 'options'>,
-  settings: Pick<TerminalSettings, 'fontSize' | 'scrollback' | 'screenReader'>,
+  settings: Pick<TerminalSettings, 'fontFamily' | 'fontSize' | 'scrollback' | 'screenReader'>,
   scrollbackLimit = Infinity,
 ) {
+  const fontFamily = terminalFontFamily(settings.fontFamily);
   const fontSize = clampFontSize(settings.fontSize);
   const scrollback = Math.min(clampScrollback(settings.scrollback), scrollbackLimit);
   const screenReader = !!settings.screenReader;
+  if (term.options.fontFamily !== fontFamily) term.options.fontFamily = fontFamily;
   if (term.options.fontSize !== fontSize) term.options.fontSize = fontSize;
   if (term.options.scrollback !== scrollback) term.options.scrollback = scrollback;
   if (term.options.screenReaderMode !== screenReader) term.options.screenReaderMode = screenReader;

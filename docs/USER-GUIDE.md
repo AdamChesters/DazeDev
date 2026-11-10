@@ -82,6 +82,7 @@ Screenshots show the app interface with sample hosts and terminal output.
 
 - **Settings → Keyboard shortcuts** changes the keys for the command palette (Ctrl+K), terminal search (Ctrl+Shift+F) and full screen (F11). DazeDev refuses a key that another action or a voice hotkey already uses. **Reset to defaults** puts them back.
 - While a terminal has focus, Ctrl+letter keys without Shift or Alt go to the terminal, so Ctrl+K works in your shell or editor there.
+- **Settings → Terminal → Font** chooses the terminal font from the fixed-width fonts installed on this computer. Default uses Cascadia Code, or SF Mono or Consolas where it is not installed. The choice is saved for this device and applies to open terminals straight away.
 - **Settings → Terminal → History lines** sets how much scrollback each terminal keeps in memory: 10,000 lines by default, up to 100,000. All open terminals share at most 200,000 lines and 128 MB of images, so with many terminals each keeps less. Terminals you cannot see (background tabs and other workspaces) get a smaller share.
 
 ## Open files beside your terminals
