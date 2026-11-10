@@ -236,8 +236,10 @@ fn inspect_zip(bytes: &[u8]) -> Result<Vec<PathBuf>, String> {
         if f.is_dir() {
             continue;
         }
-        let p = payload_path(f.name())?;
-        if !names.insert(f.name().to_ascii_lowercase())
+        // zip 9 reports a name it cannot decode as an error; such an update is refused.
+        let name = f.name().map_err(|e| e.to_string())?.into_owned();
+        let p = payload_path(&name)?;
+        if !names.insert(name.to_ascii_lowercase())
             || f.unix_mode().is_some_and(|m| m & 0o170000 == 0o120000)
         {
             return Err("Duplicate or linked update file".into());
@@ -246,7 +248,7 @@ fn inspect_zip(bytes: &[u8]) -> Result<Vec<PathBuf>, String> {
         if total > 512 * 1024 * 1024 {
             return Err("Expanded update is too large".into());
         }
-        if f.name() == "DazeDev.exe" {
+        if name == "DazeDev.exe" {
             let mut magic = [0; 2];
             f.read_exact(&mut magic).map_err(|e| e.to_string())?;
             app = magic == *b"MZ";
@@ -284,7 +286,7 @@ fn extract_files(bytes: &[u8], root: &Path, selected: Option<&[PathBuf]>) -> Res
         if f.is_dir() {
             continue;
         }
-        let relative = payload_path(f.name())?;
+        let relative = payload_path(&f.name().map_err(|e| e.to_string())?)?;
         if selected.is_some_and(|paths| !paths.contains(&relative)) {
             continue;
         }
@@ -510,7 +512,7 @@ pub fn apply_archive(root: &Path, bytes: &[u8]) -> Result<PathBuf, String> {
         if file.is_dir() {
             continue;
         }
-        let relative = payload_path(file.name())?;
+        let relative = payload_path(&file.name().map_err(|e| e.to_string())?)?;
         let old = root.join(&relative);
         if old.exists() {
             let mut incoming = vec![];
