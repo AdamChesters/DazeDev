@@ -53,7 +53,7 @@ class VoiceInputController(
 
     /**
      * Copies the newest microphone samples into [out] while listening and returns how many there
-     * are; 0 at any other time. Called once a frame by the waveform.
+     * are; 0 at any other time. Called once a frame by the listening glow.
      */
     fun waveform(out: FloatArray): Int {
         val listening = synchronized(stateLock) { status.phase == VoiceInputPhase.Listening }

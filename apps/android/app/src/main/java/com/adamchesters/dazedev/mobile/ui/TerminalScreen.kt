@@ -622,6 +622,8 @@ fun TerminalScreen(
                 },
                 sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true),
             ) {
+                // Composed inside the sheet so it draws in the sheet's own window, above the sheet and its scrim.
+                VoiceEdgeGlow(listening = voiceStatus.phase == VoiceInputPhase.Listening, read = voiceController::waveform)
                 Column(
                     Modifier
                         .fillMaxWidth()
@@ -652,7 +654,6 @@ fun TerminalScreen(
 
                         VoiceInputPhase.Listening -> {
                             Text("Listening. Tap End to edit, or Enter to send.", color = MaterialTheme.colorScheme.primary)
-                            VoiceWaveform(read = voiceController::waveform)
                         }
 
                         VoiceInputPhase.Stopping -> {

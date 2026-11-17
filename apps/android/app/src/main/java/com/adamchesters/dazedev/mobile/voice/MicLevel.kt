@@ -9,7 +9,7 @@ import kotlin.math.min
 import kotlin.math.pow
 import kotlin.math.sqrt
 
-/** Microphone level maths for the listening waveform. The desktop app uses the same rules. */
+/** Microphone level maths for the listening glow. The desktop app uses the same rules. */
 internal const val METER_FLOOR_DB = -60f
 
 /** Fall rate of the smoothed level, in meter heights per second. */

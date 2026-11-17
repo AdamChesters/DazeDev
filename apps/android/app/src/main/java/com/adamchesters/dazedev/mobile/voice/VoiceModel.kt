@@ -23,7 +23,7 @@ internal object VoiceModel {
 
     @Volatile var listener: Listener? = null
 
-    /** The latest microphone samples, for the listening waveform. */
+    /** The latest microphone samples, for the listening glow. */
     val tap = MicTap()
     private var loaded: MicTranscriber? = null
     private var callbacks: ComponentCallbacks2? = null
@@ -81,7 +81,7 @@ internal object VoiceModel {
 
 /**
  * Moonshine owns the microphone. This sees each block of audio on its way to the model, so the
- * waveform shows exactly what is transcribed without opening the microphone a second time.
+ * listening glow shows exactly what is transcribed without opening the microphone a second time.
  */
 private class TappedTranscriber(
     context: Context,
