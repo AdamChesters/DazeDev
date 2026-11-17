@@ -98,8 +98,9 @@
     ></summary
   >
   <p class="hint">
-    Choose separate shortcuts for terminal dictation and IDE commands. Capture stops if DazeDev
-    loses focus.
+    Choose separate shortcuts for terminal dictation and IDE commands. Recording keeps going if you
+    switch to another app. With hold-to-talk, switching away ends the recording and leaves the text
+    for you to review.
   </p>
   <p>
     In toggle mode: tap to listen, tap to stop, then double-tap to submit the reviewed text. The

@@ -1028,20 +1028,12 @@
     const blur = () => {
       clearTimeout(blurTimer);
       blurTimer = setTimeout(() => {
+        // Focus moved between DazeDev windows: nothing to do.
         if (appHasFocus()) return;
-        dictation.reviewHotkey.cancel();
+        // Enter or Escape held here will be released in another app.
         captureKeys.reset();
-        dictation.shortcutHeld = null;
-        dictation.releasePending = true;
-        dictation.capturingShortcut = null;
-        if (
-          dictation.status === 'loading' ||
-          dictation.status === 'listening' ||
-          dictation.status === 'finishing-recording'
-        ) {
-          ui.notice = 'Voice capture cancelled because DazeDev lost focus.';
-          void cancelVoice().catch(fail);
-        }
+        // Recording carries on; only a held hold-to-talk key is treated as released.
+        void dictation.focusLost().catch(fail);
       }, 100);
     };
     window.addEventListener('keyup', releaseKey, true);

@@ -41,7 +41,8 @@ Screenshots show the app interface with sample hosts and terminal output.
 
 - Install the voice models in **Settings → Voice models**.
 - Select a terminal and click **Listen**. **Enter** finishes recording; **Escape** cancels.
-- While DazeDev listens, a waveform around the receiving terminal moves with your voice, in the colours of your recording highlight. If it stays flat while you speak, no sound is reaching the microphone. Voice commands and broadcasts show a level bar instead.
+- While DazeDev listens, a waveform around the receiving terminal moves with your voice, in the colours of your recording highlight. If it stays flat while you speak, no sound is reaching the microphone. A terminal in its own window shows the same waveform around that window. Voice commands and broadcasts show a level bar instead.
+- Recording keeps going if you switch to another app; come back to DazeDev to finish it. With hold-to-talk, switching away ends the recording and leaves the text for review.
 - **Settings → Voice hotkeys and input → Test microphone** shows the input level for the selected microphone. Nothing is recorded, and the test stops after 30 seconds.
 - **S1-mini tidy-up** cleans the transcript locally. Voice and tidy-up have no API fees.
 - Text is pasted for review; automatic Enter is optional. Configure hotkeys in Settings.
@@ -111,7 +112,7 @@ Screenshots show the app interface with sample hosts and terminal output.
 - While the on-screen keyboard is open, a row above it offers Esc, Tab, one-shot Ctrl and Alt, arrows and hard-to-reach symbols; swipe it sideways for Home, End, PgUp and PgDn. A key fires only when you tap it; a swipe never presses one. Turn the row off with **Keys above keyboard**.
 - **New session** lists every agent the host reports, including custom agents added on desktop.
 - The bar under the terminal has **Keys**, **Paste**, **Copy**, **More** and **Voice**. **More** holds Windows, Find, Select all, Share, Save, Clear scrollback, Broadcast, Upload file and Settings.
-- Tap **Voice** to open a blank prompt and start listening. A waveform in the draft moves with your voice; if it stays flat while you speak, no sound is reaching the microphone. **End** stops for editing; **Enter** submits once and closes the prompt. Failed or uncertain delivery keeps the draft. The voice draft also offers **Choose target**, **Restore transcript** and **Clear draft and transcript**.
+- Tap **Voice** to open a blank prompt and start listening. While it listens, a glow runs round the whole screen and swells and ripples with your voice; if it stays a thin, dim line while you speak, no sound is reaching the microphone. **End** stops for editing; **Enter** submits once and closes the prompt. Failed or uncertain delivery keeps the draft. The voice draft also offers **Choose target**, **Restore transcript** and **Clear draft and transcript**.
 - **Changelog** shows both products, with All, Desktop and Mobile filters. Release history works from bundled or saved notes when offline. Android checks for updates on every launch, and again when you return after an hour; **Later** waits until the next launch. Update checks use only the public GitHub repository: Android releases and desktop releases that include the APK, whichever is newer. The app downloads the new APK itself and installs it only if its SHA-256 matches the release’s `SHA256SUMS` or `SHA256SUMS.txt` file; development APKs can still be installed offline. Desktop releases without the APK do not trigger Android update prompts, and mobile-only releases do not trigger desktop prompts.
 
 [Update help](../apps/desktop/UPDATES.md) · [Build instructions](BUILDING.md) · [Credits](CREDITS.md)

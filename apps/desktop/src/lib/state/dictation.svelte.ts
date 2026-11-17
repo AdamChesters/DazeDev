@@ -227,6 +227,29 @@ export class Dictation {
     }
   };
 
+  /**
+   * DazeDev lost focus. Recording carries on in every mode. A held hold-to-talk
+   * key can no longer be seen being released, so treat it as released: finish
+   * normally, but leave the text for review instead of pressing Enter, because
+   * the user is no longer looking at the terminal.
+   */
+  focusLost = async () => {
+    // A pending single tap must not start a recording once the user has left.
+    this.reviewHotkey.cancel();
+    // A half-recorded hotkey in Settings would miss its key releases.
+    if (this.capturingShortcut) {
+      this.capturingShortcut = null;
+      void this.#app.ui.task(() => this.configureShortcut());
+    }
+    const held = this.shortcutHeld;
+    this.shortcutHeld = null;
+    this.releasePending = true;
+    if (!held || (this.status !== 'loading' && this.status !== 'listening')) return;
+    this.finishWithoutSubmit = true;
+    // A start still loading finishes as soon as it is listening, through releasePending.
+    if (this.status === 'listening') await this.record(this.mode);
+  };
+
   revealTarget(target: string) {
     const ui = this.#app.ui;
     const device = ui.device;
@@ -243,14 +266,18 @@ export class Dictation {
 
   async #focusTarget(target: string) {
     const ui = this.#app.ui;
+    // Bring a DazeDev window forward only while the user is in DazeDev. If they
+    // have moved to another app, the terminal still gets the text, but focus
+    // stays where they put it.
+    const inApp = this.#app.appHasFocus();
     this.revealTarget(target);
     ui.modal = '';
     ui.paneMenu = null;
     if (this.#app.detached.panes.has(target)) {
-      await call('terminal_window_focus', { paneId: target });
+      if (inApp) await call('terminal_window_focus', { paneId: target });
       return;
     }
-    if (desktop) {
+    if (desktop && inApp) {
       const window = getCurrentWindow();
       await window.show();
       await window.unminimize();
@@ -258,8 +285,11 @@ export class Dictation {
     }
     await tick();
     const pane = document.querySelector<HTMLElement>(`[data-pane-id="${CSS.escape(target)}"]`);
-    if (!pane || !pane.getClientRects().length || pane.getBoundingClientRect().width <= 0)
+    if (!pane || !pane.getClientRects().length || pane.getBoundingClientRect().width <= 0) {
+      // A hidden or minimized window may report no layout. Delivery does not need it.
+      if (!inApp) return;
       throw new Error('The dictation terminal is not visible. Your text is preserved.');
+    }
     pane.querySelector<HTMLTextAreaElement>('.xterm-helper-textarea')?.focus();
   }
 
@@ -341,7 +371,9 @@ export class Dictation {
   record = async (mode: CaptureMode, target = this.#app.panes.activePane?.id || '') => {
     const app = this.#app;
     const ui = app.ui;
-    if (!app.appHasFocus()) return;
+    // Starting needs DazeDev focus. Finishing does not: a hold-to-talk key lost
+    // to another app, or a microphone that stops, must still finish the recording.
+    if (this.status === 'idle' && !app.appHasFocus()) return;
     this.reviewHotkey.cancel();
     if (mode === 'dictation' && this.status === 'idle' && !ui.device.listenOnboarded) {
       this.listenIntroTarget = target;
@@ -355,6 +387,9 @@ export class Dictation {
     }
     if (this.status !== 'idle' && this.mode !== mode) return;
     if (this.status === 'listening') {
+      // Finishing while the user is in another app (a stopped microphone, or a
+      // held key lost to focus) leaves the text for review: nobody is watching.
+      if (!app.appHasFocus()) this.finishWithoutSubmit = true;
       const finishingRecording = this.#recordingId;
       const finishingCapture = this.#capture;
       this.status = 'finishing-recording';
@@ -406,7 +441,8 @@ export class Dictation {
       // A hotkey during startup warmup waits for it instead of being discarded.
       if (app.voiceModels.cacheTask) this.preparing = 'Waiting for voice models…';
       await app.voiceModels.cacheTask?.catch(() => {});
-      if (this.#recordingId !== startedRecording || !app.appHasFocus()) return;
+      // Focus may have moved to another app during the wait. The start carries on.
+      if (this.#recordingId !== startedRecording) return;
       mark('preload-wait-complete');
       if (mode === 'dictation') {
         this.preparing = 'Focusing terminal…';
