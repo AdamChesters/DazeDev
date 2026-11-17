@@ -1,6 +1,13 @@
 [
   {
     "platform": "mobile",
+    "version": "0.1.0-alpha.13",
+    "date": "2026-11-17",
+    "channel": "development",
+    "notes": "Voice glow and Cascadia Mono\n\n• While the voice draft is listening, a glow runs round the edge of the whole screen and moves with your voice, so you can see that the microphone hears you. It settles to a thin line when you are silent.\n• The terminal uses Cascadia Mono, the Windows Terminal font. Terminal font on the host list switches back to the phone's own font."
+  },
+  {
+    "platform": "mobile",
     "version": "0.1.0-alpha.12",
     "date": "2026-10-22",
     "channel": "development",
@@ -19,6 +26,13 @@
     "date": "2026-10-19",
     "channel": "development",
     "notes": "Updates from desktop releases\n\n• The app now finds updates in DazeDev desktop releases that include the Android app, as well as in Android-only releases, and offers whichever is newer.\n• As before, the download is checked against the release's checksum file before Android installs it."
+  },
+  {
+    "platform": "desktop",
+    "version": "0.3.11-alpha.0",
+    "date": "2026-11-17",
+    "channel": "development",
+    "notes": "Microphone waveform, a terminal font setting and recording in the background\n\n• While you dictate, the border of the terminal you are dictating into shows a live waveform of your microphone, in your recording highlight style. It lies flat in silence, so you can see whether the microphone hears you. A terminal in its own window shows it round the whole window.\n• The command and broadcast dialogs show a microphone level bar while listening.\n• Settings → Voice hotkeys and input → Test microphone shows the input level and says when it is too quiet or clipping. Nothing is recorded.\n• Recording keeps going when you switch to another app. With hold-to-talk, switching away ends the recording and leaves the text for you to review.\n• Settings → Terminal → Font chooses the terminal font from the fixed-width fonts on this computer.\n• Security updates for the SSH client, the TLS libraries and the update archive reader."
   },
   {
     "platform": "desktop",
