@@ -2,15 +2,33 @@
   import { onMount } from 'svelte';
   import { borderPoint } from '../lib/energy-motion';
   import type { RecordingHighlight } from '../lib/highlights';
-  import { Meter, measure, triggerOffset, waveShape, type WaveReader } from '../lib/mic-level';
+  import {
+    Meter,
+    measure,
+    triggerOffset,
+    waveDensity,
+    waveShape,
+    type LevelReader,
+    type WaveReader,
+  } from '../lib/mic-level';
   // The live microphone waveform drawn around the pane being dictated into, in the colours of
   // the chosen recording highlight. A glowing band grows inward from the border with the voice
   // and lies flat in silence, so it is obvious whether the microphone hears anything.
-  let { read, kind }: { read: WaveReader; kind: RecordingHighlight } = $props();
+  // A terminal window passes received samples at a lower rate, with a matching `density` and
+  // the level measured before they were packed (`readLevel`).
+  let {
+    read,
+    kind,
+    readLevel,
+    density = waveDensity,
+  }: {
+    read: WaveReader;
+    kind: RecordingHighlight;
+    readLevel?: LevelReader;
+    density?: number;
+  } = $props();
   let canvas: HTMLCanvasElement;
   const spacing = 3;
-  /** Samples per point: a 150 Hz voice then makes a wave about 140px long on any pane. */
-  const density = 2.3;
   const rainbow = [
     '#ff58d6',
     '#965cff',
@@ -121,7 +139,7 @@
     const tick = (now: number) => {
       frame = requestAnimationFrame(tick);
       const samples = read();
-      meter.update(samples ? measure(samples) : null, now);
+      meter.update(readLevel ? readLevel() : samples ? measure(samples) : null, now);
       const choice = document.documentElement.dataset.highlightMotion;
       const moving = choice !== 'static' && (choice === 'animate' || !media.matches);
       if (moving) {

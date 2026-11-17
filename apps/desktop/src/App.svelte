@@ -106,6 +106,7 @@
   import { VoiceModels } from './lib/state/voice.svelte';
   import { Connections } from './lib/state/connections.svelte';
   import { DetachedWindows } from './lib/state/detached-windows.svelte';
+  import { streamWave, waveTarget } from './lib/voice-wave';
   import Agents from './components/modals/Agents.svelte';
   import BrowserRequest from './components/modals/BrowserRequest.svelte';
   import Changelog from './components/modals/Changelog.svelte';
@@ -333,6 +334,9 @@
       voiceMode: dictation.mode,
       voiceTarget: dictation.target,
       dictation: dictation.text,
+      recordingHighlight: recordingHighlight(device.recordingHighlight),
+      recordingHighlightColor: device.recordingHighlightColor || '#39bdd7',
+      highlightMotion: device.highlightMotion || 'animate',
       settings: {
         ...(device.terminal || terminalDefaults),
         clipboard: device.clipboardByHost?.[pane.hostId] || device.terminal?.clipboard || 'notify',
@@ -344,6 +348,14 @@
   }
   $effect(() => {
     detached.sync();
+  });
+  // The microphone is open only in this window. While dictation listens into a terminal on
+  // another screen, stream its waveform there. Samples are read in the timer, not here, so
+  // this effect reruns only when listening, the target or the target's window changes.
+  $effect(() => {
+    const target = waveTarget(dictation.listening, dictation.target, (id) => detachedPanes.has(id));
+    if (target)
+      return streamWave(dictation.waveform, (message) => detached.publish(target, message));
   });
   function restoreTerminalFocus() {
     const id = ui.terminalReturnFocus;

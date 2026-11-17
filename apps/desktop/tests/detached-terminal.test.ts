@@ -197,3 +197,39 @@ describe('detached terminal input', () => {
     expect(calls('terminal_window_input')).toEqual([{ paneId: 'p1', data: 'a' }]);
   });
 });
+
+describe('detached terminal dictation', () => {
+  it('outlines the whole window with the waveform only while dictation listens into it', async () => {
+    // jsdom has no canvas; the waveform then draws nothing.
+    const canvas = vi.spyOn(HTMLCanvasElement.prototype, 'getContext').mockReturnValue(null);
+    await opened([{ sequence: 1, data: '', cols: 80, rows: 24 }]);
+    const border = () => document.querySelector<HTMLElement>('.detached-voice-border');
+    expect(border()).toBeNull();
+    const listening: WindowTerminalState = {
+      ...state,
+      voiceStatus: 'listening',
+      voiceMode: 'dictation',
+      voiceTarget: 'p1',
+      recordingHighlight: 'rainbow',
+      recordingHighlightColor: '#ff3366',
+      highlightMotion: 'static',
+    };
+    emit('terminal-window-message', { kind: 'state', state: listening });
+    await waitFor(() => expect(border()).not.toBeNull());
+    expect(border()!.dataset.highlight).toBe('rainbow');
+    expect(border()!.style.getPropertyValue('--voice-highlight-color')).toBe('#ff3366');
+    expect(border()!.querySelector('canvas.voice-border-wave')).not.toBeNull();
+    expect(border()!.querySelector('.rainbow-border')).not.toBeNull();
+    expect(document.documentElement.dataset.highlightMotion).toBe('static');
+    emit('terminal-window-message', { kind: 'state', state: { ...listening, voiceTarget: 'p2' } });
+    await waitFor(() => expect(border()).toBeNull());
+    emit('terminal-window-message', { kind: 'state', state: listening });
+    await waitFor(() => expect(border()).not.toBeNull());
+    emit('terminal-window-message', {
+      kind: 'state',
+      state: { ...listening, voiceStatus: 'transcribing' },
+    });
+    await waitFor(() => expect(border()).toBeNull());
+    canvas.mockRestore();
+  });
+});

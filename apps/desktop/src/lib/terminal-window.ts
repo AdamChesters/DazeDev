@@ -1,6 +1,7 @@
 import type { Host, Pane } from './types';
 import type { TerminalSettings } from './terminals';
 import type { PaneStatus } from './pane-status';
+import type { RecordingHighlight } from './highlights';
 import { VoiceCaptureKeys } from './voice-capture-keys';
 import { matches, mouseMatches } from './shortcut';
 
@@ -27,6 +28,10 @@ export interface WindowTerminalState {
   voiceMode: string;
   voiceTarget: string;
   dictation: string;
+  /** How dictation into this window is highlighted, as chosen on this device. */
+  recordingHighlight?: RecordingHighlight;
+  recordingHighlightColor?: string;
+  highlightMotion?: 'system' | 'animate' | 'static';
   status: string;
   ready: boolean;
   metadata?: PaneStatus;

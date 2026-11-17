@@ -61,9 +61,13 @@ export class DetachedWindows {
     return this.#deps.workspaces().find((w) => w.panes.some((p) => p.id === paneId));
   }
 
-  publish(paneId: string, value: unknown) {
-    if (this.panes.has(paneId))
-      void this.#deps.call('terminal_window_publish', { paneId, value }).catch(() => {});
+  /** Sends a message to the pane's window. Settles when delivered or failed; never rejects. */
+  publish(paneId: string, value: unknown): Promise<void> {
+    if (!this.panes.has(paneId)) return Promise.resolve();
+    return this.#deps.call('terminal_window_publish', { paneId, value }).then(
+      () => {},
+      () => {},
+    );
   }
 
   /** Sends fresh state to every window and closes windows whose pane is gone. */

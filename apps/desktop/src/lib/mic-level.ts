@@ -4,6 +4,11 @@ export type RawLevel = { rms: number; peak: number };
 export type LevelReader = () => RawLevel | null;
 export type WaveReader = () => Float32Array | null;
 
+/**
+ * Microphone samples (16 kHz) per point of the waveform around a pane: a 150 Hz voice then
+ * makes a wave about 140px long on any pane. Divide it for samples at a lower rate.
+ */
+export const waveDensity = 2.3;
 /** Quietest level the meter shows, in dBFS. Speech normally sits between -40 and -10. */
 export const meterFloorDb = -60;
 /** A sample this close to full scale counts as clipping. */

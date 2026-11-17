@@ -54,6 +54,12 @@
   import { appShortcut, matchesAppShortcut } from '../lib/app-shortcuts';
   import PasteConfirm from './PasteConfirm.svelte';
   import EditPane from './EditPane.svelte';
+  import HighlightEffect from './HighlightEffect.svelte';
+  import VoiceBorderWave from './VoiceBorderWave.svelte';
+  import { fade } from 'svelte/transition';
+  import { recordingHighlight } from '../lib/highlights';
+  import { waveDensity } from '../lib/mic-level';
+  import { WaveFeed, waveFactor } from '../lib/voice-wave';
   import { pasteLength } from '../lib/paste';
   import '@xterm/xterm/css/xterm.css';
 
@@ -87,6 +93,29 @@
       ? terminalPresentation(viewState.pane, viewState.metadata)
       : { name: 'Terminal', type: 'shell', model: '' },
   );
+  // The workspace window streams the microphone waveform here while dictation listens into
+  // this terminal. Frames go straight to the canvas, never through reactive state.
+  const wave = new WaveFeed();
+  const voiceListening = $derived(
+    !!viewState &&
+      viewState.voiceMode === 'dictation' &&
+      viewState.voiceTarget === viewState.pane.id &&
+      viewState.voiceStatus === 'listening',
+  );
+  const highlight = $derived(recordingHighlight(viewState?.recordingHighlight));
+  $effect(() => {
+    if (!voiceListening) wave.clear();
+  });
+  $effect(() => {
+    document.documentElement.dataset.highlightMotion = viewState?.highlightMotion || 'animate';
+  });
+  function highlightMoving() {
+    const choice = viewState?.highlightMotion || 'animate';
+    return (
+      choice !== 'static' &&
+      (choice === 'animate' || !matchMedia('(prefers-reduced-motion: reduce)').matches)
+    );
+  }
   let lastWindowTitle = '';
   $effect(() => {
     if (!viewState) return;
@@ -396,6 +425,7 @@
         }
       >('terminal-window-message', (message) => {
         if (message.requestId) requests.answer(message as WindowReply);
+        else if (message.kind === 'voice-wave') wave.receive(message);
         else if (message.kind === 'search-navigation') {
           const wasSearching = !!searchNavigation;
           searchNavigation = message.navigation || null;
@@ -624,6 +654,23 @@
         />{/if}
     {/key}
   </div>
+  {#if voiceListening}
+    <div
+      class="voice-pane-border recording-highlight detached-voice-border"
+      data-highlight={highlight}
+      style:--voice-highlight-color={viewState?.recordingHighlightColor || '#39bdd7'}
+      aria-hidden="true"
+      transition:fade={{ duration: highlightMoving() ? 200 : 0 }}
+    >
+      {#if highlight !== 'static'}<HighlightEffect kind={highlight} />{/if}
+      <VoiceBorderWave
+        read={wave.read}
+        readLevel={wave.level}
+        density={waveDensity / waveFactor}
+        kind={highlight}
+      />
+    </div>
+  {/if}
 </div>
 
 {#if image}
@@ -772,6 +819,14 @@
     gap: 6px;
     flex-wrap: wrap;
     padding: 6px;
+  }
+  /* Around the whole window, not just the terminal, so it is plain the microphone is live. */
+  .detached-voice-border {
+    position: fixed;
+  }
+  /* A docked pane's edge sits 1px outside it; the window edge would cut that off. */
+  .detached-voice-border::after {
+    inset: 0;
   }
   .terminal-area {
     position: relative;
