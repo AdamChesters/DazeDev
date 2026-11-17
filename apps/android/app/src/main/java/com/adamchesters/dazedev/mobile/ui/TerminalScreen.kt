@@ -652,6 +652,7 @@ fun TerminalScreen(
 
                         VoiceInputPhase.Listening -> {
                             Text("Listening. Tap End to edit, or Enter to send.", color = MaterialTheme.colorScheme.primary)
+                            VoiceWaveform(read = voiceController::waveform)
                         }
 
                         VoiceInputPhase.Stopping -> {

@@ -51,6 +51,15 @@ class VoiceInputController(
     @Volatile private var preparingTask: java.util.concurrent.Future<*>? = null
     override val isAvailable: Boolean get() = hasMicrophone
 
+    /**
+     * Copies the newest microphone samples into [out] while listening and returns how many there
+     * are; 0 at any other time. Called once a frame by the waveform.
+     */
+    fun waveform(out: FloatArray): Int {
+        val listening = synchronized(stateLock) { status.phase == VoiceInputPhase.Listening }
+        return if (listening) VoiceModel.tap.snapshot(out) else 0
+    }
+
     suspend fun hasPreparedModel(): Boolean =
         withContext(Dispatchers.IO) {
             VerifiedModelFiles(appContext).present()
@@ -107,6 +116,7 @@ class VoiceInputController(
                     activeMicrophone = capture
                     microphone = capture
                     if (!isCurrent(runGeneration)) return@submit
+                    VoiceModel.tap.clear()
                     capture.start()
 
                     val listeningStatus = VoiceInputStatus(phase = VoiceInputPhase.Listening)

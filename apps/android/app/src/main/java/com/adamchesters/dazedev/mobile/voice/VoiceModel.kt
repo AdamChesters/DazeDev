@@ -22,6 +22,9 @@ internal object VoiceModel {
     }
 
     @Volatile var listener: Listener? = null
+
+    /** The latest microphone samples, for the listening waveform. */
+    val tap = MicTap()
     private var loaded: MicTranscriber? = null
     private var callbacks: ComponentCallbacks2? = null
 
@@ -32,7 +35,7 @@ internal object VoiceModel {
         loaded?.let { return it }
         val app = context.applicationContext
         val capture =
-            MicTranscriber(app)
+            TappedTranscriber(app)
                 .language("en")
                 .modelArch(JNI.MOONSHINE_MODEL_ARCH_MEDIUM_STREAMING)
                 .callbacksOnMainThread(false)
@@ -73,5 +76,22 @@ internal object VoiceModel {
         loaded = null
         runCatching(capture::stop)
         runCatching(capture::close)
+    }
+}
+
+/**
+ * Moonshine owns the microphone. This sees each block of audio on its way to the model, so the
+ * waveform shows exactly what is transcribed without opening the microphone a second time.
+ */
+private class TappedTranscriber(
+    context: Context,
+) : MicTranscriber(context) {
+    override fun addAudioToStream(
+        streamHandle: Int,
+        audioData: FloatArray?,
+        sampleRate: Int,
+    ) {
+        audioData?.let(VoiceModel.tap::write)
+        super.addAudioToStream(streamHandle, audioData, sampleRate)
     }
 }
