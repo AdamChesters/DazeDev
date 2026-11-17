@@ -69,6 +69,10 @@ export class Dictation {
   #recoveryTimer: ReturnType<typeof setTimeout> | undefined;
   #app: App;
 
+  /** Live microphone level and samples. Read per frame; deliberately not reactive state. */
+  level = () => (this.status === 'listening' ? (this.#capture?.level() ?? null) : null);
+  waveform = () => (this.status === 'listening' ? (this.#capture?.waveform() ?? null) : null);
+
   active = $derived(this.mode === 'dictation' && this.status !== 'idle');
   listening = $derived(this.active && this.status === 'listening');
   statusText = $derived(

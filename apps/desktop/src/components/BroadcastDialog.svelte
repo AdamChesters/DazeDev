@@ -1,5 +1,7 @@
 <script lang="ts">
   import type { BroadcastSnapshot } from '../lib/broadcast';
+  import type { LevelReader } from '../lib/mic-level';
+  import MicMeter from './MicMeter.svelte';
   let {
     text = $bindable(''),
     allHosts = $bindable(true),
@@ -7,6 +9,7 @@
     hostName,
     workspaceName,
     phase,
+    level,
     busy,
     snapshot,
     result,
@@ -21,6 +24,7 @@
     hostName: string;
     workspaceName: string;
     phase: string;
+    level: LevelReader;
     busy: boolean;
     snapshot: BroadcastSnapshot | null;
     result: string;
@@ -66,6 +70,7 @@
 {#if phase !== 'idle'}<p role="status">
     {phase === 'listening' ? 'Listening… press Enter to finish.' : phase}
   </p>{/if}
+{#if phase === 'listening'}<MicMeter read={level} />{/if}
 {#if snapshot}
   <p>
     <strong>{snapshot.recipients.length} terminal sessions</strong>; {snapshot.mirrors} mirrored panes

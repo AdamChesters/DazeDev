@@ -1834,6 +1834,10 @@ html[data-highlight-motion='static'] .pane.voice-listening {
   flex: 1;
   margin: 0;
 }
+.microphone-settings p {
+  flex: 1 1 100%;
+  margin: 0;
+}
 .settings-compact .highlight-preview {
   margin: 8px 0;
 }

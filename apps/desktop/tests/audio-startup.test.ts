@@ -1,8 +1,13 @@
 import { afterEach, expect, it, vi } from 'vitest';
-import { Capture } from '../src/lib/audio';
+import { Capture, MicrophoneTest, microphoneConstraints } from '../src/lib/audio';
 import { diagnosticSnapshot } from '../src/lib/diagnostics';
 vi.mock('@tauri-apps/api/core', () => ({ invoke: vi.fn().mockResolvedValue(undefined) }));
 import { invoke } from '@tauri-apps/api/core';
+const analyser = () => ({
+  fftSize: 0,
+  getFloatTimeDomainData: (samples: Float32Array) => samples.fill(0.5),
+  disconnect: vi.fn(),
+});
 afterEach(() => {
   vi.unstubAllGlobals();
   vi.clearAllMocks();
@@ -28,6 +33,9 @@ it('can deliver captured audio while start is still awaiting AudioContext.resume
       }
       createGain() {
         return { gain: { value: 1 }, connect() {} };
+      }
+      createAnalyser() {
+        return analyser();
       }
       resume() {
         return pendingResume;
@@ -127,6 +135,9 @@ it('duplicate stop waits for the same final flush and queued PCM delivery', asyn
       createGain() {
         return { gain: { value: 1 }, connect() {} };
       }
+      createAnalyser() {
+        return analyser();
+      }
       async resume() {}
       addEventListener() {}
       async close() {
@@ -162,4 +173,136 @@ it('duplicate stop waits for the same final flush and queued PCM delivery', asyn
   completeWrite();
   await stopping;
   expect(stopped).toBe(true);
+});
+
+it('reports the input level only while the microphone is open', async () => {
+  const capture = new Capture();
+  vi.stubGlobal('navigator', {
+    mediaDevices: {
+      getUserMedia: async () => ({ getTracks: () => [], getAudioTracks: () => [] }),
+    },
+  });
+  vi.stubGlobal(
+    'AudioContext',
+    class {
+      state = 'running';
+      destination = {};
+      audioWorklet = { addModule: async () => {} };
+      createMediaStreamSource() {
+        return { connect() {} };
+      }
+      createGain() {
+        return { gain: { value: 1 }, connect() {} };
+      }
+      createAnalyser() {
+        return analyser();
+      }
+      async resume() {}
+      addEventListener() {}
+      async close() {
+        this.state = 'closed';
+      }
+    },
+  );
+  vi.stubGlobal(
+    'AudioWorkletNode',
+    class {
+      port = {
+        onmessage: null as any,
+        postMessage: (message: string) => {
+          if (message === 'flush') this.port.onmessage({ data: 'flushed' });
+        },
+      };
+      connect(destination: unknown) {
+        return destination;
+      }
+      disconnect() {}
+    },
+  );
+  expect(capture.level()).toBeNull();
+  expect(capture.waveform()).toBeNull();
+  await capture.start('', vi.fn());
+  expect(capture.level()).toEqual({ rms: 0.5, peak: 0.5 });
+  expect(capture.waveform()).toHaveLength(2048);
+  expect(invoke).not.toHaveBeenCalled();
+  await capture.stop();
+  expect(capture.level()).toBeNull();
+  expect(capture.waveform()).toBeNull();
+});
+
+it('uses the same microphone constraints for dictation and the settings test', () => {
+  expect(microphoneConstraints('')).toEqual({
+    audio: {
+      deviceId: undefined,
+      channelCount: 1,
+      echoCancellation: false,
+      noiseSuppression: true,
+      autoGainControl: false,
+    },
+  });
+  expect((microphoneConstraints('usb').audio as MediaTrackConstraints).deviceId).toEqual({
+    exact: 'usb',
+  });
+});
+
+it('the settings microphone test shows a level, sends no audio and releases the microphone', async () => {
+  const trackStop = vi.fn();
+  const getUserMedia = vi.fn(async (_constraints: MediaStreamConstraints) => ({
+    getTracks: () => [{ stop: trackStop }],
+    getAudioTracks: () => [{ addEventListener() {} }],
+  }));
+  const tap = analyser();
+  const close = vi.fn();
+  vi.stubGlobal('navigator', { mediaDevices: { getUserMedia } });
+  vi.stubGlobal(
+    'AudioContext',
+    class {
+      state = 'running';
+      createMediaStreamSource() {
+        return { connect() {} };
+      }
+      createAnalyser() {
+        return tap;
+      }
+      async resume() {}
+      async close() {
+        this.state = 'closed';
+        close();
+      }
+    },
+  );
+  const test = new MicrophoneTest();
+  expect(test.level()).toBeNull();
+  await test.start('usb', vi.fn());
+  expect(getUserMedia).toHaveBeenCalledWith(microphoneConstraints('usb'));
+  expect(test.level()).toEqual({ rms: 0.5, peak: 0.5 });
+  await test.stop();
+  await test.stop();
+  expect(test.level()).toBeNull();
+  expect(trackStop).toHaveBeenCalledOnce();
+  expect(tap.disconnect).toHaveBeenCalledOnce();
+  expect(close).toHaveBeenCalledOnce();
+  expect(invoke).not.toHaveBeenCalled();
+});
+
+it('releases a microphone granted after the settings test was stopped', async () => {
+  let grant!: (stream: unknown) => void;
+  const stop = vi.fn();
+  vi.stubGlobal('navigator', {
+    mediaDevices: {
+      getUserMedia: () =>
+        new Promise((resolve) => {
+          grant = resolve;
+        }),
+    },
+  });
+  const context = vi.fn();
+  vi.stubGlobal('AudioContext', context);
+  const test = new MicrophoneTest();
+  const starting = test.start('', vi.fn());
+  await test.stop();
+  grant({ getTracks: () => [{ stop }] });
+  await starting;
+  expect(stop).toHaveBeenCalledOnce();
+  expect(context).not.toHaveBeenCalled();
 });

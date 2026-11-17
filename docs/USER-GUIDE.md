@@ -41,6 +41,8 @@ Screenshots show the app interface with sample hosts and terminal output.
 
 - Install the voice models in **Settings → Voice models**.
 - Select a terminal and click **Listen**. **Enter** finishes recording; **Escape** cancels.
+- While DazeDev listens, a waveform around the receiving terminal moves with your voice, in the colours of your recording highlight. If it stays flat while you speak, no sound is reaching the microphone. Voice commands and broadcasts show a level bar instead.
+- **Settings → Voice hotkeys and input → Test microphone** shows the input level for the selected microphone. Nothing is recorded, and the test stops after 30 seconds.
 - **S1-mini tidy-up** cleans the transcript locally. Voice and tidy-up have no API fees.
 - Text is pasted for review; automatic Enter is optional. Configure hotkeys in Settings.
 - The first Listen opens an introduction showing your current keyboard or mouse shortcut. In toggle mode, tap to listen, tap to stop, then double-tap to submit the reviewed text. Changing terminal input invalidates this shortcut submission; review and press Enter in the terminal instead. Hold-to-talk keeps its press/release behavior.

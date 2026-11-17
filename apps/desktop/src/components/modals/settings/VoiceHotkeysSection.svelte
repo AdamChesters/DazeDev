@@ -1,4 +1,7 @@
 <script lang="ts">
+  import { onDestroy, untrack } from 'svelte';
+  import MicMeter from '../../MicMeter.svelte';
+  import { MicrophoneTest } from '../../../lib/audio';
   import type { Device } from '../../../lib/types';
   import type { Shortcut } from '../../../lib/shortcut';
   import type { Task, VoiceMode } from '../types';
@@ -35,9 +38,60 @@
     voiceCacheLoading: boolean;
     voiceStatus: string;
   } = $props();
+
+  // The microphone test only shows the input level. It never stays on: it stops with the
+  // dialog, the section, a dictation, or after 30 seconds.
+  let test = $state.raw<MicrophoneTest | null>(null);
+  let testError = $state('');
+  let testTimer: ReturnType<typeof setTimeout> | undefined;
+  let testedMicrophone = untrack(() => device.voice.microphone);
+  const stopTest = () => {
+    clearTimeout(testTimer);
+    const running = test;
+    test = null;
+    void running?.stop();
+  };
+  const startTest = async () => {
+    stopTest();
+    testError = '';
+    const next = new MicrophoneTest();
+    test = next;
+    try {
+      await next.start(device.voice.microphone, () => {
+        if (test !== next) return;
+        stopTest();
+        testError = 'The microphone stopped. Check it is connected, then test again.';
+      });
+    } catch (e) {
+      await next.stop();
+      if (test !== next) return;
+      test = null;
+      testError = `Microphone test: ${e instanceof Error ? e.message : String(e)}`;
+      return;
+    }
+    if (test === next) testTimer = setTimeout(stopTest, 30_000);
+  };
+  $effect(() => {
+    if (voiceStatus !== 'idle') untrack(stopTest);
+  });
+  $effect(() => {
+    const microphone = device.voice.microphone;
+    untrack(() => {
+      if (microphone === testedMicrophone) return;
+      testedMicrophone = microphone;
+      if (test) void startTest();
+    });
+  });
+  onDestroy(stopTest);
 </script>
 
-<details class="settings-section settings-disclosure" id="voice-shortcuts">
+<details
+  class="settings-section settings-disclosure"
+  id="voice-shortcuts"
+  ontoggle={(e) => {
+    if (!e.currentTarget.open) stopTest();
+  }}
+>
   <summary
     >Voice hotkeys and input <span
       >{bindingFor('dictation').label} · {bindingFor('command').label}</span
@@ -155,6 +209,16 @@
     ><button disabled={microphoneLoading} onclick={() => void refreshMicrophones()}
       >{microphoneLoading ? 'Checking microphones…' : 'Refresh microphones'}</button
     >
+    <button disabled={voiceStatus !== 'idle'} onclick={() => (test ? stopTest() : void startTest())}
+      >{test ? 'Stop test' : 'Test microphone'}</button
+    >
+    {#if test}
+      <MicMeter read={test.level} advice />
+      <p class="hint">
+        Speak as you would when dictating. Nothing is recorded, and the test stops after 30 seconds.
+      </p>
+    {/if}
+    {#if testError}<p class="inline-error" role="alert">{testError}</p>{/if}
     {#if microphoneError}<p class="inline-error" role="alert">{microphoneError}</p>{/if}
   </div>
 </details>

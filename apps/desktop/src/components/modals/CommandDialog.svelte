@@ -1,6 +1,8 @@
 <script lang="ts">
   import { ArrowUpRight, Mic } from '@lucide/svelte';
   import type { CaptureMode } from '../../lib/voice-routing';
+  import type { LevelReader } from '../../lib/mic-level';
+  import MicMeter from '../MicMeter.svelte';
   import type { CommandReview } from '../../lib/command-review';
   import type { Task } from './types';
   import { commandCatalogue } from '../../lib/commands';
@@ -13,6 +15,7 @@
     implementCommand,
     record,
     task,
+    voiceLevel,
     voiceMode,
     voicePreparing,
     voiceStatus,
@@ -25,6 +28,7 @@
     implementCommand: () => Promise<void>;
     record: (mode: CaptureMode, target?: string) => Promise<void>;
     task: Task;
+    voiceLevel: LevelReader;
     voiceMode: CaptureMode;
     voicePreparing: string;
     voiceStatus: string;
@@ -79,6 +83,7 @@
             ? voicePreparing
             : 'Finishing transcription…'}
     </p>{/if}
+  {#if voiceMode === 'command' && voiceStatus === 'listening'}<MicMeter read={voiceLevel} />{/if}
   {#if commandError}<p role="alert">{commandError}</p>{/if}
   {#if commandReview}
     <section class="settings-section" aria-label="Proposed command">

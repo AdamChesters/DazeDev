@@ -25,6 +25,7 @@
   import { macPlatform } from './lib/terminal-setup';
   import { fade } from 'svelte/transition';
   import HighlightEffect from './components/HighlightEffect.svelte';
+  import VoiceBorderWave from './components/VoiceBorderWave.svelte';
   import { recordingHighlight } from './lib/highlights';
   import { getCurrentWindow } from '@tauri-apps/api/window';
   import {
@@ -1496,6 +1497,10 @@
                     {#if recordingHighlight(ui.device.recordingHighlight) !== 'static'}<HighlightEffect
                         kind={recordingHighlight(ui.device.recordingHighlight)}
                       />{/if}
+                    <VoiceBorderWave
+                      read={dictation.waveform}
+                      kind={recordingHighlight(ui.device.recordingHighlight)}
+                    />
                   </div>
                 {/if}
                 <div
@@ -2274,6 +2279,7 @@
           hostName={broadcast.hostName}
           workspaceName={broadcast.workspaceName}
           phase={dictation.mode === 'broadcast' ? dictation.status : 'idle'}
+          level={dictation.level}
           busy={broadcast.busy}
           snapshot={broadcast.snapshot}
           result={broadcast.result}
@@ -2298,6 +2304,7 @@
           {implementCommand}
           {record}
           {task}
+          voiceLevel={dictation.level}
           voiceMode={dictation.mode}
           voicePreparing={dictation.preparing}
           voiceStatus={dictation.status}
