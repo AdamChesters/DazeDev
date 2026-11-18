@@ -1,6 +1,13 @@
 [
   {
     "platform": "mobile",
+    "version": "0.1.0-alpha.14",
+    "date": "2026-11-18",
+    "channel": "development",
+    "notes": "A lighter voice glow\n\n• While the voice draft is listening, small glowing dots drift in from the edge of the whole screen as you speak, over a thin, dim line. This replaces the solid glow and is much lighter. In silence only the line shows.\n• With Remove animations on, fixed dots along the edge brighten with your voice instead."
+  },
+  {
+    "platform": "mobile",
     "version": "0.1.0-alpha.13",
     "date": "2026-11-17",
     "channel": "development",
@@ -26,6 +33,13 @@
     "date": "2026-10-19",
     "channel": "development",
     "notes": "Updates from desktop releases\n\n• The app now finds updates in DazeDev desktop releases that include the Android app, as well as in Android-only releases, and offers whichever is newer.\n• As before, the download is checked against the release's checksum file before Android installs it."
+  },
+  {
+    "platform": "desktop",
+    "version": "0.3.12-alpha.0",
+    "date": "2026-11-18",
+    "channel": "development",
+    "notes": "A lighter microphone effect\n\n• While you dictate, your voice throws small glowing motes off the border of the terminal, in place of the solid waveform band. There are more of them the louder you speak and none in silence, and they reach less far into the terminal. A terminal in its own window shows the same.\n• With Highlight animation set to Keep highlights still, fixed dots along the border brighten with your voice."
   },
   {
     "platform": "desktop",

@@ -21,8 +21,8 @@ android {
         applicationId = "com.adamchesters.dazedev.mobile"
         minSdk = 28
         targetSdk = 36
-        versionCode = 14
-        versionName = "0.1.0-alpha.13"
+        versionCode = 15
+        versionName = "0.1.0-alpha.14"
 
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
     }
