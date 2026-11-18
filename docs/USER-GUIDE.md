@@ -41,7 +41,7 @@ Screenshots show the app interface with sample hosts and terminal output.
 
 - Install the voice models in **Settings → Voice models**.
 - Select a terminal and click **Listen**. **Enter** finishes recording; **Escape** cancels.
-- While DazeDev listens, a waveform around the receiving terminal moves with your voice, in the colours of your recording highlight. If it stays flat while you speak, no sound is reaching the microphone. A terminal in its own window shows the same waveform around that window. Voice commands and broadcasts show a level bar instead.
+- While DazeDev listens, your voice throws small glowing motes off the border of the receiving terminal, in the colours of your recording highlight: more of them the louder you speak, and none in silence. If none appear while you speak, no sound is reaching the microphone. A terminal in its own window shows the same motes round that window. Voice commands and broadcasts show a level bar instead.
 - Recording keeps going if you switch to another app; come back to DazeDev to finish it. With hold-to-talk, switching away ends the recording and leaves the text for review.
 - **Settings → Voice hotkeys and input → Test microphone** shows the input level for the selected microphone. Nothing is recorded, and the test stops after 30 seconds.
 - **S1-mini tidy-up** cleans the transcript locally. Voice and tidy-up have no API fees.

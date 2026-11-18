@@ -11,9 +11,11 @@
     type LevelReader,
     type WaveReader,
   } from '../lib/mic-level';
-  // The live microphone waveform drawn around the pane being dictated into, in the colours of
-  // the chosen recording highlight. A glowing band grows inward from the border with the voice
-  // and lies flat in silence, so it is obvious whether the microphone hears anything.
+  import { MoteField, moteCapacity } from '../lib/voice-motes';
+  // The live microphone waveform shown around the pane being dictated into, in the colours of
+  // the chosen recording highlight. The voice throws small glowing motes off the border, more
+  // of them where the wave is tall, and in silence there are none, so it is obvious whether the
+  // microphone hears anything.
   // A terminal window passes received samples at a lower rate, with a matching `density` and
   // the level measured before they were packed (`readLevel`).
   let {
@@ -29,16 +31,37 @@
   } = $props();
   let canvas: HTMLCanvasElement;
   const spacing = 3;
-  const rainbow = [
-    '#ff58d6',
-    '#965cff',
-    '#428bff',
-    '#44ecff',
-    '#55f4a5',
-    '#f9ed65',
-    '#ff9951',
-    '#ff58d6',
-  ];
+  /** Pixels between the still dots shown when motion is off. */
+  const stillSpacing = 15;
+  const rainbow = ['#ff58d6', '#965cff', '#428bff', '#44ecff', '#55f4a5', '#f9ed65', '#ff9951'];
+
+  /** The lighter centre of a mote in the rainbow and plain colours. */
+  const pale = 'rgba(255,255,255,0.7)';
+
+  /** A soft round dot of one colour with a lighter centre, drawn once and stamped for every mote. */
+  function sprite(color: string, core: string) {
+    const dot = document.createElement('canvas');
+    dot.width = dot.height = 32;
+    const context = dot.getContext('2d');
+    if (!context) return dot;
+    const soft = context.createRadialGradient(16, 16, 0, 16, 16, 16);
+    soft.addColorStop(0, 'rgba(0,0,0,1)');
+    soft.addColorStop(0.3, 'rgba(0,0,0,0.95)');
+    soft.addColorStop(0.55, 'rgba(0,0,0,0.4)');
+    soft.addColorStop(1, 'rgba(0,0,0,0)');
+    context.fillStyle = soft;
+    context.fillRect(0, 0, 32, 32);
+    context.globalCompositeOperation = 'source-in';
+    context.fillStyle = color;
+    context.fillRect(0, 0, 32, 32);
+    const centre = context.createRadialGradient(16, 16, 0, 16, 16, 6);
+    centre.addColorStop(0, core);
+    centre.addColorStop(1, 'rgba(255,255,255,0)');
+    context.globalCompositeOperation = 'source-atop';
+    context.fillStyle = centre;
+    context.fillRect(0, 0, 32, 32);
+    return dot;
+  }
 
   onMount(() => {
     const context = canvas.getContext('2d');
@@ -47,19 +70,36 @@
     const meter = new Meter();
     let width = 0;
     let height = 0;
-    /** How far the loudest wave reaches into the pane. */
+    /** How far the fastest mote of the loudest wave travels into the pane. */
     let reach = 0;
+    let perimeter = 0;
     let x = new Float32Array(0);
     let y = new Float32Array(0);
     let nx = new Float32Array(0);
     let ny = new Float32Array(0);
-    /** Fades the wave out towards each corner, where the bands of two edges would overlap. */
+    /** Thins the motes out towards each corner, where those of two edges would overlap. */
     let fade = new Float32Array(0);
+    /** Where each point sits round the pane centre (0..1), for the rainbow colours. */
+    let turn = new Float32Array(0);
     let shape = new Float32Array(0);
     let next = new Float32Array(0);
-    let plain = '';
+    let tall = new Float32Array(0);
+    let motes = new MoteField(0);
+    let dots: HTMLCanvasElement[] = [];
+    let dotsFor: RecordingHighlight | undefined;
     let frame = 0;
+    let last = 0;
     let steadyAt = 0;
+
+    const colour = () => {
+      dotsFor = kind;
+      dots =
+        kind === 'energy'
+          ? [sprite('#46c2ff', '#edfbff')]
+          : kind === 'static'
+            ? [sprite(getComputedStyle(canvas).color, pale)]
+            : rainbow.map((color) => sprite(color, pale));
+    };
 
     const size = () => {
       const ratio = window.devicePixelRatio || 1;
@@ -70,97 +110,107 @@
       canvas.height = Math.round(height * ratio);
       context.setTransform(ratio, 0, 0, ratio, 0, 0);
       const style = getComputedStyle(canvas);
-      plain = style.color;
-      reach = Math.max(12, Math.min(30, Math.min(width, height) * 0.045));
+      colour();
+      reach = Math.max(8, Math.min(18, Math.min(width, height) * 0.028));
       const radius = parseFloat(style.borderTopLeftRadius) || 7;
-      const count = Math.max(8, Math.round((2 * (width + height)) / spacing));
+      perimeter = 2 * (width + height);
+      const count = Math.max(8, Math.round(perimeter / spacing));
       x = new Float32Array(count);
       y = new Float32Array(count);
       nx = new Float32Array(count);
       ny = new Float32Array(count);
       fade = new Float32Array(count);
+      turn = new Float32Array(count);
       shape = new Float32Array(count);
       next = new Float32Array(count);
+      tall = new Float32Array(count);
+      motes = new MoteField(moteCapacity(perimeter));
       for (let i = 0; i < count; i++) {
         const p = borderPoint(width, height, radius, i / count);
         x[i] = p.x;
         y[i] = p.y;
-        // The inward normal. The wave only grows into the pane, never over its neighbours.
+        // The inward normal. Motes only drift into the pane, never over its neighbours.
         nx[i] = -Math.sin(p.angle);
         ny[i] = Math.cos(p.angle);
         const corner = Math.max(Math.min(p.x, width - p.x), Math.min(p.y, height - p.y));
         fade[i] = Math.min(1, corner / (reach * 1.5));
+        turn[i] = Math.atan2(p.y - height / 2, p.x - width / 2) / (Math.PI * 2);
       }
     };
 
-    const colors = (now: number): [string | CanvasGradient, string | CanvasGradient] => {
-      if (kind === 'energy') return ['#30b9ff', '#d6f5ff'];
-      if (kind === 'static') return [plain, plain];
-      const gradient = context.createConicGradient
-        ? context.createConicGradient((now / 3200) * Math.PI * 2, width / 2, height / 2)
-        : context.createLinearGradient(0, 0, width, height);
-      rainbow.forEach((color, i) => gradient.addColorStop(i / (rainbow.length - 1), color));
-      return [gradient, gradient];
+    /** The dot for border point `i`. The rainbow turns at the pace of the rainbow border. */
+    const dot = (i: number, now: number) => {
+      if (dots.length < 2) return dots[0];
+      const position = (((turn[i] - now / 3200) % 1) + 1) % 1;
+      return dots[Math.floor(position * dots.length) % dots.length];
     };
 
-    const loop = (wave: boolean) => {
-      for (let i = 0; i < x.length; i++) {
-        const d = wave ? 1 + shape[i] * reach * fade[i] : 0;
-        const px = x[i] + nx[i] * d;
-        const py = y[i] + ny[i] * d;
-        if (i) context.lineTo(px, py);
-        else context.moveTo(px, py);
-      }
-      context.closePath();
+    const stamp = (i: number, now: number, px: number, py: number, radius: number) => {
+      // The dot image is half soft edge: its bright centre is about a third of its width.
+      const half = radius * 2.4;
+      context.drawImage(dot(i, now), px - half, py - half, half * 2, half * 2);
     };
 
-    const draw = (now: number, level: number) => {
+    const draw = (now: number) => {
       context.clearRect(0, 0, width, height);
-      if (!x.length) return;
-      const [glow, core] = colors(now);
-      // The band between the border and the wave.
-      context.beginPath();
-      loop(false);
-      loop(true);
-      context.globalAlpha = 0.2 + 0.4 * level;
-      context.fillStyle = glow;
-      context.fill('evenodd');
-      // The bright edge of the wave.
-      context.beginPath();
-      loop(true);
-      context.lineJoin = 'round';
-      context.globalAlpha = 0.65 + 0.35 * level;
-      context.lineWidth = 1.5 + 1.5 * level;
-      context.strokeStyle = core;
-      context.stroke();
+      for (let m = 0; m < motes.capacity; m++) {
+        const opacity = motes.opacity(m);
+        if (opacity <= 0) continue;
+        const i = motes.point[m];
+        const inward = 1 + motes.depth(m) * reach;
+        const along = motes.drift[m] * motes.age[m];
+        context.globalAlpha = opacity;
+        stamp(
+          i,
+          now,
+          x[i] + nx[i] * inward - ny[i] * along,
+          y[i] + ny[i] * inward + nx[i] * along,
+          1.1 + 1.6 * motes.size[m],
+        );
+      }
+      context.globalAlpha = 1;
+    };
+
+    /** Motion off: fixed dots along the border that only brighten with the voice. */
+    const drawStill = (now: number, level: number) => {
+      context.clearRect(0, 0, width, height);
+      if (level <= 0) return;
+      context.globalAlpha = 0.1 + 0.55 * level;
+      const step = Math.max(1, Math.round(stillSpacing / spacing));
+      for (let i = 0; i < x.length; i += step)
+        stamp(i, now, x[i] + nx[i] * 2, y[i] + ny[i] * 2, 1.4);
       context.globalAlpha = 1;
     };
 
     const tick = (now: number) => {
       frame = requestAnimationFrame(tick);
+      const elapsed = last ? Math.min(100, Math.max(0, now - last)) : 0;
+      last = now;
       const samples = read();
       meter.update(readLevel ? readLevel() : samples ? measure(samples) : null, now);
+      if (!x.length) return;
+      if (kind !== dotsFor) colour();
       const choice = document.documentElement.dataset.highlightMotion;
       const moving = choice !== 'static' && (choice === 'animate' || !media.matches);
       if (moving) {
-        // Start on a zero crossing so a held note stands still, then draw the rest of the buffer.
+        // Start on a zero crossing so a held note stands still, then use the rest of the buffer.
         const from = samples ? triggerOffset(samples, samples.length >> 2) : 0;
         const window = samples ? samples.length - (samples.length >> 2) : 0;
-        // The 0.7 power lifts quiet speech, so any voice at all moves the border visibly.
-        waveShape(
-          samples ? samples.subarray(from, from + window) : [],
-          meter.level ** 0.7,
-          next,
-          density,
-        );
+        // The 0.7 power lifts quiet speech, so any voice at all throws motes off the border.
+        const level = meter.level ** 0.7;
+        waveShape(samples ? samples.subarray(from, from + window) : [], level, next, density);
         // Height only, blended with the last frame to take the flicker off.
-        for (let i = 0; i < shape.length; i++) shape[i] += (Math.abs(next[i]) - shape[i]) * 0.7;
-        draw(now, meter.level);
+        for (let i = 0; i < shape.length; i++) {
+          shape[i] += (Math.abs(next[i]) - shape[i]) * 0.7;
+          tall[i] = shape[i] * fade[i];
+        }
+        motes.step(tall, level, elapsed, perimeter);
+        draw(now);
       } else if (now - steadyAt > 200) {
-        // Reduced motion: no moving wave. An even band thickens and brightens with the voice.
+        // Reduced motion: nothing moves.
         steadyAt = now;
-        shape.fill(meter.level * 0.5);
-        draw(now, meter.level);
+        motes.clear();
+        drawStill(now, meter.level);
       }
     };
 
