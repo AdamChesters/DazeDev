@@ -1,7 +1,6 @@
 package com.adamchesters.dazedev.mobile.ui
 
 import android.graphics.Canvas
-import android.graphics.Color
 import android.graphics.ColorFilter
 import android.graphics.Matrix
 import android.graphics.Paint
@@ -32,15 +31,15 @@ import androidx.compose.ui.platform.LocalView
 import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.compose.LocalLifecycleOwner
 import androidx.lifecycle.compose.currentStateAsState
-import com.adamchesters.dazedev.mobile.voice.EdgeGlowMesh
+import com.adamchesters.dazedev.mobile.voice.EdgeMotes
 import com.adamchesters.dazedev.mobile.voice.LevelMeter
 import com.adamchesters.dazedev.mobile.voice.SHIMMER_END
 import com.adamchesters.dazedev.mobile.voice.SHIMMER_PEAK
 import com.adamchesters.dazedev.mobile.voice.SHIMMER_START
-import com.adamchesters.dazedev.mobile.voice.WAVE_RING
 import com.adamchesters.dazedev.mobile.voice.liftedLevel
 import com.adamchesters.dazedev.mobile.voice.rms
 import com.adamchesters.dazedev.mobile.voice.waveHeights
+import com.adamchesters.dazedev.mobile.voice.withAlpha
 import kotlinx.coroutines.delay
 import kotlin.math.max
 import kotlin.math.min
@@ -48,7 +47,7 @@ import kotlin.math.min
 /** Samples per point, as on the desktop border: a 150 Hz voice makes a wave about 150dp long. */
 private const val WAVE_DENSITY = 2.3f
 
-/** With animations removed the glow updates about five times a second. */
+/** With animations removed the dots update about five times a second. */
 private const val STILL_FRAME_MS = 200L
 
 private const val FADE_NANOS = 180_000_000f
@@ -56,20 +55,28 @@ private const val FADE_NANOS = 180_000_000f
 /** One lap of the travelling highlight round the screen. */
 private const val SHIMMER_NANOS = 4_000_000_000L
 
-/** Width of the bright line at the very edge. */
+/** Width of the dim line at the very edge. */
 private const val CORE_DP = 2f
+
+/** Opacity of the line in silence, and how much a loud voice adds. */
+private const val LINE_QUIET = 0.25f
+private const val LINE_LOUD = 0.25f
+
+/** Each mote is a faint halo this bright, with a centre this share of its radius at full brightness. */
+private const val HALO = 0.35f
+private const val CENTRE = 0.45f
 
 /** Corner radius used where the phone does not report its screen corners. */
 private const val FALLBACK_RADIUS_DP = 28f
 
 /**
- * While listening, a glow runs round the whole screen like an edge lighting notification. It
- * deepens, brightens and ripples with the microphone input and settles to a thin dim line in
- * silence, so it is obvious whether the microphone hears anything. [read] copies the newest
- * samples into the array it is given and returns how many there are.
+ * While listening, small glowing motes drift in from the edge of the whole screen and fade, more
+ * of them where the microphone wave is tall and the louder the voice. A thin dim line stays at the
+ * edge, so in silence it is still clear the microphone is open. [read] copies the newest samples
+ * into the array it is given and returns how many there are.
  *
  * Call it from inside the voice draft sheet. The sheet has its own full-screen window above the
- * app, so the glow is drawn in the overlay of that window's root view: above the sheet and its
+ * app, so the motes are drawn in the overlay of that window's root view: above the sheet and its
  * scrim, edge to edge and behind the system bars. A view overlay never takes touches, focus or
  * accessibility focus, so the sheet, the keyboard and the back gesture work as before. Nothing
  * here is laid out, and TalkBack does not see it; the "Listening" text says the same thing.
@@ -82,7 +89,7 @@ internal fun VoiceEdgeGlow(
     val view = LocalView.current
     val context = LocalContext.current
     val density = LocalDensity.current.density
-    // "Remove animations" in the phone's accessibility settings: an even glow, no ripple or shimmer.
+    // "Remove animations" in the phone's accessibility settings: fixed dots that brighten, nothing moves.
     val still =
         remember(context) {
             Settings.Global.getFloat(context.contentResolver, Settings.Global.ANIMATOR_DURATION_SCALE, 1f) == 0f
@@ -115,8 +122,8 @@ private class EdgeGlow(
     private val view: View,
     private val dp: Float,
 ) : View.OnLayoutChangeListener {
-    private val mesh = EdgeGlowMesh(dp)
-    private val drawable = GlowDrawable(mesh, dp)
+    private val motes = EdgeMotes(dp)
+    private val drawable = GlowDrawable(motes, dp)
     private val samples = FloatArray(2048)
     private var target = FloatArray(0)
     private val meter = LevelMeter()
@@ -149,7 +156,8 @@ private class EdgeGlow(
         meter.reset()
         lastFrame = 0L
         opacity = if (still) 1f else 0f
-        mesh.shape.fill(0f)
+        motes.clear()
+        motes.shape.fill(0f)
         drawable.update(0f, 0f, 0f, still)
         root.overlay.add(drawable)
         root.addOnLayoutChangeListener(this)
@@ -185,8 +193,8 @@ private class EdgeGlow(
         laidOutWidth = width
         laidOutHeight = height
         radii.copyInto(laidOut)
-        mesh.layout(width.toFloat(), height.toFloat(), radii)
-        if (target.size != mesh.points) target = FloatArray(mesh.points)
+        motes.layout(width.toFloat(), height.toFloat(), radii)
+        if (target.size != motes.points) target = FloatArray(motes.points)
         drawable.layout(width, height, radii)
     }
 
@@ -196,8 +204,9 @@ private class EdgeGlow(
         still: Boolean,
         read: (FloatArray) -> Int,
     ) {
-        val step = if (lastFrame == 0L) 0f else (now - lastFrame) / FADE_NANOS
+        val elapsed = if (lastFrame == 0L) 0L else now - lastFrame
         lastFrame = now
+        val step = elapsed / FADE_NANOS
         opacity =
             when {
                 still -> if (listening) 1f else 0f
@@ -206,45 +215,40 @@ private class EdgeGlow(
             }
         val count = read(samples)
         val level = meter.update(rms(samples, count), now)
-        val n = mesh.points
-        if (n > 0) {
-            val shape = mesh.shape
+        var phase = 0f
+        if (motes.points > 0) {
             if (still) {
-                shape.fill(liftedLevel(level) * 0.5f)
+                motes.hold(level, primary)
             } else {
+                val shape = motes.shape
                 waveHeights(samples, count, liftedLevel(level), target, WAVE_DENSITY)
-                for (i in 0 until n) shape[i] += (target[i] - shape[i]) * 0.7f
+                for (i in shape.indices) shape[i] += (target[i] - shape[i]) * 0.7f
+                phase = (now % SHIMMER_NANOS) / SHIMMER_NANOS.toFloat()
+                motes.advance(elapsed / 1e9f, level, phase, primary, tertiary)
             }
-            val phase = if (still) 0f else (now % SHIMMER_NANOS) / SHIMMER_NANOS.toFloat()
-            mesh.build(level, phase, if (still) 0f else 1f, opacity, primary, tertiary)
             drawable.update(level, phase, opacity, still)
         }
         if (!listening && opacity <= 0f) hide()
     }
 }
 
-/** Draws the mesh and the bright core line. Every object it draws with is made ahead of time. */
+/** Draws the dim edge line and the motes. Every object it draws with is made ahead of time. */
 private class GlowDrawable(
-    private val mesh: EdgeGlowMesh,
+    private val motes: EdgeMotes,
     private val dp: Float,
 ) : Drawable() {
-    // Opaque white, so the vertex colours come through unchanged however the canvas combines them.
-    private val meshPaint = Paint().apply { color = Color.WHITE }
     private val linePaint =
         Paint(Paint.ANTI_ALIAS_FLAG).apply {
             style = Paint.Style.STROKE
             strokeJoin = Paint.Join.ROUND
         }
-    private val fillPaint = Paint(Paint.ANTI_ALIAS_FLAG)
+    private val motePaint = Paint(Paint.ANTI_ALIAS_FLAG)
     private val core = Path()
-    private val wave = Path()
-    private val band = Path()
     private val turn = Matrix()
     private var sweep: SweepGradient? = null
     private var centreX = 0f
     private var centreY = 0f
     private var width = 0
-    private var height = 0
     private var primary = 0
     private var tertiary = 0
     private var level = 0f
@@ -268,7 +272,6 @@ private class GlowDrawable(
         radii: FloatArray,
     ) {
         this.width = width
-        this.height = height
         setBounds(0, 0, width, height)
         // A little in from the edge, so the screen's own rounded corners do not clip the line.
         val inset = CORE_DP * dp / 2 + dp
@@ -305,26 +308,8 @@ private class GlowDrawable(
     }
 
     override fun draw(canvas: Canvas) {
-        if (opacity <= 0f || mesh.points == 0) return
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
-            canvas.drawVertices(
-                Canvas.VertexMode.TRIANGLES,
-                mesh.vertexFloats,
-                mesh.vertices,
-                0,
-                null,
-                0,
-                mesh.colors,
-                0,
-                mesh.indices,
-                0,
-                mesh.indexCount,
-                meshPaint,
-            )
-        } else {
-            drawWithoutMesh(canvas)
-        }
-        // The core line takes the travelling highlight from the same sweep as the mesh.
+        if (opacity <= 0f) return
+        // The line takes the travelling highlight from the same sweep the motes take their colour from.
         linePaint.shader =
             if (still) {
                 null
@@ -335,36 +320,21 @@ private class GlowDrawable(
                 }
             }
         linePaint.color = primary
-        linePaint.alpha = alphaOf((0.45f + 0.55f * liftedLevel(level)) * opacity)
+        linePaint.alpha = alphaOf((LINE_QUIET + LINE_LOUD * liftedLevel(level)) * opacity)
         linePaint.strokeWidth = CORE_DP * dp
         canvas.drawPath(core, linePaint)
-    }
-
-    /**
-     * Android 9 cannot draw vertex meshes with hardware acceleration, so there the glow is a plain
-     * band from the edge to the wave, with a line along the wave.
-     */
-    private fun drawWithoutMesh(canvas: Canvas) {
-        val n = mesh.points
-        val row = WAVE_RING * n * 2
-        val vertices = mesh.vertices
-        wave.rewind()
-        wave.moveTo(vertices[row], vertices[row + 1])
-        for (i in 1 until n) wave.lineTo(vertices[row + 2 * i], vertices[row + 2 * i + 1])
-        wave.close()
-        band.rewind()
-        // Rewinding resets the fill rule; even-odd fills only between the edge and the wave.
-        band.fillType = Path.FillType.EVEN_ODD
-        band.addRect(0f, 0f, width.toFloat(), height.toFloat(), Path.Direction.CW)
-        band.addPath(wave)
-        fillPaint.color = primary
-        fillPaint.alpha = alphaOf((0.1f + 0.3f * liftedLevel(level)) * opacity)
-        canvas.drawPath(band, fillPaint)
-        linePaint.shader = null
-        linePaint.color = primary
-        linePaint.alpha = alphaOf((0.2f + 0.6f * liftedLevel(level)) * opacity)
-        linePaint.strokeWidth = 1.5f * dp
-        canvas.drawPath(wave, linePaint)
+        // A faint halo under a brighter centre gives each mote a soft edge on every Android version.
+        for (m in 0 until motes.count) {
+            val alpha = motes.alpha[m] * opacity
+            if (alpha <= 0f) continue
+            val x = motes.moteX[m]
+            val y = motes.moteY[m]
+            val r = motes.radius[m]
+            motePaint.color = withAlpha(motes.color[m], alpha * HALO)
+            canvas.drawCircle(x, y, r, motePaint)
+            motePaint.color = withAlpha(motes.color[m], alpha)
+            canvas.drawCircle(x, y, r * CENTRE, motePaint)
+        }
     }
 
     private fun alphaOf(value: Float) = (value * 255 + 0.5f).toInt().coerceIn(0, 255)
@@ -373,9 +343,8 @@ private class GlowDrawable(
     override fun setAlpha(alpha: Int) = Unit
 
     override fun setColorFilter(colorFilter: ColorFilter?) {
-        meshPaint.colorFilter = colorFilter
         linePaint.colorFilter = colorFilter
-        fillPaint.colorFilter = colorFilter
+        motePaint.colorFilter = colorFilter
     }
 
     @Deprecated("Deprecated in Java")
