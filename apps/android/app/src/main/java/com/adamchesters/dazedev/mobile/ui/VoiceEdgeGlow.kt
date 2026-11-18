@@ -47,6 +47,12 @@ import kotlin.math.min
 /** Samples per point, as on the desktop border: a 150 Hz voice makes a wave about 150dp long. */
 private const val WAVE_DENSITY = 2.3f
 
+/**
+ * How fast the level that drives the motes may fall, in meter heights a second. It rises at once.
+ * This is much quicker than the meter the line and still dots use, so the motes keep up with speech.
+ */
+private const val DRIVE_FALL = 5f
+
 /** With animations removed the dots update about five times a second. */
 private const val STILL_FRAME_MS = 200L
 
@@ -70,10 +76,12 @@ private const val CENTRE = 0.45f
 private const val FALLBACK_RADIUS_DP = 28f
 
 /**
- * While listening, small glowing motes drift in from the edge of the whole screen and fade, more
- * of them where the microphone wave is tall and the louder the voice. A thin dim line stays at the
- * edge, so in silence it is still clear the microphone is open. [read] copies the newest samples
- * into the array it is given and returns how many there are.
+ * While listening, small glowing motes leap off the edge of the whole screen and flicker: more of
+ * them where the microphone wave is tall, far more the louder the voice, a burst on each rise, and
+ * few soon after it drops. Most hop and land a little way along the edge, the rest shoot in and
+ * fade, and all of them ride the wave and swell with the voice. A thin dim line stays at the edge,
+ * so in silence it is still clear the microphone is open. [read] copies the newest samples into the
+ * array it is given and returns how many there are.
  *
  * Call it from inside the voice draft sheet. The sheet has its own full-screen window above the
  * app, so the motes are drawn in the overlay of that window's root view: above the sheet and its
@@ -127,6 +135,7 @@ private class EdgeGlow(
     private val samples = FloatArray(2048)
     private var target = FloatArray(0)
     private val meter = LevelMeter()
+    private val drive = LevelMeter(DRIVE_FALL)
     private val radii = FloatArray(4)
     private val laidOut = FloatArray(4)
     private var laidOutWidth = 0
@@ -154,6 +163,7 @@ private class EdgeGlow(
         val root = view.rootView
         host = root
         meter.reset()
+        drive.reset()
         lastFrame = 0L
         opacity = if (still) 1f else 0f
         motes.clear()
@@ -214,17 +224,19 @@ private class EdgeGlow(
                 else -> max(0f, opacity - step)
             }
         val count = read(samples)
-        val level = meter.update(rms(samples, count), now)
+        val amplitude = rms(samples, count)
+        val level = meter.update(amplitude, now)
+        val quick = drive.update(amplitude, now)
         var phase = 0f
         if (motes.points > 0) {
             if (still) {
                 motes.hold(level, primary)
             } else {
                 val shape = motes.shape
-                waveHeights(samples, count, liftedLevel(level), target, WAVE_DENSITY)
+                waveHeights(samples, count, liftedLevel(quick), target, WAVE_DENSITY)
                 for (i in shape.indices) shape[i] += (target[i] - shape[i]) * 0.7f
                 phase = (now % SHIMMER_NANOS) / SHIMMER_NANOS.toFloat()
-                motes.advance(elapsed / 1e9f, level, phase, primary, tertiary)
+                motes.advance(elapsed / 1e9f, quick, phase, primary, tertiary)
             }
             drawable.update(level, phase, opacity, still)
         }

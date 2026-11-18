@@ -39,6 +39,18 @@ class MicLevelTest {
     }
 
     @Test
+    fun `a quicker meter rises the same and falls sooner`() {
+        val slow = LevelMeter()
+        val quick = LevelMeter(5f)
+        val loud = levelUnit(0.1f)
+        assertEquals(loud, slow.update(0.1f, 1_000_000_000L), 0f)
+        assertEquals(loud, quick.update(0.1f, 1_000_000_000L), 0f)
+        assertEquals(loud - 0.16f, slow.update(0f, 1_100_000_000L), 0.0001f)
+        assertEquals(loud - 0.5f, quick.update(0f, 1_100_000_000L), 0.0001f)
+        assertEquals(0f, quick.update(0f, 1_200_000_000L), 0f)
+    }
+
+    @Test
     fun `wave is flat in silence and without samples`() {
         val out = FloatArray(64) { 9f }
         waveHeights(FloatArray(1536), 1536, 0.8f, out, 2.3f)

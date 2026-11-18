@@ -33,8 +33,13 @@ internal fun levelUnit(amplitude: Float): Float {
     return min(1f, (db - METER_FLOOR_DB) / -METER_FLOOR_DB)
 }
 
-/** Rises at once and falls steadily, so the display does not flicker between words. */
-internal class LevelMeter {
+/**
+ * Rises at once and falls steadily, by [fall] meter heights a second, so the display does not
+ * flicker between words. A quicker fall follows the voice more closely.
+ */
+internal class LevelMeter(
+    private val fall: Float = LEVEL_FALL,
+) {
     var level = 0f
         private set
     private var lastNanos = 0L
@@ -45,7 +50,7 @@ internal class LevelMeter {
     ): Float {
         val seconds = if (lastNanos == 0L) 0f else ((nowNanos - lastNanos) / 1e9f).coerceIn(0f, 0.25f)
         lastNanos = nowNanos
-        level = max(levelUnit(amplitude), level - LEVEL_FALL * seconds)
+        level = max(levelUnit(amplitude), level - fall * seconds)
         return level
     }
 
