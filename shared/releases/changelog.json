@@ -1,6 +1,13 @@
 [
   {
     "platform": "mobile",
+    "version": "0.1.0-alpha.15",
+    "date": "2026-11-18",
+    "channel": "development",
+    "notes": "Livelier voice glow\n\n• The dots round the screen now follow your voice much more closely. There are several times more of them, loud speech makes far more than quiet speech, and each rise in your voice sets off a burst.\n• Most dots hop off the edge and land a little way along it, and the rest shoot further in. They flicker and swell with your voice, and they die away at once when you go quiet."
+  },
+  {
+    "platform": "mobile",
     "version": "0.1.0-alpha.14",
     "date": "2026-11-18",
     "channel": "development",
