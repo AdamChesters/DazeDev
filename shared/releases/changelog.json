@@ -36,6 +36,13 @@
   },
   {
     "platform": "desktop",
+    "version": "0.3.13-alpha.0",
+    "date": "2026-11-18",
+    "channel": "development",
+    "notes": "Livelier microphone motes\n\n• The motes your voice throws off the terminal border now follow it much more closely. There are several times more of them, loud speech makes far more than quiet speech, and each rise in your voice sets off a burst.\n• Most motes hop off the border and land a little way along it, and the rest shoot further into the terminal. They flicker, ride the live waveform and swell with your voice, and they die away at once when you go quiet."
+  },
+  {
+    "platform": "desktop",
     "version": "0.3.12-alpha.0",
     "date": "2026-11-18",
     "channel": "development",
