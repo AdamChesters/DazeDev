@@ -118,7 +118,7 @@
       context.setTransform(ratio, 0, 0, ratio, 0, 0);
       const style = getComputedStyle(canvas);
       colour();
-      reach = Math.max(8, Math.min(18, Math.min(width, height) * 0.028));
+      reach = Math.max(12, Math.min(34, Math.min(width, height) * 0.05));
       const radius = parseFloat(style.borderTopLeftRadius) || 7;
       perimeter = 2 * (width + height);
       const count = Math.max(8, Math.round(perimeter / spacing));
@@ -158,8 +158,10 @@
       context.drawImage(dot(i, now), px - half, py - half, half * 2, half * 2);
     };
 
-    const draw = (now: number) => {
+    const draw = (now: number, level: number) => {
       context.clearRect(0, 0, width, height);
+      // Every mote swells a little with the voice, so the whole crowd beats with it.
+      const swell = 0.8 + 0.5 * level;
       for (let m = 0; m < motes.capacity; m++) {
         const opacity = motes.opacity(m);
         if (opacity <= 0) continue;
@@ -172,7 +174,7 @@
           now,
           x[i] + nx[i] * inward - ny[i] * along,
           y[i] + ny[i] * inward + nx[i] * along,
-          1.1 + 1.7 * motes.size[m],
+          (1.1 + 1.9 * motes.size[m]) * swell,
         );
       }
       context.globalAlpha = 1;
@@ -214,7 +216,7 @@
           tall[i] = shape[i] * fade[i];
         }
         motes.step(tall, level, elapsed, perimeter);
-        draw(now);
+        draw(now, level);
       } else if (now - steadyAt > 200) {
         // Reduced motion: nothing moves.
         steadyAt = now;

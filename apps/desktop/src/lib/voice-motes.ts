@@ -3,9 +3,10 @@
  * it can be tested: VoiceBorderWave feeds it the live wave and paints what it holds.
  *
  * A mote is born on the border, more often where the wave is tall, and far more often the
- * louder the voice is. It shoots a short way into the pane, flickers and fades. Each rise in
- * the voice sets off a burst, and when the voice drops the motes it left die away quickly, so
- * the crowd follows the voice up and down. In silence there are none.
+ * louder the voice is. Most hop off the border and land a little way along it; the rest shoot
+ * into the pane and fade. While it lives a mote also rides the wave under it, so the crowd
+ * jumps with the sound. Each rise in the voice sets off a burst, and when the voice drops the
+ * motes it left die away quickly. In silence there are none.
  */
 
 export type Random = () => number;
@@ -14,17 +15,24 @@ export type Random = () => number;
  * Birth attempts a second for each 1000px of border at a level of about 0.58, which is where
  * `surge` is 1. An attempt succeeds as often as the wave is tall at the point it lands on.
  */
-export const moteAttempts = 1100;
+export const moteAttempts = 2600;
 /** Extra attempts for each 1000px of border when the level jumps from silence to full. */
-export const moteBurst = 500;
+export const moteBurst = 900;
 /** A mote lives between these two times, in milliseconds, while the voice holds. */
-export const moteLifeMs = [280, 620] as const;
+export const moteLifeMs = [260, 640] as const;
 /** How much faster a mote ages for each unit the level has fallen since it was born. */
 export const quietHaste = 3;
 /** The part of its life a mote takes to appear. The rest is the fade. */
 const rise = 0.12;
 /** How deep the flicker cuts into a mote's brightness (0..1). */
-const flickerDepth = 0.55;
+const flickerDepth = 0.5;
+/** The share of motes that hop along the border. The rest shoot into the pane. */
+const hopShare = 0.6;
+/** A hopping mote starts to fade this far through its life, as it comes back down. */
+const landing = 0.72;
+
+/** The furthest a mote slides along the border in its life, in pixels either way. */
+export const maxSlide = 26;
 
 /** How strongly a voice level (0..1) drives births: the square, so loud speech stands out. */
 export function surge(level: number) {
@@ -34,7 +42,7 @@ export function surge(level: number) {
 
 /** Room for the motes of loud speech on a border `perimeter` pixels long. */
 export function moteCapacity(perimeter: number) {
-  return Math.max(64, Math.min(2000, Math.round(perimeter * 0.5)));
+  return Math.max(64, Math.min(3200, Math.round(perimeter * 0.9)));
 }
 
 export class MoteField {
@@ -42,9 +50,9 @@ export class MoteField {
   readonly point: Int32Array;
   /** 0 at birth, 1 and over when the slot is free. */
   readonly age: Float32Array;
-  /** How far it travels inward in the end, as a share of the reach (0..1). */
+  /** How far it travels inward at most, as a share of the reach (0..1). */
   readonly travel: Float32Array;
-  /** How far it slides along the border in the end, in pixels either way. */
+  /** How far it slides along the border in the end, in pixels either way (up to `maxSlide`). */
   readonly drift: Float32Array;
   /** Radius, as a share of the largest (0..1). */
   readonly size: Float32Array;
@@ -56,6 +64,11 @@ export class MoteField {
   /** Flickers in a life, and where in the first one it starts (radians). */
   readonly #flickers: Float32Array;
   readonly #phase: Float32Array;
+  /** 1 for a mote that hops and lands, 0 for one that shoots in and fades. */
+  readonly #hops: Uint8Array;
+  /** How strongly it rides the wave under it (0..1). */
+  readonly #ride: Float32Array;
+  #heights: ArrayLike<number> = [];
   #carry = 0;
   #next = 0;
   #heard = 0;
@@ -74,6 +87,8 @@ export class MoteField {
     this.#born = new Float32Array(capacity);
     this.#flickers = new Float32Array(capacity);
     this.#phase = new Float32Array(capacity);
+    this.#hops = new Uint8Array(capacity);
+    this.#ride = new Float32Array(capacity);
   }
 
   /**
@@ -82,6 +97,7 @@ export class MoteField {
    */
   step(heights: ArrayLike<number>, level: number, elapsedMs: number, perimeter: number) {
     const now = Math.max(0, Math.min(1, level));
+    this.#heights = heights;
     // A mote born in a loud moment goes quickly once the voice has dropped.
     for (let i = 0; i < this.capacity; i++) {
       if (this.age[i] >= 1) continue;
@@ -113,8 +129,13 @@ export class MoteField {
       this.age[slot] = 0;
       this.#born[slot] = now;
       this.#rate[slot] = 1 / (moteLifeMs[0] + this.random() * (moteLifeMs[1] - moteLifeMs[0]));
-      this.travel[slot] = Math.min(1, height) * (0.5 + 0.5 * this.random());
-      this.drift[slot] = (this.random() * 2 - 1) * 12;
+      const hops = this.random() < hopShare;
+      this.#hops[slot] = hops ? 1 : 0;
+      // Further for the tall part of the wave and for a loud voice, with a wide spread.
+      const tall = Math.min(1, height * 2.5);
+      this.travel[slot] = (0.3 + 0.7 * tall) * (0.35 + 0.65 * this.random()) * (0.55 + 0.45 * now);
+      this.#ride[slot] = 0.25 + 0.5 * this.random();
+      this.drift[slot] = (this.random() * 2 - 1) * (hops ? maxSlide : maxSlide * 0.4);
       this.size[slot] = this.random();
       this.glow[slot] = (0.5 + 0.45 * this.random()) * (0.45 + 0.55 * now);
       this.#flickers[slot] = 2.5 + 4 * this.random();
@@ -122,17 +143,31 @@ export class MoteField {
     }
   }
 
-  /** How far mote `i` has travelled inward, as a share of the reach. It starts fast and slows. */
+  /**
+   * How far in mote `i` is now, as a share of the reach. A hopping mote goes out and comes
+   * back; the others start fast and slow. Both are lifted by the wave under them as it moves.
+   */
   depth(i: number) {
-    const left = 1 - Math.min(1, this.age[i]);
-    return this.travel[i] * (1 - left * left * left);
+    const age = Math.min(1, this.age[i]);
+    const left = 1 - age;
+    const arc = Math.sin(Math.PI * age);
+    const path = this.#hops[i] ? arc : 1 - left * left * left;
+    const under = this.#heights[this.point[i]] || 0;
+    const lift = this.#ride[i] * Math.min(1, under * 2.5) * (this.#hops[i] ? arc : left);
+    return Math.min(1, this.travel[i] * path + lift);
   }
 
-  /** Opacity of mote `i` now: a quick rise, then a flickering fade to nothing. */
+  /**
+   * Opacity of mote `i` now, flickering all the way: a quick rise, then a fade to nothing. A
+   * hopping mote stays bright until it comes back down.
+   */
   opacity(i: number) {
     const age = this.age[i];
     if (age >= 1) return 0;
-    const shape = age < rise ? age / rise : ((1 - age) / (1 - rise)) ** 1.5;
+    const fade = this.#hops[i]
+      ? Math.min(1, (1 - age) / (1 - landing))
+      : ((1 - age) / (1 - rise)) ** 1.5;
+    const shape = age < rise ? age / rise : fade;
     const wave = 0.5 + 0.5 * Math.sin(this.#phase[i] + age * this.#flickers[i] * Math.PI * 2);
     return this.glow[i] * shape * (1 - flickerDepth * wave);
   }
