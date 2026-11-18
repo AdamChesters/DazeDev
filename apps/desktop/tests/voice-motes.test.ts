@@ -1,5 +1,12 @@
 import { describe, expect, it } from 'vitest';
-import { MoteField, moteAttempts, moteCapacity, moteLifeMs } from '../src/lib/voice-motes';
+import {
+  MoteField,
+  moteAttempts,
+  moteBurst,
+  moteCapacity,
+  moteLifeMs,
+  surge,
+} from '../src/lib/voice-motes';
 
 /** A repeatable stand-in for Math.random. */
 const seeded = (seed = 1) => {
@@ -26,18 +33,68 @@ describe('voice motes', () => {
     expect(field.live).toBe(0);
   });
 
-  it('makes more the taller the wave is', () => {
-    const quiet = new MoteField(900, seeded());
-    const loud = new MoteField(900, seeded());
-    run(quiet, flat(0.1), 0.4, 2000);
-    run(loud, flat(0.6), 0.9, 2000);
-    expect(quiet.live).toBeGreaterThan(0);
-    expect(loud.live).toBeGreaterThan(quiet.live * 3);
-    // About attempts x height x life are alive at once on this 1200px border.
+  it('drives births with the square of the level', () => {
+    expect(surge(0)).toBe(0);
+    expect(surge(1)).toBe(3);
+    expect(surge(0.58)).toBeCloseTo(1, 1);
+    expect(surge(-1)).toBe(0);
+    expect(surge(4)).toBe(3);
+  });
+
+  it('holds about as many as the level, the wave and their lives allow', () => {
+    const field = new MoteField(1500, seeded());
+    run(field, flat(0.6), 0.9, 2000);
     const life = (moteLifeMs[0] + moteLifeMs[1]) / 2000;
-    const expected = ((moteAttempts * 1200) / 1000) * 0.6 * life;
-    expect(loud.live).toBeGreaterThan(expected * 0.7);
-    expect(loud.live).toBeLessThan(expected * 1.3);
+    const expected = ((moteAttempts * surge(0.9) * 1200) / 1000) * 0.6 * life;
+    expect(field.live).toBeGreaterThan(expected * 0.7);
+    expect(field.live).toBeLessThan(expected * 1.3);
+  });
+
+  it('makes far more for a loud voice than a quiet one with the same wave', () => {
+    const quiet = new MoteField(1500, seeded());
+    const loud = new MoteField(1500, seeded());
+    run(quiet, flat(0.5), 0.3, 2000);
+    run(loud, flat(0.5), 0.9, 2000);
+    expect(quiet.live).toBeGreaterThan(0);
+    // Three times the level gives about nine times the motes.
+    expect(loud.live).toBeGreaterThan(quiet.live * 6);
+  });
+
+  it('makes more the taller the wave is', () => {
+    const low = new MoteField(1500, seeded());
+    const tall = new MoteField(1500, seeded());
+    run(low, flat(0.15), 0.7, 2000);
+    run(tall, flat(0.6), 0.7, 2000);
+    expect(low.live).toBeGreaterThan(0);
+    expect(tall.live).toBeGreaterThan(low.live * 3);
+  });
+
+  it('sets off a burst when the voice rises', () => {
+    const field = new MoteField(1500, seeded());
+    field.step(flat(1), 0.9, 1, 1200);
+    const burst = field.live;
+    expect(burst).toBeGreaterThan(((moteBurst * 0.9 * 1200) / 1000) * 0.9);
+    // Holding the level adds only the steady trickle.
+    field.step(flat(1), 0.9, 1, 1200);
+    expect(field.live - burst).toBeLessThan(10);
+    // A fall sets off nothing.
+    const falling = new MoteField(1500, seeded());
+    falling.step(flat(0), 0.9, 1, 1200);
+    falling.step(flat(1), 0.1, 1, 1200);
+    expect(falling.live).toBeLessThan(3);
+  });
+
+  it('thins out quickly once the voice drops', () => {
+    const held = new MoteField(1500, seeded(5));
+    const dropped = new MoteField(1500, seeded(5));
+    run(held, flat(0.8), 0.9, 1000);
+    run(dropped, flat(0.8), 0.9, 1000);
+    expect(dropped.live).toBe(held.live);
+    // No wave, so nothing new is born in either: only the ageing differs.
+    run(held, flat(0), 0.9, 130);
+    run(dropped, flat(0), 0.05, 130);
+    expect(held.live).toBeGreaterThan(100);
+    expect(dropped.live).toBeLessThan(held.live * 0.35);
   });
 
   it('gathers them where the wave is tall', () => {
@@ -62,8 +119,8 @@ describe('voice motes', () => {
         const depth = field.depth(i);
         const opacity = field.opacity(i);
         if (!(depth >= 0 && depth <= 1)) outside++;
-        if (!(opacity >= 0 && opacity <= 0.9)) outside++;
-        if (!(Math.abs(field.drift[i]) <= 6)) outside++;
+        if (!(opacity >= 0 && opacity <= 0.95)) outside++;
+        if (!(Math.abs(field.drift[i]) <= 12)) outside++;
       }
     }
     expect(outside).toBe(0);
@@ -98,20 +155,31 @@ describe('voice motes', () => {
     }
   });
 
-  it('starts dark, brightens quickly and is gone at the end of its life', () => {
+  it('starts dark, flickers and is gone at the end of its life', () => {
     const field = new MoteField(1, seeded());
     while (!field.live) field.step(flat(1), 1, 1, 1200);
-    expect(field.opacity(0)).toBeLessThan(0.05);
+    expect(field.opacity(0)).toBeLessThan(0.08);
     let brightest = 0;
+    let turns = 0;
+    let rising = true;
+    let before = field.opacity(0);
     let steps = 0;
     while (field.live && steps++ < 2000) {
-      // No voice, so nothing new is born while this one ages.
-      field.step(flat(0), 0, 4, 1200);
-      brightest = Math.max(brightest, field.opacity(0));
+      // The voice holds but there is no wave, so nothing new is born while this one ages.
+      field.step(flat(0), 1, 2, 1200);
+      const now = field.opacity(0);
+      brightest = Math.max(brightest, now);
+      if (now > before !== rising) {
+        rising = !rising;
+        turns++;
+      }
+      before = now;
     }
     expect(brightest).toBeGreaterThan(0.2);
+    // Brighter and dimmer several times over, not one smooth rise and fall.
+    expect(turns).toBeGreaterThanOrEqual(4);
     expect(field.opacity(0)).toBe(0);
-    expect(steps * 4).toBeLessThanOrEqual(moteLifeMs[1] + 8);
+    expect(steps * 2).toBeLessThanOrEqual(moteLifeMs[1] + 8);
   });
 
   it('clears at once', () => {
@@ -123,8 +191,8 @@ describe('voice motes', () => {
   });
 
   it('sizes itself to the border', () => {
-    expect(moteCapacity(100)).toBe(48);
-    expect(moteCapacity(3000)).toBe(900);
-    expect(moteCapacity(40000)).toBe(1400);
+    expect(moteCapacity(100)).toBe(64);
+    expect(moteCapacity(3000)).toBe(1500);
+    expect(moteCapacity(40000)).toBe(2000);
   });
 });

@@ -5,6 +5,7 @@
   import {
     Meter,
     measure,
+    toUnit,
     triggerOffset,
     waveDensity,
     waveShape,
@@ -13,9 +14,9 @@
   } from '../lib/mic-level';
   import { MoteField, moteCapacity } from '../lib/voice-motes';
   // The live microphone waveform shown around the pane being dictated into, in the colours of
-  // the chosen recording highlight. The voice throws small glowing motes off the border, more
-  // of them where the wave is tall, and in silence there are none, so it is obvious whether the
-  // microphone hears anything.
+  // the chosen recording highlight. The voice throws small glowing motes off the border: more
+  // where the wave is tall, many more the louder it is, a burst on each rise, and none in
+  // silence, so it is obvious whether the microphone hears anything.
   // A terminal window passes received samples at a lower rate, with a matching `density` and
   // the level measured before they were packed (`readLevel`).
   let {
@@ -31,6 +32,11 @@
   } = $props();
   let canvas: HTMLCanvasElement;
   const spacing = 3;
+  /**
+   * How fast the level that drives the motes may fall, in meter widths a second. It rises at
+   * once. This is much quicker than the settings meter, so the motes keep up with speech.
+   */
+  const driveFall = 5;
   /** Pixels between the still dots shown when motion is off. */
   const stillSpacing = 15;
   const rainbow = ['#ff58d6', '#965cff', '#428bff', '#44ecff', '#55f4a5', '#f9ed65', '#ff9951'];
@@ -90,6 +96,7 @@
     let frame = 0;
     let last = 0;
     let steadyAt = 0;
+    let drive = 0;
 
     const colour = () => {
       dotsFor = kind;
@@ -165,7 +172,7 @@
           now,
           x[i] + nx[i] * inward - ny[i] * along,
           y[i] + ny[i] * inward + nx[i] * along,
-          1.1 + 1.6 * motes.size[m],
+          1.1 + 1.7 * motes.size[m],
         );
       }
       context.globalAlpha = 1;
@@ -187,7 +194,9 @@
       const elapsed = last ? Math.min(100, Math.max(0, now - last)) : 0;
       last = now;
       const samples = read();
-      meter.update(readLevel ? readLevel() : samples ? measure(samples) : null, now);
+      const raw = readLevel ? readLevel() : samples ? measure(samples) : null;
+      meter.update(raw, now);
+      drive = Math.max(raw ? toUnit(raw.rms) : 0, drive - (driveFall * elapsed) / 1000);
       if (!x.length) return;
       if (kind !== dotsFor) colour();
       const choice = document.documentElement.dataset.highlightMotion;
@@ -197,7 +206,7 @@
         const from = samples ? triggerOffset(samples, samples.length >> 2) : 0;
         const window = samples ? samples.length - (samples.length >> 2) : 0;
         // The 0.7 power lifts quiet speech, so any voice at all throws motes off the border.
-        const level = meter.level ** 0.7;
+        const level = drive ** 0.7;
         waveShape(samples ? samples.subarray(from, from + window) : [], level, next, density);
         // Height only, blended with the last frame to take the flicker off.
         for (let i = 0; i < shape.length; i++) {
