@@ -1,6 +1,13 @@
 [
   {
     "platform": "mobile",
+    "version": "0.1.0-alpha.17",
+    "date": "2026-11-23",
+    "channel": "development",
+    "notes": "Links from sessions started outside DazeDev\n\n• A program that opens links itself, such as Codex, can now send them to your phone from a tmux session that DazeDev did not start. Open the session in the app once, and new windows and panes in it get the link opener.\n• A program that was already running in such a session does not have it until its pane is restarted."
+  },
+  {
+    "platform": "mobile",
     "version": "0.1.0-alpha.16",
     "date": "2026-11-23",
     "channel": "development",
