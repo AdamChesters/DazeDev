@@ -1,6 +1,13 @@
 [
   {
     "platform": "mobile",
+    "version": "0.1.0-alpha.16",
+    "date": "2026-11-23",
+    "channel": "development",
+    "notes": "Voice glow moves with animations off\n\n• The dots round the screen now move when the phone's animations are turned off. Before, they stayed in fixed places and only changed brightness."
+  },
+  {
+    "platform": "mobile",
     "version": "0.1.0-alpha.15",
     "date": "2026-11-18",
     "channel": "development",
