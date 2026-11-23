@@ -10,7 +10,6 @@ import android.graphics.RectF
 import android.graphics.SweepGradient
 import android.graphics.drawable.Drawable
 import android.os.Build
-import android.provider.Settings
 import android.view.RoundedCorner
 import android.view.View
 import android.view.WindowInsets
@@ -25,7 +24,6 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.runtime.withFrameNanos
 import androidx.compose.ui.graphics.toArgb
-import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.platform.LocalView
 import androidx.lifecycle.Lifecycle
@@ -40,7 +38,6 @@ import com.adamchesters.dazedev.mobile.voice.liftedLevel
 import com.adamchesters.dazedev.mobile.voice.rms
 import com.adamchesters.dazedev.mobile.voice.waveHeights
 import com.adamchesters.dazedev.mobile.voice.withAlpha
-import kotlinx.coroutines.delay
 import kotlin.math.max
 import kotlin.math.min
 
@@ -49,12 +46,9 @@ private const val WAVE_DENSITY = 2.3f
 
 /**
  * How fast the level that drives the motes may fall, in meter heights a second. It rises at once.
- * This is much quicker than the meter the line and still dots use, so the motes keep up with speech.
+ * This is much quicker than the meter the line uses, so the motes keep up with speech.
  */
 private const val DRIVE_FALL = 5f
-
-/** With animations removed the dots update about five times a second. */
-private const val STILL_FRAME_MS = 200L
 
 private const val FADE_NANOS = 180_000_000f
 
@@ -88,6 +82,9 @@ private const val FALLBACK_RADIUS_DP = 28f
  * scrim, edge to edge and behind the system bars. A view overlay never takes touches, focus or
  * accessibility focus, so the sheet, the keyboard and the back gesture work as before. Nothing
  * here is laid out, and TalkBack does not see it; the "Listening" text says the same thing.
+ *
+ * The motes are timed from the frame clock, not by the system animator, so they move the same
+ * whatever the phone's animation settings are.
  */
 @Composable
 internal fun VoiceEdgeGlow(
@@ -95,13 +92,7 @@ internal fun VoiceEdgeGlow(
     read: (FloatArray) -> Int,
 ) {
     val view = LocalView.current
-    val context = LocalContext.current
     val density = LocalDensity.current.density
-    // "Remove animations" in the phone's accessibility settings: fixed dots that brighten, nothing moves.
-    val still =
-        remember(context) {
-            Settings.Global.getFloat(context.contentResolver, Settings.Global.ANIMATOR_DURATION_SCALE, 1f) == 0f
-        }
     val glow = remember(view, density) { EdgeGlow(view, density) }
     val primary = MaterialTheme.colorScheme.primary.toArgb()
     val tertiary = MaterialTheme.colorScheme.tertiary.toArgb()
@@ -109,18 +100,15 @@ internal fun VoiceEdgeGlow(
     val latestRead by rememberUpdatedState(read)
     val lifecycleState by LocalLifecycleOwner.current.lifecycle.currentStateAsState()
     val started = lifecycleState.isAtLeast(Lifecycle.State.STARTED)
-    LaunchedEffect(glow, listening, started, still) {
+    LaunchedEffect(glow, listening, started) {
         if (!started) {
             // In the background no frames run. A glow that is only fading out goes at once.
             if (!listening) glow.hide()
             return@LaunchedEffect
         }
-        if (listening) glow.show(still)
-        val onFrame: (Long) -> Unit = { now -> glow.frame(now, listening, still, latestRead) }
-        while (glow.shown) {
-            withFrameNanos(onFrame)
-            if (still) delay(STILL_FRAME_MS)
-        }
+        if (listening) glow.show()
+        val onFrame: (Long) -> Unit = { now -> glow.frame(now, listening, latestRead) }
+        while (glow.shown) withFrameNanos(onFrame)
     }
     DisposableEffect(glow) { onDispose(glow::hide) }
 }
@@ -157,7 +145,7 @@ private class EdgeGlow(
         drawable.setColors(primary, tertiary)
     }
 
-    fun show(still: Boolean) {
+    fun show() {
         if (host != null) return
         // The root of the window this composition lives in: the sheet's window, not the app's.
         val root = view.rootView
@@ -165,10 +153,10 @@ private class EdgeGlow(
         meter.reset()
         drive.reset()
         lastFrame = 0L
-        opacity = if (still) 1f else 0f
+        opacity = 0f
         motes.clear()
         motes.shape.fill(0f)
-        drawable.update(0f, 0f, 0f, still)
+        drawable.update(0f, 0f, 0f)
         root.overlay.add(drawable)
         root.addOnLayoutChangeListener(this)
         relayout(root)
@@ -211,34 +199,23 @@ private class EdgeGlow(
     fun frame(
         now: Long,
         listening: Boolean,
-        still: Boolean,
         read: (FloatArray) -> Int,
     ) {
         val elapsed = if (lastFrame == 0L) 0L else now - lastFrame
         lastFrame = now
         val step = elapsed / FADE_NANOS
-        opacity =
-            when {
-                still -> if (listening) 1f else 0f
-                listening -> min(1f, opacity + step)
-                else -> max(0f, opacity - step)
-            }
+        opacity = if (listening) min(1f, opacity + step) else max(0f, opacity - step)
         val count = read(samples)
         val amplitude = rms(samples, count)
         val level = meter.update(amplitude, now)
         val quick = drive.update(amplitude, now)
-        var phase = 0f
         if (motes.points > 0) {
-            if (still) {
-                motes.hold(level, primary)
-            } else {
-                val shape = motes.shape
-                waveHeights(samples, count, liftedLevel(quick), target, WAVE_DENSITY)
-                for (i in shape.indices) shape[i] += (target[i] - shape[i]) * 0.7f
-                phase = (now % SHIMMER_NANOS) / SHIMMER_NANOS.toFloat()
-                motes.advance(elapsed / 1e9f, quick, phase, primary, tertiary)
-            }
-            drawable.update(level, phase, opacity, still)
+            val shape = motes.shape
+            waveHeights(samples, count, liftedLevel(quick), target, WAVE_DENSITY)
+            for (i in shape.indices) shape[i] += (target[i] - shape[i]) * 0.7f
+            val phase = (now % SHIMMER_NANOS) / SHIMMER_NANOS.toFloat()
+            motes.advance(elapsed / 1e9f, quick, phase, primary, tertiary)
+            drawable.update(level, phase, opacity)
         }
         if (!listening && opacity <= 0f) hide()
     }
@@ -266,7 +243,6 @@ private class GlowDrawable(
     private var level = 0f
     private var phase = 0f
     private var opacity = 0f
-    private var still = false
 
     fun setColors(
         primary: Int,
@@ -310,12 +286,10 @@ private class GlowDrawable(
         level: Float,
         phase: Float,
         opacity: Float,
-        still: Boolean,
     ) {
         this.level = level
         this.phase = phase
         this.opacity = opacity
-        this.still = still
         invalidateSelf()
     }
 
@@ -323,13 +297,9 @@ private class GlowDrawable(
         if (opacity <= 0f) return
         // The line takes the travelling highlight from the same sweep the motes take their colour from.
         linePaint.shader =
-            if (still) {
-                null
-            } else {
-                sweep?.also {
-                    turn.setRotate(phase * 360f, centreX, centreY)
-                    it.setLocalMatrix(turn)
-                }
+            sweep?.also {
+                turn.setRotate(phase * 360f, centreX, centreY)
+                it.setLocalMatrix(turn)
             }
         linePaint.color = primary
         linePaint.alpha = alphaOf((LINE_QUIET + LINE_LOUD * liftedLevel(level)) * opacity)

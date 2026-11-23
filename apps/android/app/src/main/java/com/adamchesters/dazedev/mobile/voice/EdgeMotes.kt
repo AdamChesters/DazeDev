@@ -91,21 +91,14 @@ internal const val FLICKER_DEPTH = 0.5f
 /** The longest step one frame may take, in seconds, so a late frame does not make motes jump. */
 private const val MAX_STEP = 0.1f
 
-/** With animations removed, a dot sits about every this many points round the edge. */
-private const val DOT_EVERY = 7
-
-/** Radius of each still dot, in dp. */
-internal const val DOT_DP = 2f
-
 private const val TURN = 2 * PI.toFloat()
 
 /**
  * Motes round the screen edge. [layout] places the points they are born at when the size changes.
  * [advance] runs every frame: it ages the motes, drops the finished ones and gives off new ones,
  * more where [shape] is tall and far more the louder the voice, then leaves each mote's centre,
- * radius, colour and opacity in the arrays for drawing. [hold] is the still version for "Remove
- * animations". Nothing allocates after [layout], and [random] is passed in so tests can repeat a
- * run exactly.
+ * radius, colour and opacity in the arrays for drawing. Nothing allocates after [layout], and
+ * [random] is passed in so tests can repeat a run exactly.
  */
 internal class EdgeMotes(
     private val dp: Float,
@@ -173,7 +166,6 @@ internal class EdgeMotes(
 
     /** The lifted level of the last frame, so a rise can set off a burst. */
     private var heard = 0f
-    private var holding = false
 
     fun layout(
         width: Float,
@@ -205,7 +197,6 @@ internal class EdgeMotes(
         count = 0
         tries = 0f
         heard = 0f
-        holding = false
     }
 
     /**
@@ -221,7 +212,6 @@ internal class EdgeMotes(
         primary: Int,
         tertiary: Int,
     ) {
-        if (holding) clear()
         val step = seconds.coerceIn(0f, MAX_STEP)
         val lift = liftedLevel(level)
         // A mote born in a loud moment goes quickly once the voice drops, so the crowd thins with it.
@@ -252,31 +242,6 @@ internal class EdgeMotes(
         // Every mote swells with the voice, so the whole crowd beats with it.
         val swell = SWELL_QUIET + SWELL_LOUD * lift
         for (k in 0 until count) place(k, swell)
-    }
-
-    /**
-     * The still version: evenly spaced dots in [primary] whose brightness follows [level]. They are
-     * always in the same places, so nothing ever moves.
-     */
-    fun hold(
-        level: Float,
-        primary: Int,
-    ) {
-        holding = true
-        tries = 0f
-        val bright = MOTE_PEAK * liftedLevel(level)
-        // In by its own radius, so the screen's rounded corners never clip a dot.
-        val depth = (BIRTH_DP + DOT_DP) * dp
-        val dots = min(points / DOT_EVERY, MAX_MOTES)
-        for (k in 0 until dots) {
-            val i = k * points / dots
-            moteX[k] = x[i] + nx[i] * depth
-            moteY[k] = y[i] + ny[i] * depth
-            radius[k] = DOT_DP * dp
-            color[k] = primary
-            alpha[k] = bright
-        }
-        count = dots
     }
 
     private fun spawn(

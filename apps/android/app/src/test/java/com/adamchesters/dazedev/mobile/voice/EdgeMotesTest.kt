@@ -4,7 +4,6 @@ import org.junit.Assert.assertEquals
 import org.junit.Assert.assertTrue
 import org.junit.Test
 import kotlin.math.abs
-import kotlin.math.hypot
 import kotlin.math.roundToInt
 import kotlin.random.Random
 
@@ -450,44 +449,5 @@ class EdgeMotesTest {
         assertEquals(a.radius.take(a.count), b.radius.take(b.count))
         assertEquals(a.color.take(a.count), b.color.take(b.count))
         assertEquals(a.alpha.take(a.count), b.alpha.take(b.count))
-    }
-
-    @Test
-    fun `with animations removed the dots stay put and brighten with the voice`() {
-        val motes = phone()
-        motes.shape.fill(1f)
-        motes.run(0.5f, 0.8f)
-        motes.hold(0f, primary)
-        val n = motes.count
-        assertTrue("$n dots", n > 50)
-        val x = motes.moteX.copyOf(n)
-        val y = motes.moteY.copyOf(n)
-        assertTrue(motes.alpha.take(n).all { it == 0f })
-        var last = 0f
-        for (level in listOf(0.4f, 0.6f, 0.9f, 0.9f)) {
-            motes.hold(level, primary)
-            assertEquals(n, motes.count)
-            assertEquals(x.toList(), motes.moteX.take(n))
-            assertEquals(y.toList(), motes.moteY.take(n))
-            assertTrue(motes.radius.take(n).all { it == DOT_DP * dp })
-            val alpha = motes.alpha[0]
-            assertTrue(motes.alpha.take(n).all { it == alpha })
-            assertTrue(alpha >= last && alpha <= MOTE_PEAK)
-            last = alpha
-            assertTrue(motes.color.take(n).all { it == primary })
-        }
-        // The same level again gives the same brightness: still dots never flicker.
-        motes.hold(0.9f, primary)
-        assertTrue(motes.alpha.take(n).all { it == last })
-        assertTrue(last > 0.4f * MOTE_PEAK)
-        // Evenly spaced just inside the edge, about 25dp apart.
-        for (k in 0 until n) {
-            assertEquals((BIRTH_DP + DOT_DP) * dp, -edgeDistance(x[k], y[k], 1080f, 2400f, corners(110f)), 0.05f)
-        }
-        val gaps = (0 until n).map { hypot(x[(it + 1) % n] - x[it], y[(it + 1) % n] - y[it]) / dp }
-        assertTrue("gaps ${gaps.min()} to ${gaps.max()}dp", gaps.min() > 20f && gaps.max() < 30f)
-        // Back to moving motes, the dots go at once.
-        motes.advance(1 / 60f, 0f, 0f, primary, tertiary)
-        assertEquals(0, motes.count)
     }
 }
