@@ -128,6 +128,72 @@ class BrowserTests(unittest.TestCase):
    self.assertEqual([v['url'] for v in self.opened],['https://example.com/first-login'])
    self.assertIn(server.environment()['command'],host.tmux('show-environment','-t',session['id'],'BROWSER'))
   finally:subprocess.run(['tmux','-L',host.SOCKET,'kill-server'],capture_output=True)
+ def host_fixture(self, name):
+  spec=importlib.util.spec_from_file_location(name,ROOT/'src-tauri/resources/host.py');host=importlib.util.module_from_spec(spec);spec.loader.exec_module(host)
+  host.SOCKET='dazedev-browser-offer-'+uuid.uuid4().hex
+  return host
+ def plain_session(self, host):
+  # A session DazeDev did not start, on a tmux server that inherited no BROWSER.
+  env={k:v for k,v in os.environ.items() if k not in ('BROWSER','TMUX','TMUX_PANE')}
+  return subprocess.run(['tmux','-L',host.SOCKET,'new-session','-d','-P','-F','#{session_id}','sleep 60'],env=env,capture_output=True,text=True,check=True,timeout=5).stdout.strip()
+ def session_browser(self, host, session):
+  return host.tmux('show-environment','-t',session,'BROWSER',check=False)
+ def test_attached_session_without_a_link_opener_is_offered_this_one(self):
+  host=self.host_fixture('browser_host_offer');shim='/run/user/1/dazedev-browser/shim-0123456789ab/xdg-open'
+  try:
+   session=self.plain_session(host)
+   self.assertEqual(self.session_browser(host,session),'')
+   self.assertTrue(host.offer_browser(session,shim))
+   self.assertEqual(self.session_browser(host,session),'BROWSER='+shim)
+   # A program started in the session afterwards has it.
+   seen=self.root/'seen'
+   host.tmux('new-window','-d','-t',session,'printf %s "$BROWSER" > '+shlex.quote(str(seen))+'.part; mv '+shlex.quote(str(seen))+'.part '+shlex.quote(str(seen))+'; sleep 60')
+   deadline=time.time()+5
+   while time.time()<deadline and not seen.exists():time.sleep(.05)
+   self.assertEqual(seen.read_text(),shim)
+   self.assertFalse(host.offer_browser(session,shim))
+   # A newer helper replaces the opener an older one left behind.
+   newer='/tmp/dazedev-browser-1000/shim-ba9876543210/xdg-open'
+   self.assertTrue(host.offer_browser(session,newer))
+   self.assertEqual(self.session_browser(host,session),'BROWSER='+newer)
+  finally:subprocess.run(['tmux','-L',host.SOCKET,'kill-server'],capture_output=True)
+ def test_offer_keeps_a_browser_the_user_chose(self):
+  host=self.host_fixture('browser_host_offer_kept');shim='/run/user/1/dazedev-browser/shim-0123456789ab/xdg-open'
+  try:
+   chosen=self.plain_session(host);host.tmux('set-environment','-t',chosen,'BROWSER','firefox')
+   removed=self.plain_session(host);host.tmux('set-environment','-t',removed,'-r','BROWSER')
+   for session,kept in ((chosen,'BROWSER=firefox'),(removed,'-BROWSER')):
+    self.assertFalse(host.offer_browser(session,shim))
+    self.assertEqual(self.session_browser(host,session),kept)
+   # A choice made for the whole tmux server covers its sessions too.
+   plain=self.plain_session(host);host.tmux('set-environment','-g','BROWSER','firefox')
+   self.assertFalse(host.offer_browser(plain,shim))
+   self.assertEqual(self.session_browser(host,plain),'')
+   # The session's own value comes first: an opener an older helper put there is still replaced.
+   ours=self.plain_session(host);host.tmux('set-environment','-t',ours,'BROWSER','/tmp/dazedev-browser-1000/shim-000000000000/xdg-open')
+   self.assertTrue(host.offer_browser(ours,shim))
+   self.assertEqual(self.session_browser(host,ours),'BROWSER='+shim)
+   # A server started from a DazeDev terminal inherited that terminal's opener, not a choice.
+   host.tmux('set-environment','-g','BROWSER','/tmp/dazedev-browser-1000/shim-000000000000/xdg-open')
+   self.assertTrue(host.offer_browser(plain,shim))
+   self.assertEqual(self.session_browser(host,plain),'BROWSER='+shim)
+   for invalid in ('main','$','$1; id','$999999',None,7):self.assertFalse(host.offer_browser(invalid,shim))
+  finally:subprocess.run(['tmux','-L',host.SOCKET,'kill-server'],capture_output=True)
+ def test_browser_prepare_offers_the_opener_to_the_named_session_only(self):
+  host=self.host_fixture('browser_host_offer_prepare');server=self.server();host.BROWSER=server
+  try:
+   session=self.plain_session(host);other=self.plain_session(host)
+   self.assertEqual(host.dispatch('browser_prepare',{'session':session}),server.environment())
+   wanted='BROWSER='+server.environment()['command']
+   deadline=time.time()+5
+   while time.time()<deadline and self.session_browser(host,session)!=wanted:time.sleep(.05)
+   self.assertEqual(self.session_browser(host,session),wanted)
+   # A plain terminal names no session, and a bad name never fails the request.
+   for args in ({},{'session':''},{'session':'not a session'},{'session':7}):
+    self.assertEqual(host.dispatch('browser_prepare',args),server.environment())
+   time.sleep(.3)
+   self.assertEqual(self.session_browser(host,other),'')
+  finally:subprocess.run(['tmux','-L',host.SOCKET,'kill-server'],capture_output=True)
  def test_optional_bridge_failure_does_not_prevent_host_management_startup(self):
   spec=importlib.util.spec_from_file_location('browser_host_failure',ROOT/'src-tauri/resources/host.py');host=importlib.util.module_from_spec(spec);spec.loader.exec_module(host)
   host.BROWSER_SOURCE="class Bridge:\n def __init__(self,*args,**kwargs): raise RuntimeError('fixture private directory unavailable')"

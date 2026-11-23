@@ -136,7 +136,8 @@ class TerminalController(
             if (generation != attachmentGeneration) return
             val browser =
                 try {
-                    h.link.request("browser_prepare") as JSONObject
+                    // Naming the session lets the helper give it the link opener when it has none.
+                    h.link.request("browser_prepare", JSONObject().put("session", id)) as JSONObject
                 } catch (e: CancellationException) {
                     throw e
                 } catch (_: Exception) {

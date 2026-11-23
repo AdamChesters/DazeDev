@@ -69,6 +69,7 @@ Screenshots show the app interface with sample hosts and terminal output.
 ## Questions DazeDev asks first
 
 - When a host asks to open a link in your browser, DazeDev shows the host name and the full address. Choose **Open** or **Don't open**. Tick **Allow links from this host until DazeDev restarts** to stop the questions for that host.
+- Programs in a tmux session that was started outside DazeDev can send links this way too, once you have opened that session in DazeDev. New windows and panes in it get the link opener. A program that was already running there does not have it until its pane is restarted.
 - If a repository has `scripts/new-worktree.sh`, creating a worktree asks whether to **Run script**, **Create without script** or **Cancel**.
 - Pasting text with a line break shows the line count and the first lines before it pastes. Text longer than about 2,000 characters opens in a preview over the terminal instead, where you can read and edit it: **Paste** (Ctrl+Enter) sends it and **Cancel** (Esc) sends nothing. Tick **Don't ask again**, or clear **Ask before pasting text with line breaks** in **Settings → Terminal**, to turn off both.
 - **Remote copy (OSC 52)** in **Settings → Terminal** decides what happens when a program on a host copies to this device's clipboard: **Block**, **Allow and notify** (the default) or **Allow silently**. A fourth option also lets programs on the host read your clipboard.

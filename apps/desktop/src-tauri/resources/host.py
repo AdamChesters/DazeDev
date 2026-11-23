@@ -532,6 +532,28 @@ def create_session(a):
     tmux('respawn-pane','-k','-t',sid,'-c',str(path),command)
     return next(s for s in sessions() if s['id']==sid)
 
+OWN_BROWSER = re.compile(r'BROWSER=/[^\n]*/dazedev-browser(?:-[0-9]+)?/shim-[0-9a-f]{12}/xdg-open')
+def offer_browser(session, command):
+    """Give a tmux session this connection's link opener when it has none.
+    Sessions DazeDev starts get BROWSER as they are made. One started some
+    other way is offered it when a terminal attaches, so programs started in
+    new windows and panes of it can open links on the attached desktop. Panes
+    already running keep the environment they started with. A BROWSER the user set
+    or removed, in the session or for the whole tmux server, is left alone.
+    Nothing here may stop the terminal from attaching, so failures are ignored."""
+    try:
+        if not isinstance(session, str) or not re.fullmatch(r'\$\d+', session): return False
+        wanted = 'BROWSER=' + command
+        # tmux prints NAME=value when set, -NAME when removed and nothing when unset.
+        for scope in (['-t', session], ['-g']):
+            current = tmux('show-environment', *scope, 'BROWSER', check=False, timeout=2)
+            if current == wanted and scope[0] == '-t': return False
+            if current and not OWN_BROWSER.fullmatch(current): return False
+            if current: break
+        tmux('set-environment', '-t', session, 'BROWSER', command, timeout=2)
+        return True
+    except Exception: return False
+
 def editor_environment(bridge):
     # Programs in DazeDev sessions open files with the desktop editor shim.
     # The user's own editor stays available to it as the terminal fallback;
@@ -1117,7 +1139,10 @@ def create_worktree(a):
 def dispatch(method,a):
     if method == 'browser_prepare':
         if not BROWSER: raise RuntimeError('Desktop browser bridge unavailable: '+(BROWSER_ERROR or 'reconnect this host'))
-        return BROWSER.environment()
+        bridge = BROWSER.environment()
+        # Inline methods must not wait on tmux, so the offer runs on its own thread.
+        if a.get('session'): threading.Thread(target=offer_browser, args=(a['session'], bridge['command']), daemon=True).start()
+        return bridge
     if method == 'browser_result':
         return BROWSER.complete(a) if BROWSER else False
     if method == 'editor_shown':

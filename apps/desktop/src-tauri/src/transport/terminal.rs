@@ -225,7 +225,13 @@ impl Transport {
             // Without -u, a C-locale tmux client replaces Unicode with underscores.
             format!("{guard}{repair}tmux -u {socket}attach-session -t {target}; {fallback}{shell}")
         };
-        let script = match self.rpc(&host.id, "browser_prepare", json!({})) {
+        // Naming the session lets the helper give it the link opener when it has none.
+        let prepare = if session.is_empty() {
+            json!({})
+        } else {
+            json!({ "session": session })
+        };
+        let script = match self.rpc(&host.id, "browser_prepare", prepare) {
             Ok(browser) => {
                 let executable = browser["command"]
                     .as_str()
