@@ -50,6 +50,13 @@
   },
   {
     "platform": "desktop",
+    "version": "0.3.14-alpha.0",
+    "date": "2026-11-23",
+    "channel": "development",
+    "notes": "Links from sessions started outside DazeDev\n\n• A program that opens links itself, such as Codex, can now send them to your browser from a tmux session that DazeDev did not start. Open the session in DazeDev once, and new windows and panes in it get the link opener.\n• A program that was already running in such a session does not have it until its pane is restarted. A browser you chose for the session yourself is left as it is."
+  },
+  {
+    "platform": "desktop",
     "version": "0.3.13-alpha.0",
     "date": "2026-11-18",
     "channel": "development",
